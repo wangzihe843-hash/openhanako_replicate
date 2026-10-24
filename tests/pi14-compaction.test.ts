@@ -5,11 +5,15 @@ import { normalizeContext } from "@earendil-works/pi-ai";
 import { clampMaxTokensToContext } from "@earendil-works/pi-ai/api/simple-options";
 import { streamSimple as openaiCompletions } from "@earendil-works/pi-ai/api/openai-completions";
 import { streamSimple as openaiResponses } from "@earendil-works/pi-ai/api/openai-responses";
+import { streamSimple as codexResponses } from "@earendil-works/pi-ai/api/openai-codex-responses";
+import { streamSimple as piMessages } from "@earendil-works/pi-ai/api/pi-messages";
 import { streamSimple as anthropicMessages } from "@earendil-works/pi-ai/api/anthropic-messages";
 import { streamSimple as googleGenerativeAi } from "@earendil-works/pi-ai/api/google-generative-ai";
 import {
   buildNativeCompactionRequestShapes,
   estimateDefaultCompactionOutputTokens,
+  estimateDefaultCompactionOutputBudget,
+  CompactionBudgetSafetyError,
 } from "../lib/pi-sdk/compaction-request-shape.ts";
 import {
   estimateCachePreservingCompactionRequest,
@@ -51,6 +55,79 @@ const APIs = [
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Pi 1.4 native summaries and provider-default planning", () => {
+  it.each([
+    { name: "Responses enabled", api: "openai-responses", stream: openaiResponses, compat: { supportsMaxOutputTokens: true }, provider: "synthetic", baseUrl: "https://example.invalid/v1", source: "wire-cap", key: "synthetic-api-key" },
+    { name: "Responses disabled", api: "openai-responses", stream: openaiResponses, compat: { supportsMaxOutputTokens: false }, provider: "synthetic", baseUrl: "https://example.invalid/v1", source: "model-limit", key: "synthetic-api-key" },
+    { name: "ChatGPT sign-in", api: "openai-responses", stream: openaiResponses, compat: { supportsMaxOutputTokens: true }, provider: "openai", baseUrl: "https://api.openai.com/v1", source: "model-limit", key: "synthetic-sign-in-token" },
+    { name: "OpenAI API key (auth not inspected by planner)", api: "openai-responses", stream: openaiResponses, compat: { supportsMaxOutputTokens: true }, provider: "openai", baseUrl: "https://api.openai.com/v1", source: "model-limit", key: "sk-synthetic-test-only" },
+    { name: "Codex", api: "openai-codex-responses", stream: codexResponses, compat: { supportsMaxOutputTokens: true }, provider: "openai-codex", baseUrl: "https://example.invalid/v1", source: "model-limit", key: `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "synthetic-account" } })).toString("base64url")}.signature` },
+  ])("P1: $name uses the real serialized cap contract without dispatch", async (fixture) => {
+    const network = vi.fn(() => { throw new Error("Unexpected network attempt"); });
+    vi.stubGlobal("fetch", network);
+    const requestModel = { ...model(fixture.api, 8192, 8192), provider: fixture.provider, baseUrl: fixture.baseUrl, compat: fixture.compat };
+    const messages = [user("x".repeat(3500))];
+    const budget = estimateDefaultCompactionOutputBudget(requestModel, messages);
+    const clamp = clampMaxTokensToContext(requestModel as any, normalizeContext({ messages }), requestModel.maxTokens);
+    let payload: any;
+    const result = await fixture.stream(requestModel as any, normalizeContext({ messages }), {
+      apiKey: fixture.key, maxRetries: 0, transport: "sse",
+      onPayload(value: any) { payload = value; throw new Error("synthetic pre-dispatch stop"); },
+    }).result();
+    expect(result.errorMessage).toContain("synthetic pre-dispatch stop");
+    expect(budget.outputBudgetSource).toBe(fixture.source);
+    if (fixture.source === "wire-cap") {
+      expect(payload.max_output_tokens).toBe(clamp);
+      expect(budget.outputBudgetTokens).toBe(clamp);
+    } else {
+      if (fixture.key.startsWith("sk-")) expect(payload.max_output_tokens).toBe(clamp);
+      else expect(payload).not.toHaveProperty("max_output_tokens");
+      expect(budget.outputBudgetTokens).toBe(8192);
+      expect(budget.outputBudgetTokens).toBeGreaterThan(clamp);
+    }
+    const prep = { ...preparation("short history"), isSplitTurn: false, turnPrefixMessages: [] };
+    const input = { model: requestModel, preparation: prep, messages: [user("short history")] };
+    const before = structuredClone(input);
+    if (fixture.source === "wire-cap") {
+      expect(shouldHardTruncateCachePreservingCompaction(input)).toMatchObject({ shouldUseNativeFallback: true, shouldHardTruncate: false });
+    } else {
+      // A large capability ceiling is not evidence that short history needs
+      // deleting. This used to report B fit using the absent wire clamp.
+      expect(() => shouldHardTruncateCachePreservingCompaction(input)).toThrow(CompactionBudgetSafetyError);
+      const fits = shouldHardTruncateCachePreservingCompaction({ ...input, model: { ...requestModel, maxTokens: 2048 } });
+      expect(fits).toMatchObject({ cachePreservingFits: true, nativeSummaryFits: true, shouldHardTruncate: false });
+    }
+    expect(input).toEqual(before);
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it("rejects forwarding/custom API bounds and observes pi-messages forwarding no maxTokens", async () => {
+    const network = vi.fn(() => { throw new Error("Unexpected network attempt"); });
+    vi.stubGlobal("fetch", network);
+    const requestModel = model("pi-messages", 8192, 32768);
+    let payload: any;
+    const result = await piMessages(requestModel as any, normalizeContext({ messages: [user("history")] }), {
+      apiKey: "synthetic-key",
+      onPayload(value: any) { payload = value; throw new Error("synthetic pre-dispatch stop"); },
+    }).result();
+    expect(result.errorMessage).toContain("synthetic pre-dispatch stop");
+    expect(payload.options.maxTokens).toBeUndefined();
+    for (const api of ["pi-messages", "custom-api", undefined]) {
+      expect(() => estimateDefaultCompactionOutputBudget({ ...requestModel, api }, [user("history")])).toThrow(CompactionBudgetSafetyError);
+    }
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it("checks both split requests and never allows an oversized custom focus to bypass B", () => {
+    const requestModel = model("openai-responses", 2048, 8192);
+    const prep = { ...preparation(), turnPrefixMessages: [user("x".repeat(40000))] };
+    const fit = shouldHardTruncateCachePreservingCompaction({ model: requestModel, preparation: prep, messages: [user("x".repeat(40000))] });
+    expect(fit.nativeRequests[0].totalTokens).toBeLessThan(requestModel.contextWindow);
+    expect(fit.nativeRequests[1].promptTokens).toBeGreaterThan(requestModel.contextWindow);
+    expect(fit).toMatchObject({ nativeSummaryFits: false, shouldHardTruncate: true });
+    const focused = shouldHardTruncateCachePreservingCompaction({ model: requestModel, preparation: preparation(), messages: [user("history")], customInstructions: "focus".repeat(12000) });
+    expect(focused.nativeRequests.every(request => request.promptTokens > requestModel.contextWindow)).toBe(true);
+    expect(focused.shouldHardTruncate).toBe(true);
+  });
   it.each(APIs)("matches $api serialization for 2048/8192/32768 model limits without network", async ({ api, stream, cap }) => {
     const network = vi.fn(() => { throw new Error("Unexpected network attempt"); });
     vi.stubGlobal("fetch", network);
@@ -182,6 +259,17 @@ describe("Pi 1.4 native summaries and provider-default planning", () => {
     expect(bounded.nativeRequests.every(request => request.maxTokens === undefined && request.outputPolicy === "provider-default")).toBe(true);
   });
 
+  it("preserves the explicit bounded total-at-threshold boundary", () => {
+    const request = { model: model("openai-completions", 8192, 32768), preparation: preparation(), messages: [user("history")], outputPolicy: "bounded" as const };
+    const budget = estimateCachePreservingCompactionRequest(request).cachePreservingBudget;
+    const fits = shouldHardTruncateCachePreservingCompaction({ ...request, model: { ...request.model, contextWindow: budget.totalTokens * 2 }, hardTruncateThreshold: 0.5 });
+    const over = shouldHardTruncateCachePreservingCompaction({ ...request, model: { ...request.model, contextWindow: (budget.totalTokens - 1) * 2 }, hardTruncateThreshold: 0.5 });
+    expect(fits.cachePreservingFits).toBe(true);
+    expect(over.cachePreservingFits).toBe(false);
+    expect(over.cachePreservingBudget.promptTokens).toBeLessThan(over.threshold);
+    expect(fits.cachePreservingBudget.outputBudgetTokens).toBe(over.cachePreservingBudget.outputBudgetTokens);
+  });
+
   it.each(APIs)("distinguishes the actual $api cache-default payload from native B", async ({ api, stream, cap }) => {
     const network = vi.fn(() => { throw new Error("Unexpected network attempt"); });
     vi.stubGlobal("fetch", network);
@@ -250,7 +338,7 @@ describe("Pi 1.4 native summaries and provider-default planning", () => {
     { maxTokens: 8192, contextWindow: Number.NaN },
     { maxTokens: 8192, contextWindow: 0 },
   ])("fails closed for an unknown or invalid model instead of deciding to truncate: %j", invalid => {
-    expect(() => shouldHardTruncateCachePreservingCompaction({ model: invalid, preparation: preparation(), messages: [user("history")] })).toThrow(/Compaction (fit|output estimation)/);
+    expect(() => shouldHardTruncateCachePreservingCompaction({ model: invalid as Parameters<typeof shouldHardTruncateCachePreservingCompaction>[0]["model"], preparation: preparation(), messages: [user("history")] })).toThrow(/Compaction (fit|output estimation)/);
   });
 
   it("uses the SDK context estimate with the real system message and tool declarations", () => {

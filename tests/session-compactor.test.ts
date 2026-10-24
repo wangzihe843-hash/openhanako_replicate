@@ -1533,14 +1533,14 @@ describe("session-compactor", () => {
       preparation,
       messages,
       retainedMessageCount: 1,
-      model: { contextWindow: 3_000, maxTokens: 512 },
+      model: { api: "openai-completions", contextWindow: 3_000, maxTokens: 512 },
       systemPrompt: "",
     } as any);
     const fit = shouldHardTruncateCachePreservingCompaction({
       preparation,
       messages,
       retainedMessageCount: 1,
-      model: { contextWindow: 3_000, maxTokens: 512 },
+      model: { api: "openai-completions", contextWindow: 3_000, maxTokens: 512 },
       systemPrompt: "",
       hardTruncateThreshold: 1,
     } as any);
@@ -1569,7 +1569,7 @@ describe("session-compactor", () => {
       preparation,
       messages: [oversized, piUser("tail", 2)],
       retainedMessageCount: 1,
-      model: { contextWindow: 3_000, maxTokens: 512 },
+      model: { api: "openai-completions", contextWindow: 3_000, maxTokens: 512 },
       systemPrompt: "",
       hardTruncateThreshold: 1,
     } as any);
@@ -1609,7 +1609,7 @@ describe("session-compactor", () => {
       preparation,
       messages,
       retainedMessageCount: 1,
-      model: { maxTokens: 512 },
+      model: { api: "openai-completions", maxTokens: 512 },
       systemPrompt: "",
       tools: [],
     } as any);
@@ -1617,7 +1617,7 @@ describe("session-compactor", () => {
       preparation,
       messages,
       retainedMessageCount: 1,
-      model: { maxTokens: 512 },
+      model: { api: "openai-completions", maxTokens: 512 },
       systemPrompt: "",
       tools,
     } as any);
@@ -1626,7 +1626,7 @@ describe("session-compactor", () => {
       preparation,
       messages,
       retainedMessageCount: 1,
-      model: { contextWindow, maxTokens: 512 },
+      model: { api: "openai-completions", contextWindow, maxTokens: 512 },
       systemPrompt: "",
       tools: [],
       hardTruncateThreshold: 1,
@@ -1635,7 +1635,7 @@ describe("session-compactor", () => {
       preparation,
       messages,
       retainedMessageCount: 1,
-      model: { contextWindow, maxTokens: 512 },
+      model: { api: "openai-completions", contextWindow, maxTokens: 512 },
       systemPrompt: "",
       tools,
       hardTruncateThreshold: 1,
@@ -1665,8 +1665,8 @@ describe("session-compactor", () => {
       messages: [old, retained],
       retainedMessageCount: 1,
       systemPrompt: "",
-      model: { maxTokens: 512 },
-    } as any);
+      model: { api: "openai-completions", maxTokens: 512 },
+    } as Parameters<typeof shouldHardTruncateCachePreservingCompaction>[0]);
     // At this tiny context Pi's 4096 safety reserve lowers output to one
     // token; count that token separately from the input-threshold gate.
     const nativeTotal = estimate.nativeSummaryBudget.promptTokens + 1;
@@ -1675,18 +1675,18 @@ describe("session-compactor", () => {
       preparation,
       messages: [old, retained],
       retainedMessageCount: 1,
-      model: { contextWindow: nativeTotal, maxTokens: 512 },
+      model: { api: "openai-completions", contextWindow: nativeTotal, maxTokens: 512 },
       systemPrompt: "",
       hardTruncateThreshold: 1,
-    } as any);
+    } as Parameters<typeof shouldHardTruncateCachePreservingCompaction>[0]);
     const bOver = shouldHardTruncateCachePreservingCompaction({
       preparation,
       messages: [old, retained],
       retainedMessageCount: 1,
-      model: { contextWindow: nativeTotal - 1, maxTokens: 512 },
+      model: { api: "openai-completions", contextWindow: nativeTotal - 1, maxTokens: 512 },
       systemPrompt: "",
       hardTruncateThreshold: 1,
-    } as any);
+    } as Parameters<typeof shouldHardTruncateCachePreservingCompaction>[0]);
 
     expect(estimate.nativeSummaryBudget.systemPromptTokens).toBeGreaterThan(0);
     expect(estimate.nativeSummaryBudget.messageTokens)
@@ -1981,7 +1981,7 @@ describe("session-compactor", () => {
     const appendCompaction = vi.fn();
     const replaceMessages = vi.fn();
     const session = {
-      model: { id: "model", reasoning: false, contextWindow: 128000, maxTokens: 8192 },
+      model: { id: "model", api: "openai-completions", reasoning: false, contextWindow: 128000, maxTokens: 8192 },
       settingsManager: {
         getCompactionSettings: vi.fn(() => ({ enabled: true, reserveTokens: 2000 })),
       },
@@ -2054,7 +2054,7 @@ describe("session-compactor", () => {
       })),
     }));
     const session = {
-      model: { id: "tiny", reasoning: false, contextWindow: 1000, maxTokens: 512 },
+      model: { id: "tiny", api: "openai-completions", reasoning: false, contextWindow: 1000, maxTokens: 512 },
       settingsManager: {
         getCompactionSettings: vi.fn(() => ({ enabled: true, reserveTokens: 2000, keepRecentTokens: 100 })),
       },
@@ -2165,7 +2165,14 @@ describe("session-compactor", () => {
     expect(onEventFailure).not.toHaveBeenCalled();
   });
 
-  it("fails before provider calls or history mutation when model context window is unknown", async () => {
+  it.each([
+    { id: "missing-window", reasoning: false },
+    { id: "uncapped", api: "openai-responses", compat: { supportsMaxOutputTokens: false }, contextWindow: 8192, maxTokens: 8192 },
+    { id: "codex", api: "openai-codex-responses", contextWindow: 8192, maxTokens: 8192 },
+    { id: "forwarded", api: "pi-messages", contextWindow: 128000, maxTokens: 8192 },
+    { id: "custom", api: "custom-api", contextWindow: 128000, maxTokens: 8192 },
+    { id: "nan", api: "openai-completions", contextWindow: 8192, maxTokens: Number.NaN },
+  ])("fails before provider calls or history mutation when a model budget is unproven: $id", async (model) => {
     const oldMessage = { role: "user", content: "old context" };
     const retainedMessage = { role: "assistant", content: "keep" };
     const preparation = {
@@ -2190,7 +2197,7 @@ describe("session-compactor", () => {
       })),
     }));
     const session = {
-      model: { id: "missing-window", reasoning: false },
+      model,
       settingsManager: {
         getCompactionSettings: vi.fn(() => ({ enabled: true, reserveTokens: 2000, keepRecentTokens: 100 })),
       },
@@ -2214,7 +2221,9 @@ describe("session-compactor", () => {
       },
     };
 
-    await expect(runCachePreservingCompactionForSession(session)).rejects.toThrow("Compaction fit requires");
+    const before = structuredClone({ preparation, branch, state: session.agent.state });
+    await expect(runCachePreservingCompactionForSession(session)).rejects.toThrow(/Compaction (fit|output estimation)/);
+    expect({ preparation, branch, state: session.agent.state }).toEqual(before);
 
     expect(streamFn).not.toHaveBeenCalled();
     expect(appendCompaction).not.toHaveBeenCalled();
@@ -2241,7 +2250,7 @@ describe("session-compactor", () => {
     const emit = vi.fn();
     const extensionEmit = vi.fn(async () => {});
     const session = {
-      model: { id: "model", reasoning: false, contextWindow: 128000, maxTokens: 8192 },
+      model: { id: "model", api: "openai-completions", reasoning: false, contextWindow: 128000, maxTokens: 8192 },
       _emit: emit,
       extensionRunner: {
         hasHandlers: vi.fn((event) => event === "session_compact"),

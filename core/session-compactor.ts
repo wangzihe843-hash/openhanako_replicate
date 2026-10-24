@@ -2,7 +2,12 @@ import type { CompactionRuntime, CompactionRecoveryDependencies, CompactionRecov
 import { randomUUID } from "node:crypto";
 import {
   buildNativeCompactionRequestShapes,
-  estimateDefaultCompactionOutputTokens,
+  estimateDefaultCompactionOutputBudget,
+  CompactionBudgetSafetyError,
+  type CompactionBudgetModel,
+  type CompactionBudgetMessage,
+  type CompactionBudgetTool,
+  type NativeCompactionPreparation,
   convertAgentMessagesToLlm,
   estimateTokens,
   prepareCompaction,
@@ -1293,14 +1298,14 @@ export function estimateCachePreservingCompactionRequest({
   customInstructions,
   outputPolicy = COMPACTION_OUTPUT_POLICIES.PROVIDER_DEFAULT,
 }: {
-  preparation?: any;
-  messages?: any[];
+  preparation?: NativeCompactionPreparation;
+  messages?: CompactionBudgetMessage[];
   retainedMessageCount?: number;
-  model?: any;
-  instruction?: any;
+  model?: CompactionBudgetModel;
+  instruction?: CompactionBudgetMessage;
   systemPrompt?: string;
-  tools?: any[];
-  customInstructions?: any;
+  tools?: CompactionBudgetTool[];
+  customInstructions?: string;
   outputPolicy?: "provider-default" | "bounded";
 } = {}) {
   const policy = normalizeCompactionOutputPolicy(outputPolicy);
@@ -1323,16 +1328,18 @@ export function estimateCachePreservingCompactionRequest({
   const cacheMaxTokens = policy === COMPACTION_OUTPUT_POLICIES.BOUNDED
     ? getCachePreservingCompactionMaxTokens(preparation)
     : undefined;
-  const sdkDefaultOutputTokens = cacheMaxTokens === undefined
-    ? estimateDefaultCompactionOutputTokens(model, [...liveMessages, cacheInstruction], systemPrompt, providerVisibleTools)
-    : undefined;
-  // The extension removes caps for optional-cap providers. Its server default
-  // is then bounded only by model capability; the SDK's pre-hook context clamp
-  // is no longer an enforced wire limit. Required-cap protocols keep that SDK
-  // ceiling, additionally lowered by Hana's ordinary 64K default policy.
-  const cacheOutputBudgetTokens = cacheMaxTokens ?? (resolveOutputCapCapability(model).required
-    ? Math.min(sdkDefaultOutputTokens, DEFAULT_CHAT_OUTPUT_TOKENS)
+  const sdkDefaultBudget = estimateDefaultCompactionOutputBudget(
+    model, [...liveMessages, cacheInstruction], systemPrompt, providerVisibleTools,
+  );
+  // A's optional-cap hook removes root caps. Only a required, actually
+  // serialized cap retains the SDK clamp; capability alone cannot enforce it.
+  const preservesWireCap = resolveOutputCapCapability(model).required
+    && sdkDefaultBudget.outputBudgetSource === "wire-cap";
+  const cacheOutputBudgetTokens = cacheMaxTokens ?? (preservesWireCap
+    ? Math.min(sdkDefaultBudget.outputBudgetTokens, DEFAULT_CHAT_OUTPUT_TOKENS)
     : Number(model.maxTokens));
+  const cacheOutputBudgetSource = cacheMaxTokens !== undefined || preservesWireCap
+    ? "wire-cap" as const : "model-limit" as const;
   const cachePromptTokens = cacheMessageTokens
     + cacheInstructionTokens
     + systemPromptTokens
@@ -1343,6 +1350,7 @@ export function estimateCachePreservingCompactionRequest({
     promptTokens: cachePromptTokens,
     maxTokens: cacheMaxTokens,
     outputBudgetTokens: cacheOutputBudgetTokens,
+    outputBudgetSource: cacheOutputBudgetSource,
     outputPolicy: policy,
     totalTokens: cachePromptTokens + cacheOutputBudgetTokens,
     messageTokens: cacheMessageTokens,
@@ -1352,24 +1360,26 @@ export function estimateCachePreservingCompactionRequest({
     bufferTokens: COMPACTION_REQUEST_BUFFER_TOKENS,
   };
 
-  const nativeRequests = buildNativeCompactionRequestShapes({
-    preparation: nativePreparation,
-    model,
-    customInstructions,
-  }).requests.map((request) => {
-    const messageTokens = request.messages.reduce(
-      (sum, message) => sum + estimateTokens(message),
-      0,
-    );
+  const nativeRequests = estimateNativeCompactionRequestBudgets({
+    preparation: nativePreparation, model, customInstructions,
+  });
+  const nativeSummaryBudget = nativeRequests.reduce((largest, current) => (
+    !largest || current.totalTokens > largest.totalTokens ? current : largest
+  ));
+  return { cachePreservingBudget, nativeSummaryBudget, nativeRequests };
+}
+
+function estimateNativeCompactionRequestBudgets(options: Parameters<typeof buildNativeCompactionRequestShapes>[0]) {
+  return buildNativeCompactionRequestShapes(options).requests.map((request) => {
+    const messageTokens = request.messages.reduce((sum, message) => sum + estimateTokens(message), 0);
     const systemPromptTokens = estimateTextTokens(request.systemPrompt);
-    const promptTokens = messageTokens
-      + systemPromptTokens
-      + COMPACTION_REQUEST_BUFFER_TOKENS;
+    const promptTokens = messageTokens + systemPromptTokens + COMPACTION_REQUEST_BUFFER_TOKENS;
     return {
       kind: request.kind,
       promptTokens,
       maxTokens: request.maxTokens,
       outputBudgetTokens: request.outputBudgetTokens,
+      outputBudgetSource: request.outputBudgetSource,
       outputPolicy: COMPACTION_OUTPUT_POLICIES.PROVIDER_DEFAULT,
       totalTokens: promptTokens + request.outputBudgetTokens,
       messageTokens,
@@ -1379,26 +1389,56 @@ export function estimateCachePreservingCompactionRequest({
       bufferTokens: COMPACTION_REQUEST_BUFFER_TOKENS,
     };
   });
-  const nativeSummaryBudget = nativeRequests.reduce((largest, current) => (
-    !largest || current.totalTokens > largest.totalTokens ? current : largest
-  ), null) || {
-    kind: "history",
-    promptTokens: COMPACTION_REQUEST_BUFFER_TOKENS,
-    maxTokens: undefined,
-    outputBudgetTokens: cacheOutputBudgetTokens,
-    outputPolicy: COMPACTION_OUTPUT_POLICIES.PROVIDER_DEFAULT,
-    totalTokens: COMPACTION_REQUEST_BUFFER_TOKENS + cacheOutputBudgetTokens,
-    messageTokens: 0,
-    instructionTokens: 0,
-    systemPromptTokens: 0,
-    toolSchemaTokens: 0,
-    bufferTokens: COMPACTION_REQUEST_BUFFER_TOKENS,
-  };
-  return {
-    cachePreservingBudget,
-    nativeSummaryBudget,
-    nativeRequests,
-  };
+}
+
+type CompactionFitBudget = {
+  promptTokens: number;
+  outputBudgetTokens: number;
+  outputBudgetSource: "wire-cap" | "model-limit";
+  totalTokens: number;
+  outputPolicy: string;
+};
+
+function compactionFitBoundary(model: CompactionBudgetModel, hardTruncateThreshold: number) {
+  const contextWindow = Number(model?.contextWindow ?? 0);
+  if (!Number.isFinite(contextWindow) || contextWindow <= 0
+    || !Number.isFinite(hardTruncateThreshold) || hardTruncateThreshold <= 0 || hardTruncateThreshold > 1) {
+    throw new CompactionBudgetSafetyError("Compaction fit requires a finite positive contextWindow and a threshold in (0, 1]");
+  }
+  return { contextWindow, threshold: Math.floor(contextWindow * hardTruncateThreshold) };
+}
+
+function compactionBudgetFits(budget: CompactionFitBudget, contextWindow: number, threshold: number) {
+  if (!Number.isFinite(budget.promptTokens) || !Number.isFinite(budget.outputBudgetTokens)
+    || !Number.isFinite(budget.totalTokens)) {
+    throw new CompactionBudgetSafetyError("Compaction fit cannot use a non-finite request budget");
+  }
+  return budget.outputPolicy === COMPACTION_OUTPUT_POLICIES.BOUNDED
+    ? budget.totalTokens <= threshold
+    : budget.promptTokens <= threshold && budget.totalTokens <= contextWindow;
+}
+
+function compactionBudgetExceeds(budget: CompactionFitBudget, contextWindow: number, threshold: number) {
+  // A model capability ceiling is a conservative admission bound, not a
+  // reservation. Its failure to fit cannot authorize destructive truncation.
+  return budget.outputPolicy === COMPACTION_OUTPUT_POLICIES.BOUNDED
+    ? budget.totalTokens > threshold
+    : budget.promptTokens > threshold
+      || (budget.outputBudgetSource === "wire-cap" && budget.totalTokens > contextWindow);
+}
+
+/** Every auto fallback (including exception/auth paths) must prove B safe. */
+export function canUseNativeCompactionFallback({
+  preparation, model, customInstructions, hardTruncateThreshold = DEFAULT_HARD_TRUNCATE_THRESHOLD,
+}: {
+  preparation: NativeCompactionPreparation;
+  model: CompactionBudgetModel;
+  customInstructions?: string;
+  hardTruncateThreshold?: number;
+}) {
+  const { contextWindow, threshold } = compactionFitBoundary(model, hardTruncateThreshold);
+  return estimateNativeCompactionRequestBudgets({ preparation, model, customInstructions })
+    .every(budget => compactionBudgetFits(budget, contextWindow, threshold));
 }
 
 export function shouldHardTruncateCachePreservingCompaction({
@@ -1413,22 +1453,18 @@ export function shouldHardTruncateCachePreservingCompaction({
   hardTruncateThreshold = DEFAULT_HARD_TRUNCATE_THRESHOLD,
   outputPolicy = COMPACTION_OUTPUT_POLICIES.PROVIDER_DEFAULT,
 }: {
-  preparation?: any;
-  messages?: any[];
+  preparation?: NativeCompactionPreparation;
+  messages?: CompactionBudgetMessage[];
   retainedMessageCount?: number;
-  model?: any;
-  instruction?: any;
-  systemPrompt?: any;
-  tools?: any[];
-  customInstructions?: any;
+  model?: CompactionBudgetModel;
+  instruction?: CompactionBudgetMessage;
+  systemPrompt?: string;
+  tools?: CompactionBudgetTool[];
+  customInstructions?: string;
   hardTruncateThreshold?: number;
   outputPolicy?: "provider-default" | "bounded";
 } = {}) {
-  const contextWindow = Number(model?.contextWindow ?? 0);
-  if (!Number.isFinite(contextWindow) || contextWindow <= 0
-    || !Number.isFinite(hardTruncateThreshold) || hardTruncateThreshold <= 0 || hardTruncateThreshold > 1) {
-    throw new Error("Compaction fit requires a finite positive contextWindow and a threshold in (0, 1]");
-  }
+  const { contextWindow, threshold } = compactionFitBoundary(model, hardTruncateThreshold);
   const budgets = estimateCachePreservingCompactionRequest({
     preparation,
     messages,
@@ -1440,36 +1476,26 @@ export function shouldHardTruncateCachePreservingCompaction({
     customInstructions,
     outputPolicy,
   });
-  const { cachePreservingBudget, nativeSummaryBudget } = budgets;
-  const threshold = Math.floor(contextWindow * hardTruncateThreshold);
-  // A default output ceiling is capacity, not an explicit reservation: Pi 1.4
-  // already tightens it to the remaining context. Keep 85% as input headroom,
-  // and independently require the complete estimated request to fit the window.
-  // Explicit bounded requests preserve the previous total-at-threshold policy.
-  const fits = (budget) => {
-    if (!Number.isFinite(budget.promptTokens) || !Number.isFinite(budget.outputBudgetTokens)
-      || !Number.isFinite(budget.totalTokens)) {
-      throw new Error("Compaction fit cannot use a non-finite request budget");
-    }
-    return budget.outputPolicy === COMPACTION_OUTPUT_POLICIES.BOUNDED
-      ? budget.totalTokens <= threshold
-      : budget.promptTokens <= threshold && budget.totalTokens <= contextWindow;
-  };
+  const { cachePreservingBudget } = budgets;
+  const fits = (budget: CompactionFitBudget) => compactionBudgetFits(budget, contextWindow, threshold);
   const cachePreservingFits = fits(cachePreservingBudget);
-  const nativeSummaryFits = nativeRequestsFit(budgets.nativeRequests, nativeSummaryBudget, fits);
+  const nativeSummaryFits = budgets.nativeRequests.every(fits);
+  const shouldHardTruncate = compactionBudgetExceeds(cachePreservingBudget, contextWindow, threshold)
+    && budgets.nativeRequests.some(budget => compactionBudgetExceeds(budget, contextWindow, threshold));
+  if (!cachePreservingFits && !nativeSummaryFits && !shouldHardTruncate) {
+    throw new CompactionBudgetSafetyError(
+      "Compaction fit is unproven with provider-default output; cancelling without truncation or native fallback",
+    );
+  }
   return {
     ...budgets,
     cachePreservingFits,
     nativeSummaryFits,
     shouldUseNativeFallback: !cachePreservingFits && nativeSummaryFits,
-    shouldHardTruncate: !cachePreservingFits && !nativeSummaryFits,
+    shouldHardTruncate,
     threshold,
     contextWindow,
   };
-}
-
-function nativeRequestsFit(requests, fallbackBudget, fits) {
-  return requests.length > 0 ? requests.every(fits) : fits(fallbackBudget);
 }
 
 function hardTruncateCachePreservingCompaction(branchEntries, preparation, {

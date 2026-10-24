@@ -327,15 +327,19 @@ describe("CompactionGuardExtension", () => {
   });
 
   describe("L3: session_before_compact preemptive hard truncate", () => {
-    const model = { id: "m", provider: "p", contextWindow: 128_000 };
+    const model: Model<"openai-completions"> = {
+      id: "m", name: "Mock compaction model", provider: "p", api: "openai-completions",
+      baseUrl: "https://example.invalid/v1", reasoning: false, input: ["text"],
+      contextWindow: 128_000, maxTokens: 8_192,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
     const oldMessage = {
       role: "user",
       content: [{ type: "text", text: "old history to summarize" }],
       timestamp: 1,
     };
-    const retainedTail = {
-      role: "assistant",
-      content: [{ type: "text", text: "retained live tail" }],
+    const retainedTail: AssistantMessage = {
+      ...assistantMessage([{ type: "text", text: "retained live tail" }]),
       timestamp: 2,
     };
     const preparation = {
@@ -365,6 +369,52 @@ describe("CompactionGuardExtension", () => {
         }),
       },
     };
+
+    it.each([
+      { label: "Responses cap omitted", api: "openai-responses", contextWindow: 8192, maxTokens: 8192, compat: { supportsMaxOutputTokens: false } },
+      { label: "Responses auth dependent", api: "openai-responses", provider: "openai", baseUrl: "https://api.openai.com/v1", contextWindow: 8192, maxTokens: 8192 },
+      { label: "Codex", api: "openai-codex-responses", contextWindow: 8192, maxTokens: 8192 },
+      { label: "forwarding", api: "pi-messages" },
+      { label: "custom", api: "custom-api" },
+      { label: "missing maxTokens", maxTokens: undefined },
+      { label: "NaN maxTokens", maxTokens: Number.NaN },
+      { label: "NaN contextWindow", contextWindow: Number.NaN },
+    ])("cancels $label without provider, snapshot, history mutation or hard truncation", async ({ label: _label, ...override }) => {
+      const input = structuredClone({ preparation, messages: [oldMessage, retainedTail], model: { ...model, ...override } });
+      const before = structuredClone(input);
+      const appendCompaction = vi.fn();
+      const replaceMessages = vi.fn();
+      const result = await pi.trigger("session_before_compact", { preparation: input.preparation }, {
+        ...ctx, model: input.model,
+        sessionManager: { ...ctx.sessionManager, appendCompaction, replaceMessages, buildSessionContext: () => ({ messages: input.messages }) },
+      });
+      expect(result).toEqual({ cancel: true });
+      expect(input).toEqual(before);
+      for (const spy of [cacheCompactor, computeHardTruncation, buildSessionCacheSnapshot, appendCompaction, replaceMessages, ctx.modelRegistry.getApiKeyAndHeaders]) expect(spy).not.toHaveBeenCalled();
+    });
+
+    it("does not route a pre-fit ownership exception into an unproven native request", async () => {
+      const result = await pi.trigger("session_before_compact", { preparation }, {
+        ...ctx,
+        model: { ...model, api: "openai-codex-responses", contextWindow: 8192, maxTokens: 8192 },
+        sessionManager: { ...ctx.sessionManager, getSessionFile: () => null },
+      });
+      expect(result).toEqual({ cancel: true });
+      expect(cacheCompactor).not.toHaveBeenCalled();
+      expect(computeHardTruncation).not.toHaveBeenCalled();
+    });
+
+    it("rejects missing assistant usage without repairing persisted input or escaping to native", async () => {
+      const messages = [oldMessage, { ...retainedTail, usage: undefined }];
+      const before = structuredClone(messages);
+      const result = await pi.trigger("session_before_compact", { preparation }, {
+        ...ctx, sessionManager: { ...ctx.sessionManager, buildSessionContext: () => ({ messages }) },
+      });
+      expect(result).toEqual({ cancel: true });
+      expect(messages).toEqual(before);
+      expect(cacheCompactor).not.toHaveBeenCalled();
+      expect(computeHardTruncation).not.toHaveBeenCalled();
+    });
 
     it("returns cache-preserving compaction when summarize tokens are within threshold", async () => {
       const res = await pi.trigger(
@@ -422,6 +472,7 @@ describe("CompactionGuardExtension", () => {
       pi = createMockPi();
       const deepseekModel = {
         ...model,
+        ...model,
         id: "deepseek-v4-chat",
         provider: "deepseek",
         api: "openai-completions",
@@ -476,6 +527,7 @@ describe("CompactionGuardExtension", () => {
     // through the live resolver, hands compaction that same resolver, and
     // compares the two bodies.
     const deepseekModel = {
+        ...model,
       ...model,
       id: "deepseek-v4-chat",
       provider: "deepseek",
@@ -830,7 +882,11 @@ describe("CompactionGuardExtension", () => {
       });
     });
 
-    it("hard truncates before a provider call when large runtime tool schemas make A and B exceed the boundary", async () => {
+    for (const { name, inputBoundary } of [
+      { name: "hard truncates before a provider call when large runtime tool schemas make A and B exceed the boundary", inputBoundary: true },
+      { name: "keeps the former total-derived boundary as a no-truncation counterexample when native clamp fits", inputBoundary: false },
+    ]) {
+      it(name, async () => {
       pi = createMockPi();
       const previousSummary = "prior checkpoint ".repeat(120);
       const previousSummaryMessage = {
@@ -849,13 +905,17 @@ describe("CompactionGuardExtension", () => {
         preparation: boundaryPreparation,
         messages: boundaryMessages,
         retainedMessageCount: 0,
-        model: { maxTokens: 512 },
+        model: { ...model, contextWindow: 0, maxTokens: 512 },
         systemPrompt: "",
         tools: [],
-      } as any);
+      } as Parameters<typeof estimateCachePreservingCompactionRequest>[0]);
       expect(noToolBudget.nativeSummaryBudget.totalTokens)
         .toBeGreaterThan(noToolBudget.cachePreservingBudget.totalTokens);
-      const contextWindow = noToolBudget.nativeSummaryBudget.totalTokens - 1;
+      // Keep the old total-derived scenario as a counterexample; only the
+      // prompt-derived window proves B exceeds even the one-token minimum.
+      const contextWindow = (inputBoundary
+        ? noToolBudget.nativeSummaryBudget.promptTokens
+        : noToolBudget.nativeSummaryBudget.totalTokens) - 1;
       const streamFn = vi.fn();
       const runtimeTools = [{
         name: "schema_heavy_tool",
@@ -877,11 +937,11 @@ describe("CompactionGuardExtension", () => {
         tools: runtimeTools,
         streamOptions: { sessionId: "runtime-session-id" },
       }));
-      (computeHardTruncation as any).mockReturnValue({
+      vi.mocked(computeHardTruncation).mockReturnValue({
         summary: "[hard truncated]",
         firstKeptEntryId: "uuid-42",
         tokensBefore: 90_000,
-        details: { reason: "compaction-guard-hard-truncate" },
+        details: { reason: "compaction-guard-hard-truncate", keepRecentTokens: 100 },
       });
       createCompactionGuardExtension({
         getRequestReasoningLevel: sessionReasoningLevel,
@@ -908,16 +968,22 @@ describe("CompactionGuardExtension", () => {
         },
       );
 
-      expect(result).toMatchObject({
-        compaction: {
-          summary: "[hard truncated]",
-          details: { reason: "compaction-guard-hard-truncate" },
-        },
-      });
-      expect(computeHardTruncation).toHaveBeenCalledOnce();
+      if (inputBoundary) {
+        expect(result).toMatchObject({
+          compaction: {
+            summary: "[hard truncated]",
+            details: { reason: "compaction-guard-hard-truncate" },
+          },
+        });
+        expect(computeHardTruncation).toHaveBeenCalledOnce();
+      } else {
+        expect(result).toBeUndefined();
+        expect(computeHardTruncation).not.toHaveBeenCalled();
+      }
       expect(cacheCompactor).not.toHaveBeenCalled();
       expect(streamFn).not.toHaveBeenCalled();
     });
+    }
 
     it("falls back before compaction decisions when the session path is missing", async () => {
       pi = createMockPi();
@@ -1136,6 +1202,7 @@ describe("CompactionGuardExtension", () => {
     it("compacts after removing only a complete malformed DeepSeek tool turn from old history", async () => {
       pi = createMockPi();
       const deepseekModel = {
+        ...model,
         id: "deepseek-reasoner",
         provider: "deepseek",
         api: "openai-completions",
@@ -1221,6 +1288,7 @@ describe("CompactionGuardExtension", () => {
     it("surfaces an unsafe retained reasoning replay error instead of silently using native compaction", async () => {
       pi = createMockPi();
       const deepseekModel = {
+        ...model,
         id: "deepseek-reasoner",
         provider: "deepseek",
         api: "openai-completions",
@@ -1335,6 +1403,7 @@ describe("CompactionGuardExtension", () => {
 
       expect(autoResult).toBeUndefined();
       expect(explicitResult).toEqual({ cancel: true });
+      expect(authUnavailableCtx.modelRegistry.getApiKeyAndHeaders).toHaveBeenCalledTimes(2);
       expect(cacheCompactor).not.toHaveBeenCalled();
       expect(buildSessionCacheSnapshot).not.toHaveBeenCalled();
     });
@@ -1617,6 +1686,7 @@ describe("CompactionGuardExtension", () => {
 
     it("canonicalizes legacy auto thinking before compaction side-task requests", async () => {
       const deepseekModel = {
+        ...model,
         id: "deepseek-v4-pro",
         provider: "deepseek",
         api: "openai-completions",
@@ -1667,6 +1737,7 @@ describe("CompactionGuardExtension", () => {
 
     it("uses explicit cache recovery when GLM thinking tool-call history cannot replay reasoning_content", async () => {
       const glmModel = {
+        ...model,
         id: "glm-4.5",
         provider: "zhipu",
         api: "openai-completions",
@@ -1744,6 +1815,7 @@ describe("CompactionGuardExtension", () => {
         getCompactionMode: () => "auto",
       })(pi);
       const glmModel = {
+        ...model,
         id: "glm-5.1",
         provider: "zhipu",
         api: "openai-completions",
@@ -1822,6 +1894,7 @@ describe("CompactionGuardExtension", () => {
         getCompactionMode: () => "auto",
       })(pi);
       const kimiModel = {
+        ...model,
         id: "k3",
         provider: "kimi-coding",
         api: "openai-completions",
@@ -1867,7 +1940,7 @@ describe("CompactionGuardExtension", () => {
               thinkingLevel: "off",
               messages: [
                 oldMessage,
-                { role: "assistant", content: [{ type: "text", text: "x".repeat(8_000) }], timestamp: 2 },
+                { ...assistantMessage([{ type: "text", text: "x".repeat(8_000) }]), timestamp: 2 },
               ],
             }),
           },
@@ -1906,7 +1979,7 @@ describe("CompactionGuardExtension", () => {
               thinkingLevel: "off",
               messages: [
                 oldMessage,
-                { role: "assistant", content: [{ type: "text", text: "x".repeat(8_000) }], timestamp: 2 },
+                { ...assistantMessage([{ type: "text", text: "x".repeat(8_000) }]), timestamp: 2 },
               ],
             }),
           },

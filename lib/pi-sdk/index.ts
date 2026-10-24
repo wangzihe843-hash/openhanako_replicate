@@ -147,6 +147,12 @@ export { generateSummary } from "@earendil-works/pi-coding-agent";
 export {
   buildNativeCompactionRequestShapes,
   estimateDefaultCompactionOutputTokens,
+  estimateDefaultCompactionOutputBudget,
+  CompactionBudgetSafetyError,
+  type CompactionBudgetModel,
+  type CompactionBudgetMessage,
+  type CompactionBudgetTool,
+  type NativeCompactionPreparation,
   NATIVE_SUMMARIZATION_SYSTEM_PROMPT,
 } from "./compaction-request-shape.ts";
 

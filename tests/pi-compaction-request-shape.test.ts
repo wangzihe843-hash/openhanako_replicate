@@ -3,8 +3,8 @@ import * as piSdk from "../lib/pi-sdk/index.ts";
 
 function user(text: string, timestamp = 1) {
   return {
-    role: "user",
-    content: [{ type: "text", text }],
+    role: "user" as const,
+    content: [{ type: "text" as const, text }],
     timestamp,
   };
 }
@@ -26,9 +26,9 @@ describe("Pi native compaction request shape adapter", () => {
       tokensBefore: 10_000,
       previousSummary: "prior checkpoint",
       fileOps: {
-        read: new Set(),
-        written: new Set(),
-        edited: new Set(),
+        read: new Set<string>(),
+        written: new Set<string>(),
+        edited: new Set<string>(),
       },
       settings: {
         enabled: true,
@@ -53,8 +53,11 @@ describe("Pi native compaction request shape adapter", () => {
         cacheWrite: 0,
       },
     };
-    const actualRequests: Array<{ context: any; options: any }> = [];
-    const streamFn = vi.fn(async (_model, context, options) => {
+    type NativeStream = NonNullable<Parameters<typeof installedPi.compact>[7]>;
+    const actualRequests: Array<{
+      context: Parameters<NativeStream>[1]; options: Parameters<NativeStream>[2];
+    }> = [];
+    const streamFn = vi.fn<NativeStream>(async (_model, context, options) => {
       actualRequests.push({ context, options });
       return {
         result: async () => ({
@@ -63,18 +66,18 @@ describe("Pi native compaction request shape adapter", () => {
           stopReason: "stop",
           timestamp: Date.now(),
         }),
-      };
+      } as Awaited<ReturnType<NativeStream>>;
     });
 
     await installedPi.compact(
-      preparation as any,
-      model as any,
+      preparation,
+      model as Parameters<typeof installedPi.compact>[1],
       undefined,
       undefined,
       "focus on migrations",
       undefined,
       "off",
-      streamFn as any,
+      streamFn,
     );
     const adapterRequests = buildShape({
       preparation,
@@ -85,9 +88,11 @@ describe("Pi native compaction request shape adapter", () => {
     expect(actualRequests).toHaveLength(2);
     expect(adapterRequests).toHaveLength(2);
     for (const adapterRequest of adapterRequests) {
-      const actualRequest = actualRequests.find(({ context }) => (
-        context.messages.find((message: { role: string }) => message.role === "user")?.content[0].text === adapterRequest.promptText
-      ));
+      const actualRequest = actualRequests.find(({ context }) => {
+        const content = context.messages.find(message => message.role === "user")?.content;
+        return Array.isArray(content) && content[0]?.type === "text"
+          && content[0].text === adapterRequest.promptText;
+      });
       expect(actualRequest).toBeDefined();
       expect(piSdk.getCurrentSystemPrompt(actualRequest!.context.messages)).toBe(adapterRequest.systemPrompt);
       expect(actualRequest?.context.messages.find((message: { role: string }) => message.role === "user")).toMatchObject({
@@ -110,7 +115,7 @@ describe("Pi native compaction request shape adapter", () => {
         isSplitTurn: false,
         settings: { reserveTokens: 4_000 },
       },
-      model: { maxTokens: 8_000 },
+      model: { api: "openai-completions", maxTokens: 8_000 },
     });
 
     expect(result.requests).toHaveLength(1);
@@ -140,7 +145,7 @@ describe("Pi native compaction request shape adapter", () => {
         isSplitTurn: false,
         settings: { reserveTokens: 4_000 },
       },
-      model: { maxTokens: 8_000 },
+      model: { api: "openai-completions", maxTokens: 8_000 },
       customInstructions: "focus on migrations",
     });
     const prompt = result.requests[0].promptText;
@@ -159,7 +164,7 @@ describe("Pi native compaction request shape adapter", () => {
         isSplitTurn: true,
         settings: { reserveTokens: 4_000 },
       },
-      model: { maxTokens: 8_000 },
+      model: { api: "openai-completions", maxTokens: 8_000 },
     });
 
     expect(result.requests.map((request) => request.kind)).toEqual(["history", "turn-prefix"]);
@@ -192,7 +197,7 @@ describe("Pi native compaction request shape adapter", () => {
         isSplitTurn: false,
         settings: { reserveTokens: 4_000 },
       },
-      model: { maxTokens: 8_000 },
+      model: { api: "openai-completions", maxTokens: 8_000 },
       convertToLlm,
     });
 
@@ -208,7 +213,7 @@ describe("Pi native compaction request shape adapter", () => {
         isSplitTurn: true,
         settings: { reserveTokens: 10_000 },
       },
-      model: { maxTokens: 1_200 },
+      model: { api: "openai-completions", maxTokens: 1_200 },
     });
     const reserveLimited = buildShape({
       preparation: {
@@ -217,7 +222,7 @@ describe("Pi native compaction request shape adapter", () => {
         isSplitTurn: true,
         settings: { reserveTokens: 10_000 },
       },
-      model: { maxTokens: 6_000 },
+      model: { api: "openai-completions", maxTokens: 6_000 },
     });
 
     expect(capped.requests.map((request) => request.maxTokens)).toEqual([undefined, undefined]);

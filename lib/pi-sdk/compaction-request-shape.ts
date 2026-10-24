@@ -2,6 +2,7 @@ import {
   convertToLlm as defaultConvertToLlm,
   serializeConversation as defaultSerializeConversation,
 } from "@earendil-works/pi-coding-agent";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { normalizeContext, type Api, type Message, type Model, type Tool } from "@earendil-works/pi-ai";
 import { clampMaxTokensToContext } from "@earendil-works/pi-ai/api/simple-options";
 
@@ -97,32 +98,92 @@ Create a concise checkpoint of the user's request and the progress shown above. 
 
 Only summarize information explicitly present above. Do not infer or recreate later messages.`;
 
-/**
- * Pi 1.4 omits the summary request's explicit cap. The shared simple-provider
- * layer still defaults to the model output limit and reserves context room.
- * Keep this planning value separate from the options sent to the stream.
- * Invalid model declarations are errors: a NaN budget must never silently
- * choose destructive hard truncation.
- */
-export function estimateDefaultCompactionOutputTokens(
-  model: Pick<Model<Api>, "maxTokens"> & { contextWindow?: number; api?: string },
+export class CompactionBudgetSafetyError extends Error {
+  readonly code = "COMPACTION_BUDGET_UNPROVEN";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "CompactionBudgetSafetyError";
+  }
+}
+
+export type CompactionBudgetModel = Pick<Model<Api>, "maxTokens"> & {
+  contextWindow?: number;
+  api?: string;
+  provider?: string;
+  baseUrl?: string;
+  compat?: { supportsMaxOutputTokens?: boolean; outputCapRequired?: boolean };
+};
+export type CompactionOutputBudget = {
+  outputBudgetTokens: number;
+  outputBudgetSource: "wire-cap" | "model-limit";
+};
+export type NativeCompactionPreparation = {
+  messagesToSummarize?: AgentMessage[];
+  turnPrefixMessages?: AgentMessage[];
+  previousSummary?: string;
+  isSplitTurn?: boolean;
+  settings?: { reserveTokens?: number; keepRecentTokens?: number };
+};
+export type CompactionBudgetMessage = Message;
+export type CompactionBudgetTool = Tool;
+
+// Reviewed Pi 1.4 simple providers serialize the context-clamped default.
+// Forwarding pi-messages and registered custom APIs do not share that contract.
+const CAPPED_APIS = new Set([
+  "openai-completions", "azure-openai-responses", "anthropic-messages",
+  "google-generative-ai", "google-vertex", "bedrock-converse-stream", "mistral-conversations",
+]);
+
+/** Budget the final serializer contract, never just buildBaseOptions' clamp. */
+export function estimateDefaultCompactionOutputBudget(
+  model: CompactionBudgetModel,
   messages: Message[],
   systemPrompt = "",
   tools: Tool[] = [],
-) {
+): CompactionOutputBudget {
   const maxTokens = Number(model?.maxTokens);
   const contextWindow = Number(model?.contextWindow ?? 0);
   if (!Number.isFinite(maxTokens) || maxTokens <= 0 || !Number.isFinite(contextWindow)) {
-    throw new Error("Compaction output estimation requires a finite positive model.maxTokens and finite contextWindow");
+    throw new CompactionBudgetSafetyError("Compaction output estimation requires a finite positive model.maxTokens and finite contextWindow");
   }
-  const outputTokens = clampMaxTokensToContext(
-    { ...model, maxTokens, contextWindow } as Model<Api>,
-    normalizeContext({ systemPrompt, messages, tools }),
-    maxTokens,
+  const responsesMayOmitCap = model.api === "openai-responses" && (
+    model.compat?.supportsMaxOutputTokens === false
+    // Pi selects ChatGPT sign-in by credential here. Planning must cover both
+    // auth modes without inspecting secrets or claiming a cap will survive.
+    || (model.provider === "openai" && model.baseUrl === "https://api.openai.com/v1")
   );
-  return model?.api === "openai-responses" || model?.api === "azure-openai-responses"
-    ? Math.max(16, outputTokens)
-    : outputTokens;
+  if (responsesMayOmitCap || model.api === "openai-codex-responses") {
+    return { outputBudgetTokens: maxTokens, outputBudgetSource: "model-limit" };
+  }
+  if (!CAPPED_APIS.has(model.api) && model.api !== "openai-responses") {
+    throw new CompactionBudgetSafetyError(`Compaction output estimation has no reviewed wire bound for API ${String(model.api)}`);
+  }
+  let outputTokens: number;
+  try {
+    outputTokens = clampMaxTokensToContext(
+      { ...model, maxTokens, contextWindow } as Model<Api>,
+      normalizeContext({ systemPrompt, messages, tools }),
+      maxTokens,
+    );
+  } catch {
+    throw new CompactionBudgetSafetyError("Compaction output estimation requires valid provider messages and assistant usage");
+  }
+  if (!Number.isFinite(outputTokens) || outputTokens <= 0) {
+    throw new CompactionBudgetSafetyError("Compaction output estimation produced a non-finite or non-positive budget");
+  }
+  return {
+    outputBudgetTokens: model.api === "openai-responses" || model.api === "azure-openai-responses"
+      ? Math.max(16, outputTokens)
+      : outputTokens,
+    outputBudgetSource: "wire-cap",
+  };
+}
+
+export function estimateDefaultCompactionOutputTokens(
+  ...args: Parameters<typeof estimateDefaultCompactionOutputBudget>
+) {
+  return estimateDefaultCompactionOutputBudget(...args).outputBudgetTokens;
 }
 
 function requestMessage(promptText: string) {
@@ -133,7 +194,7 @@ function requestMessage(promptText: string) {
   };
 }
 
-function serializeNativeConversation(messages: any[], convertToLlm, serializeConversation) {
+function serializeNativeConversation(messages: AgentMessage[], convertToLlm, serializeConversation) {
   return serializeConversation(convertToLlm(messages));
 }
 
@@ -144,11 +205,11 @@ export function buildNativeCompactionRequestShapes({
   convertToLlm = defaultConvertToLlm,
   serializeConversation = defaultSerializeConversation,
 }: {
-  preparation?: any;
-  model?: any;
-  customInstructions?: any;
-  convertToLlm?: (messages: any[]) => any[];
-  serializeConversation?: (messages: any[]) => string;
+  preparation?: NativeCompactionPreparation;
+  model?: CompactionBudgetModel;
+  customInstructions?: string;
+  convertToLlm?: (messages: AgentMessage[]) => Message[];
+  serializeConversation?: (messages: Message[]) => string;
 } = {}) {
   const messagesToSummarize = Array.isArray(preparation?.messagesToSummarize)
     ? preparation.messagesToSummarize
@@ -156,7 +217,15 @@ export function buildNativeCompactionRequestShapes({
   const turnPrefixMessages = Array.isArray(preparation?.turnPrefixMessages)
     ? preparation.turnPrefixMessages
     : [];
-  const requests: any[] = [];
+  const requests: Array<{
+    kind: "history" | "turn-prefix";
+    systemPrompt: string;
+    promptText: string;
+    messages: Message[];
+    maxTokens: undefined;
+    outputBudgetTokens?: number;
+    outputBudgetSource?: CompactionOutputBudget["outputBudgetSource"];
+  }> = [];
 
   if (!preparation?.isSplitTurn || messagesToSummarize.length > 0) {
     const conversationText = serializeNativeConversation(
@@ -181,7 +250,7 @@ export function buildNativeCompactionRequestShapes({
       promptText,
       messages: [requestMessage(promptText)],
       maxTokens: undefined,
-      outputBudgetTokens: model ? estimateDefaultCompactionOutputTokens(model, [requestMessage(promptText)], NATIVE_SUMMARIZATION_SYSTEM_PROMPT) : undefined,
+      ...(model ? estimateDefaultCompactionOutputBudget(model, [requestMessage(promptText)], NATIVE_SUMMARIZATION_SYSTEM_PROMPT) : {}),
     });
   }
 
@@ -202,7 +271,7 @@ export function buildNativeCompactionRequestShapes({
       promptText,
       messages: [requestMessage(promptText)],
       maxTokens: undefined,
-      outputBudgetTokens: model ? estimateDefaultCompactionOutputTokens(model, [requestMessage(promptText)], NATIVE_SUMMARIZATION_SYSTEM_PROMPT) : undefined,
+      ...(model ? estimateDefaultCompactionOutputBudget(model, [requestMessage(promptText)], NATIVE_SUMMARIZATION_SYSTEM_PROMPT) : {}),
     });
   }
 

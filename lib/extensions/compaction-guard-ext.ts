@@ -35,6 +35,7 @@
 import { computeHardTruncation, truncateTextHeadTail } from "../../core/compaction-utils.ts";
 import {
   COMPACTION_OUTPUT_POLICIES,
+  canUseNativeCompactionFallback,
   buildCachePreservingCompactionPrefix,
   createCachePreservingCompactionResult,
   getCachePreservingCompactionMaxTokens,
@@ -60,7 +61,7 @@ import {
   COMPACTION_MODES,
   normalizeCompactionMode,
 } from "../../shared/compaction-mode.ts";
-import { convertAgentMessagesToLlm } from "../pi-sdk/index.ts";
+import { CompactionBudgetSafetyError, convertAgentMessagesToLlm } from "../pi-sdk/index.ts";
 import { createModuleLogger } from "../debug-log.ts";
 import { normalizeRequestThinkingLevel } from "../../core/session-thinking-level.ts";
 
@@ -189,7 +190,21 @@ export function createCompactionGuardExtension(opts: Record<string, any> = {}) {
     }
   }
 
-  function fallBackToPiNative(reason: string) {
+  function fallBackToPiNative(reason: string, event, ctx) {
+    try {
+      if (!canUseNativeCompactionFallback({
+        preparation: event.preparation,
+        model: ctx.model,
+        customInstructions: event.customInstructions,
+        hardTruncateThreshold,
+      })) {
+        log.warn("[L3] native compaction output safety unproven; cancelled without truncation");
+        return { cancel: true };
+      }
+    } catch (error) {
+      log.warn(`[L3] native compaction budget unavailable; cancelled: ${error?.message || error}`);
+      return { cancel: true };
+    }
     log.warn(`[L3] cache-preserving compaction unavailable; falling back to Pi SDK native summarizer: ${reason}`);
     return undefined;
   }
@@ -392,14 +407,14 @@ export function createCompactionGuardExtension(opts: Record<string, any> = {}) {
             `(A=${fit.cachePreservingBudget.totalTokens}, B=${fit.nativeSummaryBudget.totalTokens}, ` +
             `threshold=${fit.threshold})`
           );
-          return allowNativeFallback ? fallBackToPiNative(reason) : { cancel: true };
+          return allowNativeFallback ? fallBackToPiNative(reason, event, ctx) : { cancel: true };
         }
 
         const auth = await ctx.modelRegistry?.getApiKeyAndHeaders?.(model);
         if (!auth?.ok) {
           log.warn(`[L3] model auth unavailable for cache-preserving compaction: ${auth?.error || model.id}`);
           if (allowNativeFallback) {
-            return fallBackToPiNative(`model auth unavailable for cache-preserving compaction: ${auth?.error || model.id}`);
+            return fallBackToPiNative(`model auth unavailable for cache-preserving compaction: ${auth?.error || model.id}`, event, ctx);
           }
           return { cancel: true };
         }
@@ -538,11 +553,15 @@ export function createCompactionGuardExtension(opts: Record<string, any> = {}) {
           log.log("[L3] cache-preserving compaction aborted; stopping without a native summary");
           return { cancel: true };
         }
+        if (err instanceof CompactionBudgetSafetyError) {
+          log.warn(`[L3] compaction budget safety unproven; cancelled: ${err.message}`);
+          return { cancel: true };
+        }
         if (isCompactionHistoryReplayError(err)) {
           throw err;
         }
         if (allowNativeFallback) {
-          return fallBackToPiNative(err?.message || String(err));
+          return fallBackToPiNative(err?.message || String(err), event, ctx);
         }
         log.warn(`[L3] session_before_compact hook error (cancelled): ${err?.message || err}`);
         return { cancel: true };
