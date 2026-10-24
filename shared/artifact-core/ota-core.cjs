@@ -210,7 +210,8 @@ const ORIGIN_MANIFEST_RACE_TIMEOUT_MS = MANIFEST_REQUEST_TIMEOUT_MS;
 
 // ── channel pointer URLs: clients poll ONLY these static asset
 //    URLs, never the GitHub API ───────────────────────────────────────────
-const GITHUB_CHANNEL_BASE = "https://github.com/liliMozi/openhanako/releases/download/channels";
+const GITHUB_CHANNEL_BASE = "https://github.com/wangzihe843-hash/openhanako_replicate/releases/download/channels";
+const updatePolicy = require("../update-policy.cjs");
 
 /**
  * One-element array retained for compatibility with existing callers.
@@ -478,6 +479,7 @@ function tryVerifyManifestCandidate(fetchResult, keyset, log) {
  *    sourceEtagUpdate: {origin?: string|null}}>}
  */
 async function fetchChannelManifest({ channel, keyset, cachedEtags = {}, log = () => {}, fetchOnce, devBypass = NO_DEV_OVERRIDE }) {
+  if (!updatePolicy.onlineUpdatesEnabled) throw new Error(updatePolicy.disabledMessage);
   if (devBypass.hasDevOverride()) {
     return fetchDevOverrideManifest(devBypass.resolveDevManifestOverride(), keyset, log);
   }
@@ -890,6 +892,7 @@ function buildAvailableDescriptor({ manifest, serverEntry, rendererEntry, versio
  *   minShellBlocked?: boolean, error?: string}>}
  */
 async function checkOnce(opts) {
+  if (!updatePolicy.onlineUpdatesEnabled) return { outcome: "disabled", error: updatePolicy.disabledMessage };
   const {
     homeDir, keyset, currentShellVersion, platformArch, channel = SEED_CHANNEL, log = () => {}, fetchOnce,
     devBypass = NO_DEV_OVERRIDE,
@@ -1122,6 +1125,7 @@ async function checkOnce(opts) {
  *   | {ok: false, error: string}>}
  */
 async function downloadAndApplyArtifacts(opts) {
+  if (!updatePolicy.onlineUpdatesEnabled) return { ok: false, error: updatePolicy.disabledMessage };
   const {
     homeDir,
     keyset,
@@ -1426,6 +1430,7 @@ async function downloadAndApplyArtifacts(opts) {
  *   {ok: false, error: string}>}
  */
 async function downloadAndApplyRendererArtifact(opts) {
+  if (!updatePolicy.onlineUpdatesEnabled) return { ok: false, error: updatePolicy.disabledMessage };
   const {
     homeDir,
     keyset,

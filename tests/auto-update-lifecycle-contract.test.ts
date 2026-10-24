@@ -1,3 +1,4 @@
+import "./helpers/enable-online-updates.ts";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import fs from "fs";
 import path from "path";

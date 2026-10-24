@@ -1409,6 +1409,7 @@
       "updateProgress": "{percent}%",
       "updateError": "업데이트 확인 실패",
       "updateLatest": "최신 버전입니다",
+      "updateOnlineDisabled": "이 사용자 지정 버전은 온라인 업데이트를 제공하지 않습니다. 이 프로젝트의 안내에 따라 업그레이드하세요.",
       "updateLatestCheckedAt": "최신 상태입니다 (마지막 확인: {time})",
       "updateManifestReleasedAt": "배포 매니페스트 발행일: {date}",
       "updateManifestReleasedAtViaMirror": "배포 매니페스트 발행일: {date} (백업 소스 경유)",

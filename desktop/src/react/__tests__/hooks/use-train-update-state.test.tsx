@@ -21,6 +21,7 @@ function baseStatus(partial: Partial<TrainUpdateStatus> = {}): TrainUpdateStatus
     available: null,
     lastError: null,
     lastCheckedAt: null,
+    onlineUpdatesEnabled: true,
     currentVersion: '0.388.0',
     ...partial,
   };
@@ -198,7 +199,7 @@ describe('useTrainUpdateState', () => {
     });
 
     render(<Harness />);
-    await waitFor(() => expect(screen.getByTestId('phase').textContent).toBe('idle'));
+    await waitFor(() => expect(screen.getByTestId('currentVersion').textContent).toBe('0.388.0'));
 
     await act(async () => {
       screen.getByText('check').click();
@@ -215,7 +216,7 @@ describe('useTrainUpdateState', () => {
     });
 
     render(<Harness />);
-    await waitFor(() => expect(screen.getByTestId('phase').textContent).toBe('idle'));
+    await waitFor(() => expect(screen.getByTestId('currentVersion').textContent).toBe('0.388.0'));
 
     await act(async () => {
       screen.getByText('check').click();
@@ -230,7 +231,7 @@ describe('useTrainUpdateState', () => {
     installHana({ trainUpdateApply });
 
     render(<Harness />);
-    await waitFor(() => expect(screen.getByTestId('phase').textContent).toBe('idle'));
+    await waitFor(() => expect(screen.getByTestId('currentVersion').textContent).toBe('0.388.0'));
 
     act(() => {
       screen.getByText('apply').click();
@@ -243,7 +244,7 @@ describe('useTrainUpdateState', () => {
   it('onTrainUpdateProgress drives phase (downloading vs applying) and byte progress while apply is in flight', async () => {
     installHana();
     render(<Harness />);
-    await waitFor(() => expect(screen.getByTestId('phase').textContent).toBe('idle'));
+    await waitFor(() => expect(screen.getByTestId('currentVersion').textContent).toBe('0.388.0'));
 
     act(() => {
       progressListener?.({ phase: 'downloading', kind: 'server', receivedBytes: 50, totalBytes: 200 });
@@ -272,7 +273,7 @@ describe('useTrainUpdateState', () => {
   it('onTrainUpdateProgress uses cumulative overall bytes across both artifacts so the bar never resets to 0 at the server/renderer boundary', async () => {
     installHana();
     render(<Harness />);
-    await waitFor(() => expect(screen.getByTestId('phase').textContent).toBe('idle'));
+    await waitFor(() => expect(screen.getByTestId('currentVersion').textContent).toBe('0.388.0'));
 
     // Server download in progress: overall tracks the server's own bytes
     // against the combined total (300 = 100 server + 200 renderer), not
@@ -325,7 +326,7 @@ describe('useTrainUpdateState', () => {
     installHana({ trainUpdateApply: vi.fn().mockResolvedValue({ ok: false, error: 'sha256 mismatch' }) });
 
     render(<Harness />);
-    await waitFor(() => expect(screen.getByTestId('phase').textContent).toBe('idle'));
+    await waitFor(() => expect(screen.getByTestId('currentVersion').textContent).toBe('0.388.0'));
 
     await act(async () => {
       screen.getByText('apply').click();
@@ -377,5 +378,23 @@ describe('useTrainUpdateState', () => {
 
     expect(screen.getByTestId('fallbackNotice').textContent).toBe('none');
     expect(ackTrainFallbackNotice).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('fork disabled hook', () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); window.hana = undefined as unknown as PlatformApi; });
+  it('blocks actions and stale availability while preserving crash recovery notice', async () => {
+    const notice: CrashFallbackNotice = { kind: 'renderer', fromVersion: '9.0.0', toVersion: '1.0.0', quarantinedTrain: 9 };
+    installHana({ trainUpdateStatus: vi.fn().mockResolvedValue(baseStatus({ onlineUpdatesEnabled: false, available: available('9.0.0'), lastCheckedAt: '2026-01-01', fallbackNotice: notice })) });
+    render(<Harness />);
+    await waitFor(() => expect(screen.getByTestId('currentVersion').textContent).toBe('0.388.0'));
+    await act(async () => { availableListener?.({ version: '10.0.0', minShellBlocked: true }); });
+    expect(screen.getByTestId('available').textContent).toBe('none');
+    expect(screen.getByTestId('lastCheckedAt').textContent).toBe('none');
+    await act(async () => { screen.getByText('check').click(); screen.getByText('apply').click(); });
+    expect(window.hana?.trainUpdateCheck).not.toHaveBeenCalled(); expect(window.hana?.trainUpdateApply).not.toHaveBeenCalled();
+    expect(screen.getByTestId('fallbackNotice').textContent).toContain('renderer:9.0.0->1.0.0');
+    await act(async () => { screen.getByText('ack-fallback').click(); });
+    expect(window.hana?.ackTrainFallbackNotice).toHaveBeenCalled();
   });
 });

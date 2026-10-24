@@ -16,6 +16,7 @@ const checkTrainNow = vi.fn();
 const applyTrainNow = vi.fn();
 
 interface TrainOverride {
+  onlineUpdatesEnabled: boolean;
   currentVersion: string;
   available: { version: string } | null;
   minShellBlocked: boolean;
@@ -29,6 +30,7 @@ interface TrainOverride {
 }
 
 const DEFAULT_TRAIN_OVERRIDE: TrainOverride = {
+  onlineUpdatesEnabled: true,
   currentVersion: '0.160.2',
   available: null,
   minShellBlocked: false,
@@ -583,5 +585,20 @@ describe('AboutTab', () => {
 
     expect(await screen.findByText('settings.about.updateHistoryOffline')).toBeTruthy();
     expect(screen.getByText('v0.400.0')).toBeTruthy();
+  });
+});
+
+ describe('fork offline update presentation', () => {
+  it('suppresses stale latest, available, shell install, beta and invitation entries', async () => {
+    trainOverride = { ...DEFAULT_TRAIN_OVERRIDE, onlineUpdatesEnabled: false, lastCheckedAt: '2026-01-01T00:00:00Z', available: { version: '9.0.0' } };
+    shellUpdateStateOverride = { status: 'downloaded', version: '9.0.0' };
+    render(<AboutTab />);
+    expect(screen.queryByText('settings.about.updateOnlineDisabled')).not.toBeNull();
+    expect(screen.queryByText('settings.about.updateCheckBtn')).toBeNull();
+    expect(screen.queryByText('settings.about.updateApply')).toBeNull();
+    expect(screen.queryByText('settings.about.updateInstall')).toBeNull();
+    expect(screen.queryByText('settings.about.betaUpdates')).toBeNull();
+    expect(screen.queryByText('settings.about.autoCheckUpdates')).toBeNull();
+    expect(screen.queryByText('settings.about.updateLatestCheckedAt')).toBeNull();
   });
 });

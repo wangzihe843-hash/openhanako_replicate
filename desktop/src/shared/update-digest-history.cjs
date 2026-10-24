@@ -6,6 +6,8 @@
  * releases published after they were built.
  */
 
+const updatePolicy = require("../../../shared/update-policy.cjs");
+
 const DEFAULT_RELEASES_API = "https://api.github.com/repos/liliMozi/openhanako/releases?per_page=20&page=1";
 const DEFAULT_RELEASE_ASSET_BASE = "https://github.com/liliMozi/openhanako/releases/download";
 const DIGEST_ASSET_NAME = "release-digest.v1.json";
@@ -102,6 +104,10 @@ function createUpdateDigestHistoryLoader({
   let inFlight = null;
 
   return async function loadUpdateDigestHistory() {
+    if (!updatePolicy.onlineUpdatesEnabled) {
+      const entries = readBundledEntries().slice(0, HISTORY_LIMIT);
+      return { entries, source: entries.length > 0 ? "bundled" : "none", complete: false };
+    }
     const currentTime = now();
     if (cached && currentTime - cached.storedAt < cacheTtlMs) return cached.result;
     if (inFlight) return inFlight;

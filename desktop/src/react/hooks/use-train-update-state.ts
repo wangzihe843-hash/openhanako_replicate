@@ -28,6 +28,7 @@ export interface TrainUpdateProgressState {
 }
 
 export interface UseTrainUpdateStateResult {
+  onlineUpdatesEnabled: boolean;
   /** 已激活内容的产品版本（单一源，见 desktop/main.cjs 的 getCurrentContentVersion）。 */
   currentVersion: string;
   /** 最近一次检查发现的、尚未下载的一班车；没有可用更新时为 null。 */
@@ -63,6 +64,7 @@ export interface UseTrainUpdateStateResult {
 }
 
 interface StatusSnapshot {
+  onlineUpdatesEnabled: boolean;
   currentVersion: string;
   available: { version: string } | null;
   minShellBlocked: boolean;
@@ -75,6 +77,7 @@ interface StatusSnapshot {
 }
 
 const IDLE_SNAPSHOT: StatusSnapshot = {
+  onlineUpdatesEnabled: false,
   currentVersion: '',
   available: null,
   minShellBlocked: false,
@@ -92,11 +95,12 @@ function projectAvailable(available: TrainUpdateAvailable | null | undefined): {
 
 function snapshotFromStatus(status: TrainUpdateStatus): StatusSnapshot {
   return {
+    onlineUpdatesEnabled: status.onlineUpdatesEnabled === true,
     currentVersion: status.currentVersion || '',
-    available: projectAvailable(status.available),
-    minShellBlocked: status.minShellBlocked === true,
-    lastError: status.lastError ?? null,
-    lastCheckedAt: status.lastCheckedAt ?? null,
+    available: status.onlineUpdatesEnabled === true ? projectAvailable(status.available) : null,
+    minShellBlocked: status.onlineUpdatesEnabled === true && status.minShellBlocked === true,
+    lastError: status.onlineUpdatesEnabled === true ? status.lastError ?? null : null,
+    lastCheckedAt: status.onlineUpdatesEnabled === true ? status.lastCheckedAt ?? null : null,
     manifestSource: status.manifestSource ?? null,
     manifestReleasedAt: status.manifestReleasedAt ?? null,
     originUnreachable: status.originUnreachable === true,
@@ -131,12 +135,12 @@ export function useTrainUpdateState(): UseTrainUpdateStateResult {
   // 检查或重新挂载组件，贴纸/设置页立刻点亮。
   useEffect(() => {
     const unsubscribe = window.hana?.onTrainUpdateAvailable?.((payload) => {
-      setSnapshot((s) => ({
+      setSnapshot((s) => s.onlineUpdatesEnabled ? ({
         ...s,
         available: { version: payload.version },
         minShellBlocked: payload.minShellBlocked === true,
         lastError: null,
-      }));
+      }) : s);
     });
     return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
   }, []);
@@ -144,6 +148,7 @@ export function useTrainUpdateState(): UseTrainUpdateStateResult {
   // apply-now 下载/验证/激活阶段的进度推送，只发给发起这次调用的窗口。
   useEffect(() => {
     const unsubscribe = window.hana?.onTrainUpdateProgress?.((p) => {
+      if (!snapshot.onlineUpdatesEnabled) return;
       // downloading 与 verifying 都算"下载中"（进度条停在已到达的累计位置，
       // 不因为验签间隙而闪成"应用中"）；只有 activating 才是真的 applying。
       setPhase(p.phase === 'activating' ? 'applying' : 'downloading');
@@ -159,7 +164,7 @@ export function useTrainUpdateState(): UseTrainUpdateStateResult {
       setProgress({ receivedBytes, totalBytes });
     });
     return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
-  }, []);
+  }, [snapshot.onlineUpdatesEnabled]);
 
   // 崩溃回退运行时触发（renderer 崩溃重试路径）的实时广播——冷启动路径
   // 走上面 queryStatus() 挂载时拉到的 status.fallbackNotice，这里只覆盖
@@ -172,6 +177,7 @@ export function useTrainUpdateState(): UseTrainUpdateStateResult {
   }, []);
 
   const checkNow = useCallback(async () => {
+    if (!snapshot.onlineUpdatesEnabled) return;
     setPhase('checking');
     try {
       const result = await window.hana?.trainUpdateCheck?.();
@@ -188,9 +194,10 @@ export function useTrainUpdateState(): UseTrainUpdateStateResult {
     } finally {
       setPhase('idle');
     }
-  }, []);
+  }, [snapshot.onlineUpdatesEnabled]);
 
   const applyNow = useCallback(async () => {
+    if (!snapshot.onlineUpdatesEnabled) return { ok: false, error: 'Online updates are unavailable in this fork.' };
     // 乐观置位：点击即视觉反馈"开始动了"，第一条 progress 事件到达前
     // 也不该显示成 idle。真实进度由 onTrainUpdateProgress 接管。
     setPhase('downloading');
@@ -217,7 +224,7 @@ export function useTrainUpdateState(): UseTrainUpdateStateResult {
       setPhase('idle');
       setProgress(null);
     }
-  }, []);
+  }, [snapshot.onlineUpdatesEnabled]);
 
   const ackFallbackNotice = useCallback(async () => {
     // 乐观清空：卡片立即消失，不等 IPC 往返——即便 ack 请求失败，下次挂载

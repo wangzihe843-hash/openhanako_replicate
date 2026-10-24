@@ -12,16 +12,17 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 
+const updatePolicy = require("../shared/update-policy.cjs");
+
 const CHECK_INTERVAL = 4 * 60 * 60 * 1000; // 4 小时
 const DIGEST_ASSET_NAME = "release-digest.v1.json";
 const UPDATE_CHANNEL_FILE_NAME = "update-channel.json";
 const UPDATE_CHANNEL_VERSION = 1;
-// 邀请核销服务地址。服务已于 2026-08-20 上线（Cloudflare Worker），地址
-// 非秘密——邀请码才是凭证，端点按 IP 限速。留空即"通道未配置"、设置页
-// 不渲染邀请入口；HANA_INVITE_API_URL 可临时覆盖。
-const DEFAULT_INVITE_API_URL = "https://alpha-invite-gate.hanaagent.workers.dev";
-const DEFAULT_GITHUB_OWNER = "liliMozi";
-const DEFAULT_GITHUB_REPO = "openhanako";
+// This fork does not operate an invitation service. The build policy also
+// blocks legacy records and environment overrides before redemption/activation.
+const DEFAULT_INVITE_API_URL = "";
+const DEFAULT_GITHUB_OWNER = "wangzihe843-hash";
+const DEFAULT_GITHUB_REPO = "openhanako_replicate";
 
 let _mainWindow = null;
 let _setIsUpdating = null;  // 由 main.cjs 注入
@@ -202,6 +203,7 @@ function applyUpdateFeedConfig(config) {
 }
 
 async function checkForUpdatesOnce(source = "manual") {
+  if (!updatePolicy.onlineUpdatesEnabled) return getState();
   const config = resolveUpdateFeedConfig();
   applyUpdateFeedConfig(config);
   try {
@@ -232,7 +234,9 @@ function isAutoCheckEnabled() {
 
 function createIdleState() {
   return {
-    status: "idle",       // idle | checking | available | downloading | downloaded | installing | error | latest
+    status: updatePolicy.onlineUpdatesEnabled ? "idle" : "disabled",       // idle | checking | available | downloading | downloaded | installing | error | latest
+    onlineUpdatesEnabled: updatePolicy.onlineUpdatesEnabled,
+    policyMessage: updatePolicy.onlineUpdatesEnabled ? null : updatePolicy.disabledMessage,
     version: null,
     releaseNotes: null,
     releaseUrl: null,
@@ -375,6 +379,7 @@ function normalizeReleaseDigest(value, expectedVersion) {
 }
 
 function requestReleaseDigest(version) {
+  if (!updatePolicy.onlineUpdatesEnabled) return;
   const digestUrl = buildReleaseDigestUrl(version);
   const requestId = _digestRequestId + 1;
   _digestRequestId = requestId;
@@ -431,6 +436,7 @@ function invokeQuitAndInstallSoon() {
 }
 
 async function installDownloadedUpdate(source = "manual") {
+  if (!updatePolicy.onlineUpdatesEnabled) return false;
   if (_updateState.status === "installing") return true;
   if (_updateState.status !== "downloaded") {
     logUpdate(`install ignored: status=${_updateState.status}, source=${source}`);
@@ -665,6 +671,7 @@ function __setInviteApiUrlOverrideForTests(value) {
 }
 
 function resolveInviteApiUrl(env = process.env) {
+  if (!updatePolicy.onlineUpdatesEnabled) return "";
   if (inviteApiUrlOverrideForTests !== null) {
     return trimTrailingSlash(inviteApiUrlOverrideForTests);
   }
@@ -672,6 +679,7 @@ function resolveInviteApiUrl(env = process.env) {
 }
 
 function inviteStatus() {
+  if (!updatePolicy.onlineUpdatesEnabled) return { configured: false, active: false, inviteCodes: [], channel: "default", error: null };
   const { record, error } = readUpdateChannelRecord();
   const active = !error
     && record?.active === true
@@ -696,6 +704,7 @@ function inviteStatus() {
  * 核销成功本身不改变任何本机状态：切通道要等 invite:activate。
  */
 async function redeemInviteCode(code) {
+  if (!updatePolicy.onlineUpdatesEnabled) return { ok: false, reason: "disabled", message: updatePolicy.disabledMessage };
   const apiUrl = resolveInviteApiUrl();
   if (!apiUrl) {
     return { ok: false, reason: "not-configured", message: "the invite redemption service is not configured" };
@@ -770,6 +779,7 @@ async function redeemInviteCode(code) {
  * 写入通道状态并让新 feed 立刻生效。只应在用户看过确认对话框并点头之后调用。
  */
 function activateInviteChannel(payload) {
+  if (!updatePolicy.onlineUpdatesEnabled) return inviteStatus();
   const feedUrl = payload && typeof payload.feedUrl === "string" ? payload.feedUrl.trim() : "";
   if (!feedUrl) throw new Error("the update channel cannot be activated without a feed address");
   if (!/^https:\/\//i.test(feedUrl)) throw new Error("the update channel feed address must use https");
@@ -800,6 +810,7 @@ function registerIpcHandlers() {
   if (_ipcHandlersRegistered) return;
   _ipcHandlersRegistered = true;
   ipcMain.handle("auto-update-check", async () => {
+    if (!updatePolicy.onlineUpdatesEnabled) return getState();
     if (_updateState.status === "installing") return getState();
     resetState();
     try {
@@ -814,7 +825,7 @@ function registerIpcHandlers() {
   });
 
   // 保留 channel 向后兼容，改为空操作（下载由 update-available 自动触发）
-  ipcMain.handle("auto-update-download", async () => true);
+  ipcMain.handle("auto-update-download", async () => updatePolicy.onlineUpdatesEnabled);
 
   ipcMain.handle("auto-update-install", async () => {
     return installDownloadedUpdate("manual");
@@ -823,7 +834,7 @@ function registerIpcHandlers() {
   ipcMain.handle("auto-update-state", () => getState());
 
   ipcMain.handle("auto-update-set-channel", (_event, channel) => {
-    autoUpdater.allowPrerelease = (channel === "beta");
+    setUpdateChannel(channel);
   });
 
   // 邀请通道三件套统一是 async：失败一律以 rejected promise 抵达 renderer，
@@ -839,6 +850,7 @@ function registerIpcHandlers() {
 // ── 定时轮询 ──
 
 function startPolling() {
+  if (!updatePolicy.onlineUpdatesEnabled) return;
   if (_checkTimer) return;
   _checkTimer = setInterval(() => {
     // 每 tick 都重新读 preferences：用户关掉开关后，下一 tick 就不再自动查
@@ -856,7 +868,12 @@ function initAutoUpdater(mainWindow, {
   _setIsUpdating = setIsUpdating;
   _hanakoHome = hanakoHome;
 
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
   registerIpcHandlers(); // IPC handlers 是进程级单例，重复 init 时直接复用
+
+  // Do not configure feeds, timers or clean installed caches for this fork.
+  if (!updatePolicy.onlineUpdatesEnabled) return;
 
   // 开发环境不初始化 auto-updater
   if (!app.isPackaged) return;
@@ -879,6 +896,7 @@ function initAutoUpdater(mainWindow, {
 }
 
 async function checkForUpdatesAuto() {
+  if (!updatePolicy.onlineUpdatesEnabled) return;
   if (!app.isPackaged || isRunningFromDmg()) return;
   // 用户关了自动检查开关：启动时也不自动 check
   if (!isAutoCheckEnabled()) return;
@@ -888,6 +906,7 @@ async function checkForUpdatesAuto() {
 }
 
 function setUpdateChannel(channel) {
+  if (!updatePolicy.onlineUpdatesEnabled) return;
   autoUpdater.allowPrerelease = (channel === "beta");
 }
 

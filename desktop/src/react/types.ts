@@ -46,7 +46,9 @@ export interface UpdateDigestHistoryResult {
 }
 
 export interface AutoUpdateState {
-  status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'error' | 'latest';
+  onlineUpdatesEnabled?: boolean;
+  policyMessage?: string | null;
+  status: 'disabled' | 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'error' | 'latest';
   version: string | null;
   releaseNotes: string | null;
   releaseUrl: string | null;
@@ -87,7 +89,7 @@ export interface InviteChannelStatus {
 
 export type InviteRedeemResult =
   | { ok: true; feedUrl: string; childCodes: string[] }
-  | { ok: false; reason: 'not-configured' | 'network' | 'invalid' | 'server' | 'storage'; message: string };
+  | { ok: false; reason: 'disabled' | 'not-configured' | 'network' | 'invalid' | 'server' | 'storage'; message: string };
 
 /** train-update-status 里 `available` 字段的形状：检查阶段发现的、尚未下载的一班车 */
 export interface TrainUpdateAvailable {
@@ -126,6 +128,7 @@ export interface CrashFallbackNotice {
  * handler 统一附加，不需要也不应该再单独调用 `getAppVersion`。
  */
 export interface TrainUpdateStatus {
+  onlineUpdatesEnabled?: boolean;
   staged: boolean;
   train: number | null;
   version: string | null;

@@ -958,6 +958,7 @@ const artifactBoot = require("./src/shared/artifact-boot.cjs");
 // 新 train，只写 next 指针——真正的 promote(next→current) 仍然只发生在下次
 // 启动时的 artifact-boot 已覆盖 server 与 renderer。dev 模式默认不调度（见下方
 // createMainWindow 里的挂钩注释）。
+const updatePolicy = require("../shared/update-policy.cjs");
 const artifactOta = require("./src/shared/artifact-ota.cjs");
 // 拆箱目录 GC：boot 决议完成后对 server/renderer 各自的
 // 版本目录做一次"只保留 current+previous"清理，失败静默，绝不影响启动。
@@ -2917,6 +2918,7 @@ function broadcastToAllWindows(channel, payload) {
  * `app.isPackaged`，不会给生产用户开任何口子）。
  */
 function startBackgroundOtaSchedulerOnce() {
+  if (!updatePolicy.onlineUpdatesEnabled) return;
   if (_otaSchedulerStarted) return;
   if (!app.isPackaged && !artifactOta.hasDevOverrideConfigured()) return;
   _otaSchedulerStarted = true;
@@ -5230,6 +5232,7 @@ function reloadAllWindowsForTrainUpdate() {
  * @returns {Promise<{ok: true} | {ok: false, error: string}>}
  */
 async function applyTrainUpdateNow(senderWebContents) {
+  if (!updatePolicy.onlineUpdatesEnabled) return { ok: false, error: updatePolicy.disabledMessage };
   const channel = readUpdateChannelPreference();
 
   try {
@@ -5321,7 +5324,12 @@ wrapIpcHandler("train-update-status", async () => {
   // fallbackNotice 并入这里：冷启动时崩溃回退发生在任何窗口创建之前，
   // `train-fallback-notice` 广播大概率没有听众，窗口挂载后走这条冷拉取
   // 路径才是它唯一保证能被看到的通道（见 `_crashFallbackNotice` 声明处注释）。
-  return { ...status, currentVersion: getCurrentContentVersion(), fallbackNotice: _crashFallbackNotice };
+  return {
+    ...status,
+    ...(!updatePolicy.onlineUpdatesEnabled ? { available: null, minShellBlocked: false, lastError: null, lastCheckedAt: null } : {}),
+    onlineUpdatesEnabled: updatePolicy.onlineUpdatesEnabled,
+    currentVersion: getCurrentContentVersion(), fallbackNotice: _crashFallbackNotice,
+  };
 });
 
 // 崩溃回退提示的一次性 ack：用户点掉侧栏卡片后调用，清空进程内存里的
@@ -5335,6 +5343,7 @@ wrapIpcHandler("train-fallback-notice-ack", () => {
 // 手动检查：跟后台自动检查共用 checkOnce，同样绝不下载/写指针，只拉清单、
 // 验签、过闸门、把发现的结果写进 ota-state.json 并原样返回给渲染进程。
 wrapIpcHandler("train-update-check", async () => {
+  if (!updatePolicy.onlineUpdatesEnabled) return { outcome: "disabled", error: updatePolicy.disabledMessage };
   if (!app.isPackaged) return { outcome: "dev-skipped" };
   // 壳身份用途：同 startBackgroundOtaSchedulerOnce() 里的说明。
   return artifactOta.checkOnce({

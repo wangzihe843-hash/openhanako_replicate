@@ -61,6 +61,12 @@
       "path": "shared/artifact-core/pointer-store.cjs",
       "inputType": "dynamic-process-root",
       "reason": "Reached via a createRequire()-bound local require(\"../shared/artifact-core/pointer-store.cjs\") call in cli/server-runner.ts, which esbuild's own module-graph tracer cannot follow (see the createRequire discovery pass above this function). Declared as its own root so its module graph is traced the same as any other declared root."
+    },
+    {
+      "id": "create-require-root:shared/update-policy.cjs",
+      "path": "shared/update-policy.cjs",
+      "inputType": "dynamic-process-root",
+      "reason": "Reached via a createRequire()-bound local require(\"../shared/update-policy.cjs\") call in cli/bundle.ts, which esbuild's own module-graph tracer cannot follow (see the createRequire discovery pass above this function). Declared as its own root so its module graph is traced the same as any other declared root."
     }
   ],
   "dynamicCallSites": [
@@ -86047,6 +86053,23 @@
       "reason": "Reached via esbuild source module graph, imported by lib/pi-sdk/tool-outcome-adapter.ts (import-statement); core/message-utils.ts (import-statement); server/routes/chat.ts (import-statement); +1 more importer(s)."
     },
     {
+      "path": "shared/update-policy.cjs",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "create-require-root:shared/update-policy.cjs",
+          "from": null,
+          "kind": "root"
+        },
+        {
+          "root": "create-require-root:shared/artifact-core/ota-core.cjs",
+          "from": "shared/artifact-core/ota-core.cjs",
+          "kind": "require-call"
+        }
+      ],
+      "reason": "Declared root: Reached via a createRequire()-bound local require(\"../shared/update-policy.cjs\") call in cli/bundle.ts, which esbuild's own module-graph tracer cannot follow (see the createRequire discovery pass above this function). Declared as its own root so its module graph is traced the same as any other declared root."
+    },
+    {
       "path": "shared/video-mime.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -86475,9 +86498,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 7137,
+    "totalFiles": 7138,
     "byInputType": {
-      "source-graph": 742,
+      "source-graph": 743,
       "runtime-asset": 11,
       "nft-runtime-trace": 6384
     }

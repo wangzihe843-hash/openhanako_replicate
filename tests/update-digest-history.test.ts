@@ -1,3 +1,4 @@
+import "./helpers/enable-online-updates.ts";
 import { describe, expect, it, vi } from 'vitest';
 
 const digest = (version: string) => ({

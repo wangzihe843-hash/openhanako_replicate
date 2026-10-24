@@ -1479,6 +1479,7 @@
       "updateProgress": "{percent}%",
       "updateError": "检查更新失败",
       "updateLatest": "已是最新版本",
+      "updateOnlineDisabled": "此定制版暂不提供在线更新，请按本项目方式升级。",
       "updateLatestCheckedAt": "已是最新（上次检查 {time}）",
       "updateManifestReleasedAt": "货架清单签发于 {date}",
       "updateManifestReleasedAtViaMirror": "货架清单签发于 {date}（经备用源）",

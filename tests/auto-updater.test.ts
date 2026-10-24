@@ -1,3 +1,4 @@
+import "./helpers/enable-online-updates.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -82,7 +83,7 @@ describe("auto-updater", () => {
     delete process.env.HANA_UPDATE_SOURCE;
     delete process.env.HANA_UPDATE_PROVIDER;
     delete process.env.HANA_UPDATE_DIGEST_BASE_URL;
-    delete process.env.HANA_INVITE_API_URL;
+    process.env.HANA_INVITE_API_URL = "https://synthetic-invite.invalid";
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: false,
       status: 404,
@@ -129,8 +130,8 @@ describe("auto-updater", () => {
     initWithMockWindow();
     expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledWith({
       provider: "github",
-      owner: "liliMozi",
-      repo: "openhanako",
+      owner: "wangzihe843-hash",
+      repo: "openhanako_replicate",
     });
     expect(mockAutoUpdater.autoDownload).toBe(false);
     expect(mockAutoUpdater.autoInstallOnAppQuit).toBe(false);
@@ -140,8 +141,8 @@ describe("auto-updater", () => {
     const config = mod.resolveUpdateFeedConfig({});
     expect(config.feedURL).toEqual({
       provider: "github",
-      owner: "liliMozi",
-      repo: "openhanako",
+      owner: "wangzihe843-hash",
+      repo: "openhanako_replicate",
     });
     expect(config).not.toHaveProperty("fallbackConfigs");
   });
@@ -150,11 +151,11 @@ describe("auto-updater", () => {
     const config = mod.resolveUpdateFeedConfig({ HANA_UPDATE_SOURCE: source });
     expect(config.feedURL).toEqual({
       provider: "github",
-      owner: "liliMozi",
-      repo: "openhanako",
+      owner: "wangzihe843-hash",
+      repo: "openhanako_replicate",
     });
     expect(mod.buildReleaseDigestUrl("0.425.4", config)).toBe(
-      "https://github.com/liliMozi/openhanako/releases/download/v0.425.4/release-digest.v1.json",
+      "https://github.com/wangzihe843-hash/openhanako_replicate/releases/download/v0.425.4/release-digest.v1.json",
     );
   });
 
@@ -162,8 +163,8 @@ describe("auto-updater", () => {
     const config = mod.resolveUpdateFeedConfig({ HANA_UPDATE_SOURCE: "github" });
     expect(config.feedURL).toEqual({
       provider: "github",
-      owner: "liliMozi",
-      repo: "openhanako",
+      owner: "wangzihe843-hash",
+      repo: "openhanako_replicate",
     });
     expect(config).not.toHaveProperty("fallbackConfigs");
   });
@@ -236,13 +237,13 @@ describe("auto-updater", () => {
     }));
     expect(mockAutoUpdater.setFeedURL).toHaveBeenLastCalledWith({
       provider: "github",
-      owner: "liliMozi",
-      repo: "openhanako",
+      owner: "wangzihe843-hash",
+      repo: "openhanako_replicate",
     });
     expect(mod.getState().updateSource).toEqual({
       provider: "github",
-      owner: "liliMozi",
-      repo: "openhanako",
+      owner: "wangzihe843-hash",
+      repo: "openhanako_replicate",
     });
   });
 
@@ -266,15 +267,15 @@ describe("auto-updater", () => {
     expect(mockAutoUpdater.allowPrerelease).toBe(true);
     expect(mockAutoUpdater.setFeedURL).toHaveBeenLastCalledWith({
       provider: "github",
-      owner: "liliMozi",
-      repo: "openhanako",
+      owner: "wangzihe843-hash",
+      repo: "openhanako_replicate",
     });
     mod.setUpdateChannel("stable");
     expect(mockAutoUpdater.allowPrerelease).toBe(false);
     expect(mockAutoUpdater.setFeedURL).toHaveBeenLastCalledWith({
       provider: "github",
-      owner: "liliMozi",
-      repo: "openhanako",
+      owner: "wangzihe843-hash",
+      repo: "openhanako_replicate",
     });
   });
 
@@ -504,8 +505,8 @@ describe("auto-updater", () => {
     const config = mod.resolveUpdateFeedConfig({});
     expect(config.feedURL).toEqual({
       provider: "github",
-      owner: "liliMozi",
-      repo: "openhanako",
+      owner: "wangzihe843-hash",
+      repo: "openhanako_replicate",
     });
     expect(config.channel).toBe("default");
     expect(config.channelError).toBeNull();

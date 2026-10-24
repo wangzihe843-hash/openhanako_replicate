@@ -1409,6 +1409,7 @@
       "updateProgress": "{percent}%",
       "updateError": "檢查更新失敗",
       "updateLatest": "已是最新版本",
+      "updateOnlineDisabled": "此定製版暫不提供線上更新，請依本專案方式升級。",
       "updateLatestCheckedAt": "已是最新（上次檢查 {time}）",
       "updateManifestReleasedAt": "貨架清單簽發於 {date}",
       "updateManifestReleasedAtViaMirror": "貨架清單簽發於 {date}（經備用源）",

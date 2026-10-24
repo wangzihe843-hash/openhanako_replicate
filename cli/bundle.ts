@@ -20,6 +20,7 @@ const require = createRequire(import.meta.url);
 // Untyped CommonJS artifact-core modules (no declaration files) are
 // required, not ESM-imported, so typecheck doesn't demand .d.cts for them
 // — same pattern the test suite uses.
+const updatePolicy = require("../shared/update-policy.cjs");
 const otaCore = require("../shared/artifact-core/ota-core.cjs");
 const pointerStore = require("../shared/artifact-core/pointer-store.cjs");
 const { rendererPointerChannel } = require("../shared/artifact-core/pointer-channels.cjs");
@@ -87,6 +88,10 @@ export async function runBundlePull({
   hanaHome?: string;
   download?: DownloadRendererArtifact;
 } = {}): Promise<number> {
+  if (!updatePolicy.onlineUpdatesEnabled) {
+    console.error(updatePolicy.disabledMessage);
+    return 1;
+  }
   const progress = createProgressRenderer();
   const result = await download({
     homeDir: hanaHome,
@@ -132,7 +137,9 @@ export async function runBundleStatus({
   const state = (otaState && otaState[channel]) || {};
 
   if (!current) {
-    console.log(`${ansi.dim}No web frontend has been pulled yet. Run:${ansi.reset} hana bundle pull`);
+    console.log(updatePolicy.onlineUpdatesEnabled
+      ? `${ansi.dim}No web frontend has been pulled yet. Run:${ansi.reset} hana bundle pull`
+      : updatePolicy.disabledMessage);
     return 0;
   }
 

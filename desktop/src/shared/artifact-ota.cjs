@@ -31,6 +31,7 @@
  */
 
 const artifactBoot = require("./artifact-boot.cjs");
+const updatePolicy = require("../../../shared/update-policy.cjs");
 const otaCore = require("../../../shared/artifact-core/ota-core.cjs");
 // Static specifier on purpose — see artifact-ota-dev-bypass.cjs's header
 // comment; vite.config.main.js's alias keys off this exact literal.
@@ -53,6 +54,7 @@ const { SEED_CHANNEL } = artifactBoot;
  * @returns {NodeJS.Timeout} the initial delay timer (exposed for tests only)
  */
 function scheduleBackgroundOtaChecks(opts) {
+  if (!updatePolicy.onlineUpdatesEnabled) return null;
   const {
     homeDir,
     keyset,

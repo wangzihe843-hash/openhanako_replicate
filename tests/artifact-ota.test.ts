@@ -1,3 +1,4 @@
+import "./helpers/enable-online-updates.ts";
 import { generateKeyPairSync, sign as cryptoSign } from "crypto";
 import fs from "fs";
 import fsp from "fs/promises";
@@ -411,7 +412,7 @@ describe("artifact-ota: downloadToFile stall/deadline guards (trickle-attack mit
 describe("artifact-ota: channelManifestUrls", () => {
   it.each(["stable", "beta"])("returns only the GitHub %s channel pointer", (channel) => {
     expect(channelManifestUrls(channel)).toEqual([
-      `https://github.com/liliMozi/openhanako/releases/download/channels/${channel}.json`,
+      `https://github.com/wangzihe843-hash/openhanako_replicate/releases/download/channels/${channel}.json`,
     ]);
   });
 

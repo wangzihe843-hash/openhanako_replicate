@@ -1409,6 +1409,7 @@
       "updateProgress": "{percent}%",
       "updateError": "アップデートの確認に失敗しました",
       "updateLatest": "最新バージョンです",
+      "updateOnlineDisabled": "このカスタム版はオンライン更新に対応していません。本プロジェクトの手順に従って更新してください。",
       "updateLatestCheckedAt": "最新です（最終確認: {time}）",
       "updateManifestReleasedAt": "配布マニフェストの発行日: {date}",
       "updateManifestReleasedAtViaMirror": "配布マニフェストの発行日: {date}（バックアップ経由）",

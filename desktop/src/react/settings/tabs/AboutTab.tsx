@@ -456,6 +456,7 @@ export function AboutTab() {
   const [history, setHistory] = useState<UpdateDigestHistoryResult>(EMPTY_HISTORY);
   const shellUpdate = useAutoUpdateState();
   const {
+    onlineUpdatesEnabled,
     currentVersion,
     available,
     minShellBlocked,
@@ -472,17 +473,20 @@ export function AboutTab() {
   const autoCheck = readConfigBoolean(settingsConfig, cfg => cfg.auto_check_updates, true);
 
   const handleCheck = useCallback(() => {
+    if (!onlineUpdatesEnabled) return;
     void hana?.autoUpdateCheck?.();
     void checkTrainNow();
-  }, [checkTrainNow, hana]);
+  }, [checkTrainNow, hana, onlineUpdatesEnabled]);
 
   const handleApply = useCallback(() => {
+    if (!onlineUpdatesEnabled) return;
     void applyTrainNow();
-  }, [applyTrainNow]);
+  }, [applyTrainNow, onlineUpdatesEnabled]);
 
   const handleInstallShell = useCallback(async () => {
+    if (!onlineUpdatesEnabled) return;
     await hana?.autoUpdateInstall?.();
-  }, [hana]);
+  }, [hana, onlineUpdatesEnabled]);
 
   const handleHistoryOpen = useCallback(async () => {
     setHistoryOpen(true);
@@ -497,24 +501,26 @@ export function AboutTab() {
   }, []);
 
   const handleBetaToggle = useCallback(async (on: boolean) => {
+    if (!onlineUpdatesEnabled) return;
     const channel = on ? 'beta' : 'stable';
     hana?.autoUpdateSetChannel?.(channel);
     await autoSaveConfig({ update_channel: channel }, { silent: true });
     await loadSettingsConfig();
     hana?.autoUpdateCheck?.();
     void checkTrainNow();
-  }, [checkTrainNow, hana]);
+  }, [checkTrainNow, hana, onlineUpdatesEnabled]);
 
   const handleAutoCheckToggle = useCallback(async (on: boolean) => {
+    if (!onlineUpdatesEnabled) return;
     await autoSaveConfig({ auto_check_updates: on }, { silent: true });
     await loadSettingsConfig();
-  }, []);
+  }, [onlineUpdatesEnabled]);
 
   // 平台更新条件行：仅当壳更新待命时出现，平时不渲染——一个
   // 一年两次的事件不该常年占一行。两层文案：minShell 真的挡住
   // 新列车时升级成更明确的警告措辞。这一行是唯一还会触发壳安装
   // （autoUpdateInstall）的地方——Hero 区的主更新按钮只会走 applyTrainNow。
-  const showPlatformRow = shellUpdate?.status === 'downloaded';
+  const showPlatformRow = onlineUpdatesEnabled && shellUpdate?.status === 'downloaded';
   const platformRowLabel = minShellBlocked
     ? t('settings.about.shellStickerTitleBlocking')
     : t('settings.about.shellStickerTitle');
@@ -523,7 +529,7 @@ export function AboutTab() {
   // 展示带"重试"按钮的错误态时，这颗通用检查按钮就是多余的——要么已经在
   // 做同一件事，要么已经有一颗更贴切的按钮摆在上面了。只在"从未检查过"与
   // "已是最新"两种平静态下出现。
-  const showCheckButton = phase === 'idle' && !available && !lastError;
+  const showCheckButton = onlineUpdatesEnabled && phase === 'idle' && !available && !lastError;
 
   return (
     <div className={`${styles['settings-tab-content']} ${styles['active']}`} data-tab="about">
@@ -536,7 +542,8 @@ export function AboutTab() {
         <div className={styles['about-name']}>HanaAgent</div>
         <div className={styles['about-tagline']}>{t('settings.about.tagline')}</div>
         {currentVersion && <div className={styles['about-version']}>v{currentVersion}</div>}
-        <TrainUpdateArea
+        {!onlineUpdatesEnabled && <p role="status">{t('settings.about.updateOnlineDisabled')}</p>}
+        {onlineUpdatesEnabled && <TrainUpdateArea
           agentName={settingsConfig?.agent?.name || 'Hanako'}
           available={available}
           lastError={lastError}
@@ -546,7 +553,7 @@ export function AboutTab() {
           progress={progress}
           onApply={handleApply}
           onRetry={handleCheck}
-        />
+        />}
         <div className={styles['about-update-actions']}>
           {showCheckButton && (
             <button type="button" className={styles['about-check-update-btn']} onClick={handleCheck}>
@@ -590,14 +597,14 @@ export function AboutTab() {
             </a>
           }
         />
-        <SettingsRow
+        {onlineUpdatesEnabled && <SettingsRow
           label={t('settings.about.autoCheckUpdates')}
           control={<Toggle on={autoCheck} onChange={handleAutoCheckToggle} />}
-        />
-        <SettingsRow
+        />}
+        {onlineUpdatesEnabled && <SettingsRow
           label={t('settings.about.betaUpdates')}
           control={<Toggle on={isBeta} onChange={handleBetaToggle} />}
-        />
+        />}
         {showPlatformRow && (
           <SettingsRow
             label={platformRowLabel}
@@ -612,7 +619,7 @@ export function AboutTab() {
         )}
       </SettingsSection>
 
-      <InviteChannelSection />
+      {onlineUpdatesEnabled && <InviteChannelSection />}
 
       {/* License 全文：ExpandableRow 直接作为 tab 末尾元素 */}
       <ExpandableRow label={t('settings.about.licenseToggle')}>
