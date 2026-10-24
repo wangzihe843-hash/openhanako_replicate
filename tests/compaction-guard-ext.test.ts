@@ -404,16 +404,31 @@ describe("CompactionGuardExtension", () => {
       expect(computeHardTruncation).not.toHaveBeenCalled();
     });
 
-    it("rejects missing assistant usage without repairing persisted input or escaping to native", async () => {
-      const messages = [oldMessage, { ...retainedTail, usage: undefined }];
-      const before = structuredClone(messages);
+    it.each([
+      { label: "completions", api: "openai-completions" },
+      { label: "Responses capped", api: "openai-responses" },
+      { label: "Responses omitted", api: "openai-responses", compat: { supportsMaxOutputTokens: false } },
+      { label: "Responses auth", api: "openai-responses", provider: "openai", baseUrl: "https://api.openai.com/v1" },
+      { label: "Codex", api: "openai-codex-responses" },
+    ])("F3 rejects missing usage before side effects or native fallback: $label", async ({ label: _label, ...override }) => {
+      const requestModel = { ...model, contextWindow: 8192, maxTokens: 2048, ...override };
+      const messages = [oldMessage, { ...retainedTail, api: requestModel.api, usage: undefined }];
+      const before = structuredClone({ messages, preparation, requestModel });
+      // The review counterexample failed later in the builder and escaped to
+      // native. Invalid usage must stop before reaching this injected failure.
+      cacheCompactor.mockRejectedValueOnce(new Error("synthetic builder failure"));
+      const appendCompaction = vi.fn();
+      const replaceMessages = vi.fn();
       const result = await pi.trigger("session_before_compact", { preparation }, {
-        ...ctx, sessionManager: { ...ctx.sessionManager, buildSessionContext: () => ({ messages }) },
+        ...ctx, model: requestModel,
+        sessionManager: { ...ctx.sessionManager, appendCompaction, replaceMessages, buildSessionContext: () => ({ messages }) },
       });
       expect(result).toEqual({ cancel: true });
-      expect(messages).toEqual(before);
-      expect(cacheCompactor).not.toHaveBeenCalled();
-      expect(computeHardTruncation).not.toHaveBeenCalled();
+      expect({ messages, preparation, requestModel }).toEqual(before);
+      for (const spy of [cacheCompactor, computeHardTruncation, buildSessionCacheSnapshot,
+        ctx.modelRegistry.getApiKeyAndHeaders, appendCompaction, replaceMessages]) {
+        expect(spy).not.toHaveBeenCalled();
+      }
     });
 
     it("returns cache-preserving compaction when summarize tokens are within threshold", async () => {

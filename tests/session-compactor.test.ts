@@ -2167,14 +2167,23 @@ describe("session-compactor", () => {
 
   it.each([
     { id: "missing-window", reasoning: false },
+    { id: "F3-Responses-missing-usage", api: "openai-responses", compat: { supportsMaxOutputTokens: false }, contextWindow: 8192, maxTokens: 2048 },
+    { id: "F3-Codex-missing-usage", api: "openai-codex-responses", contextWindow: 8192, maxTokens: 2048 },
     { id: "uncapped", api: "openai-responses", compat: { supportsMaxOutputTokens: false }, contextWindow: 8192, maxTokens: 8192 },
     { id: "codex", api: "openai-codex-responses", contextWindow: 8192, maxTokens: 8192 },
     { id: "forwarded", api: "pi-messages", contextWindow: 128000, maxTokens: 8192 },
     { id: "custom", api: "custom-api", contextWindow: 128000, maxTokens: 8192 },
     { id: "nan", api: "openai-completions", contextWindow: 8192, maxTokens: Number.NaN },
   ])("fails before provider calls or history mutation when a model budget is unproven: $id", async (model) => {
-    const oldMessage = { role: "user", content: "old context" };
-    const retainedMessage = { role: "assistant", content: "keep" };
+    const oldMessage = { role: "user", content: "old context", timestamp: 1 };
+    const retainedMessage = {
+      role: "assistant", content: [{ type: "text", text: "keep" }], stopReason: "stop", timestamp: 2,
+      // Keep the existing budget rejection cases independent of the F3 error.
+      usage: model.id.startsWith("F3-") ? undefined : {
+        input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
     const preparation = {
       firstKeptEntryId: "entry-keep",
       tokensBefore: 9000,
@@ -2222,7 +2231,9 @@ describe("session-compactor", () => {
     };
 
     const before = structuredClone({ preparation, branch, state: session.agent.state });
-    await expect(runCachePreservingCompactionForSession(session)).rejects.toThrow(/Compaction (fit|output estimation)/);
+    await expect(runCachePreservingCompactionForSession(session)).rejects.toThrow(model.id.startsWith("F3-")
+      ? "Compaction output estimation requires valid provider messages and assistant usage"
+      : /Compaction (fit|output estimation)/);
     expect({ preparation, branch, state: session.agent.state }).toEqual(before);
 
     expect(streamFn).not.toHaveBeenCalled();

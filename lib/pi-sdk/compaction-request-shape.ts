@@ -153,10 +153,7 @@ export function estimateDefaultCompactionOutputBudget(
     // auth modes without inspecting secrets or claiming a cap will survive.
     || (model.provider === "openai" && model.baseUrl === "https://api.openai.com/v1")
   );
-  if (responsesMayOmitCap || model.api === "openai-codex-responses") {
-    return { outputBudgetTokens: maxTokens, outputBudgetSource: "model-limit" };
-  }
-  if (!CAPPED_APIS.has(model.api) && model.api !== "openai-responses") {
+  if (!CAPPED_APIS.has(model.api) && model.api !== "openai-responses" && model.api !== "openai-codex-responses") {
     throw new CompactionBudgetSafetyError(`Compaction output estimation has no reviewed wire bound for API ${String(model.api)}`);
   }
   let outputTokens: number;
@@ -171,6 +168,12 @@ export function estimateDefaultCompactionOutputBudget(
   }
   if (!Number.isFinite(outputTokens) || outputTokens <= 0) {
     throw new CompactionBudgetSafetyError("Compaction output estimation produced a non-finite or non-positive budget");
+  }
+  // Omitted-cap simple providers still run buildBaseOptions. Validate their
+  // context/usage through the shared SDK path before selecting a budget;
+  // the resulting clamp does not replace the model-limit planning bound.
+  if (responsesMayOmitCap || model.api === "openai-codex-responses") {
+    return { outputBudgetTokens: maxTokens, outputBudgetSource: "model-limit" };
   }
   return {
     outputBudgetTokens: model.api === "openai-responses" || model.api === "azure-openai-responses"

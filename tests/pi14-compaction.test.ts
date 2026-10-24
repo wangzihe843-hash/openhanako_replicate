@@ -329,6 +329,43 @@ describe("Pi 1.4 native summaries and provider-default planning", () => {
     expect(network).not.toHaveBeenCalled();
   });
 
+  for (const fixture of [
+    { label: "completions", api: "openai-completions", source: "wire-cap" },
+    { label: "Responses capped", api: "openai-responses", source: "wire-cap" },
+    { label: "Responses omitted", api: "openai-responses", source: "model-limit", compat: { supportsMaxOutputTokens: false } },
+    { label: "Responses auth", api: "openai-responses", source: "model-limit", provider: "openai", baseUrl: "https://api.openai.com/v1" },
+    { label: "Codex", api: "openai-codex-responses", source: "model-limit" },
+  ]) {
+    const { label, source, ...override } = fixture;
+    const requestModel = { ...model(fixture.api, 8192, 8192), ...override };
+    const assistant = {
+      role: "assistant" as const, content: [{ type: "text" as const, text: "tail" }],
+      api: requestModel.api, provider: requestModel.provider, model: requestModel.id,
+      stopReason: "stop" as const, timestamp: 2,
+      usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    };
+    it.each([undefined, null])(`F3 rejects absent usage through shared SDK validation: ${label} (%j)`, invalidUsage => {
+      const messages = [user("history"), { ...assistant, usage: invalidUsage }];
+      const before = structuredClone(messages);
+      expect(() => estimateDefaultCompactionOutputBudget(requestModel, messages)).toThrow(CompactionBudgetSafetyError);
+      expect(messages).toEqual(before);
+    });
+    it(`F3 preserves valid usage and the selected output bound: ${label}`, () => {
+      const messages = [user("history"), assistant];
+      const before = structuredClone(messages);
+      const budget = estimateDefaultCompactionOutputBudget(requestModel, messages);
+      const clamp = clampMaxTokensToContext(requestModel as any, normalizeContext({ messages }), requestModel.maxTokens);
+      expect(budget.outputBudgetSource).toBe(source);
+      expect(budget.outputBudgetTokens).toBe(source === "model-limit" ? requestModel.maxTokens : clamp);
+      expect(Number.isFinite(budget.outputBudgetTokens)).toBe(true);
+      const fit = shouldHardTruncateCachePreservingCompaction({ model: { ...requestModel, maxTokens: 2048 }, preparation: preparation(), messages });
+      expect(fit).toMatchObject({ cachePreservingFits: true, nativeSummaryFits: true, shouldHardTruncate: false });
+      expect(messages).toEqual(before);
+      expect(() => estimateDefaultCompactionOutputBudget({ ...requestModel, maxTokens: undefined }, messages)).toThrow(/finite positive model.maxTokens/);
+    });
+  }
+
   it.each([
     undefined,
     { contextWindow: 8192 },
