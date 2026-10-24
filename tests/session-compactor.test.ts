@@ -1706,6 +1706,30 @@ describe("session-compactor", () => {
     });
   });
 
+  it("F2: budgets Bedrock's nested wire cap and retains the prompt threshold", () => {
+    const user = (text: string) => ({ role: "user" as const, content: [{ type: "text" as const, text }], timestamp: 1 });
+    const model = { api: "bedrock-converse-stream", provider: "bedrock-alias", maxTokens: 128_000, contextWindow: 200_000 };
+    const preparation = { messagesToSummarize: [user("old")], turnPrefixMessages: [], isSplitTurn: false, settings: { reserveTokens: 640, keepRecentTokens: 100 } };
+    const small = shouldHardTruncateCachePreservingCompaction({ model, preparation, messages: [user("history")] });
+    expect(small.cachePreservingBudget).toMatchObject({ outputBudgetTokens: 128_000, outputBudgetSource: "wire-cap" });
+    expect(small).toMatchObject({ cachePreservingFits: true, nativeSummaryFits: true, shouldHardTruncate: false });
+    const large = shouldHardTruncateCachePreservingCompaction({ model, preparation, messages: [user("x".repeat(720_000))] });
+    expect(large.cachePreservingBudget.outputBudgetTokens).toBeLessThan(65_536);
+    expect(large.cachePreservingBudget.promptTokens).toBeGreaterThan(large.threshold);
+    expect(large).toMatchObject({ cachePreservingFits: false, nativeSummaryFits: true, shouldUseNativeFallback: true, shouldHardTruncate: false });
+  });
+
+  it("F2: an unfit model-limit remains insufficient to authorize deleting short history", () => {
+    const messages = [{ role: "user" as const, content: [{ type: "text" as const, text: "short history" }], timestamp: 1 }];
+    const preparation = { messagesToSummarize: messages, turnPrefixMessages: [], isSplitTurn: false, settings: { reserveTokens: 640, keepRecentTokens: 100 } };
+    const model = { api: "openai-responses", provider: "proxy", contextWindow: 32_768, maxTokens: 128_000, compat: { supportsMaxOutputTokens: false, outputCapRequired: true } };
+    const before = structuredClone({ model, preparation, messages });
+    expect(estimateCachePreservingCompactionRequest({ model, preparation, messages }).cachePreservingBudget)
+      .toMatchObject({ outputBudgetTokens: 128_000, outputBudgetSource: "model-limit" });
+    expect(() => shouldHardTruncateCachePreservingCompaction({ model, preparation, messages })).toThrow(/fit is unproven/);
+    expect({ model, preparation, messages }).toEqual(before);
+  });
+
   it("uses provider-default output for reasoning compaction without a Hana numeric cap", async () => {
     const messages = [{ role: "user", content: "history" }];
     const streamFn = vi.fn(async () => agentStreamOf());

@@ -31,7 +31,7 @@ import {
   normalizeProviderContextMessages,
   normalizeProviderPayload,
 } from "./provider-compat.ts";
-import { DEFAULT_CHAT_OUTPUT_TOKENS, resolveOutputCapCapability } from "./provider-compat/output-budget.ts";
+import { resolveCompactionOutputCapPolicy, resolveOutputCapCapability } from "./provider-compat/output-budget.ts";
 import {
   isReasoningReplayUnavailable,
   reasoningReplayCanClear,
@@ -1331,12 +1331,12 @@ export function estimateCachePreservingCompactionRequest({
   const sdkDefaultBudget = estimateDefaultCompactionOutputBudget(
     model, [...liveMessages, cacheInstruction], systemPrompt, providerVisibleTools,
   );
-  // A's optional-cap hook removes root caps. Only a required, actually
-  // serialized cap retains the SDK clamp; capability alone cannot enforce it.
-  const preservesWireCap = resolveOutputCapCapability(model).required
+  // Only apply bounds the final payload hook actually preserves/enforces.
+  const capPolicy = resolveCompactionOutputCapPolicy(model);
+  const preservesWireCap = capPolicy.preservesSdkCap
     && sdkDefaultBudget.outputBudgetSource === "wire-cap";
   const cacheOutputBudgetTokens = cacheMaxTokens ?? (preservesWireCap
-    ? Math.min(sdkDefaultBudget.outputBudgetTokens, DEFAULT_CHAT_OUTPUT_TOKENS)
+    ? Math.min(sdkDefaultBudget.outputBudgetTokens, capPolicy.defaultMaxTokens ?? sdkDefaultBudget.outputBudgetTokens)
     : Number(model.maxTokens));
   const cacheOutputBudgetSource = cacheMaxTokens !== undefined || preservesWireCap
     ? "wire-cap" as const : "model-limit" as const;

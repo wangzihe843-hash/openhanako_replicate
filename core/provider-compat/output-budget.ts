@@ -84,6 +84,20 @@ export function resolveOutputCapCapability(model) {
     || DEFAULT_OUTPUT_CAP_CAPABILITY;
 }
 
+/** The cap that provider-default compaction's final payload hook preserves. */
+export function resolveCompactionOutputCapPolicy(model) {
+  // Converse serializes inferenceConfig.maxTokens. Both output normalization
+  // and compaction's optional-cap removal only touch root fields, so the SDK
+  // bound survives without Hana's 64K restriction. Use the API, not capability
+  // dispatch: explicit-required can shadow Bedrock, and aliases keep this wire
+  // format. This describes existing requests; it does not change chat policy.
+  const nestedCap = lower(model?.api) === "bedrock-converse-stream";
+  return {
+    preservesSdkCap: nestedCap || resolveOutputCapCapability(model).required,
+    defaultMaxTokens: nestedCap ? null : DEFAULT_CHAT_OUTPUT_TOKENS,
+  };
+}
+
 function hasOutputCap(payload) {
   return OUTPUT_CAP_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(payload, field));
 }

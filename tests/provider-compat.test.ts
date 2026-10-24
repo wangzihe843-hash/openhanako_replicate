@@ -10,6 +10,7 @@ import {
 import {
   resolveOutputBudgetPolicy,
   resolveOutputCapCapability,
+  resolveCompactionOutputCapPolicy,
 } from "../core/provider-compat/output-budget.ts";
 
 describe("isDeepSeekModel", () => {
@@ -333,6 +334,31 @@ describe("resolveOutputCapCapability", () => {
       required: false,
       preserveImplicitSdkDefault: true,
     });
+  });
+});
+
+describe("F2: compaction output cap policy", () => {
+  it.each([
+    { api: "bedrock-converse-stream", provider: "amazon-bedrock" },
+    { api: "bedrock-converse-stream", provider: "bedrock" },
+    { api: "bedrock-converse-stream", provider: "custom-proxy" },
+    { api: "bedrock-converse-stream", provider: "custom-proxy", compat: { outputCapRequired: true } },
+  ])("recognizes the nested cap independently of capability dispatch: %j", model => {
+    const before = structuredClone(model);
+    expect(resolveCompactionOutputCapPolicy(model)).toEqual({ preservesSdkCap: true, defaultMaxTokens: null });
+    expect(model).toEqual(before);
+  });
+
+  it.each([
+    { model: { api: "anthropic-messages", provider: "proxy" }, preservesSdkCap: true },
+    { model: { api: "openai-completions", provider: "bedrock" }, preservesSdkCap: true },
+    { model: { api: "openai-responses", compat: { outputCapRequired: true } }, preservesSdkCap: true },
+    { model: { api: "openai-responses" }, preservesSdkCap: false },
+    { model: { api: "google-generative-ai" }, preservesSdkCap: false },
+    { model: null, preservesSdkCap: false },
+    { model: undefined, preservesSdkCap: false },
+  ])("keeps the existing root-field policy: %j", ({ model, preservesSdkCap }) => {
+    expect(resolveCompactionOutputCapPolicy(model)).toEqual({ preservesSdkCap, defaultMaxTokens: 65_536 });
   });
 });
 

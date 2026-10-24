@@ -5,6 +5,9 @@ import { normalizeContext } from "@earendil-works/pi-ai";
 import { clampMaxTokensToContext } from "@earendil-works/pi-ai/api/simple-options";
 import { streamSimple as openaiCompletions } from "@earendil-works/pi-ai/api/openai-completions";
 import { streamSimple as azureResponses } from "@earendil-works/pi-ai/api/azure-openai-responses";
+import { getModel } from "@earendil-works/pi-ai/compat";
+import { streamSimple as bedrockConverse } from "@earendil-works/pi-ai/api/bedrock-converse-stream";
+import { BedrockRuntimeClient } from "@aws-sdk/client-bedrock-runtime";
 import { SessionManager, prepareCompaction } from "../lib/pi-sdk/index.ts";
 import { streamSimple as openaiResponses } from "@earendil-works/pi-ai/api/openai-responses";
 import { streamSimple as codexResponses } from "@earendil-works/pi-ai/api/openai-codex-responses";
@@ -22,6 +25,7 @@ import {
   runCachePreservingCompactionForSession,
   isDirectCompactionInProgress,
   estimateCachePreservingCompactionRequest,
+  buildCachePreservingCompactionInstruction,
   normalizeCompactionProviderPayload,
   shouldHardTruncateCachePreservingCompaction,
 } from "../core/session-compactor.ts";
@@ -37,6 +41,7 @@ const preparation = (text = "history") => ({
   fileOps: { read: new Set<string>(), written: new Set<string>(), edited: new Set<string>() },
   settings: { enabled: true, reserveTokens: 640, keepRecentTokens: 100 },
 });
+
 const model = (api: string, maxTokens = 32_768, contextWindow = 32_768) => ({
   id: api === "google-generative-ai" ? "gemini-2.5-flash" : "synthetic-summary",
   name: "Synthetic summary",
@@ -568,5 +573,122 @@ describe("F1 Native B sampling output bounds", () => {
     for (const spy of [append, session.agent.replaceMessages, session.agent.streamFn, session.modelRegistry.getApiKeyAndHeaders, onCompacted]) expect(spy).not.toHaveBeenCalled();
     expect(manager.getEntries()).toEqual(before);
     expect(isDirectCompactionInProgress(session)).toBe(false);
+  });
+});
+
+describe("F2: Bedrock A budgets the nested SDK cap", () => {
+  const opus = () => structuredClone(getModel("amazon-bedrock", "anthropic.claude-opus-4-6-v1"));
+  const haiku = () => structuredClone(getModel("amazon-bedrock", "anthropic.claude-haiku-4-5-20251001-v1:0"));
+  const prep = () => ({ ...preparation(), isSplitTurn: false, turnPrefixMessages: [] });
+
+  async function capture(m: any, reasoning?: string, rootCap?: number) {
+    const messages = [user("history")];
+    const instruction = buildCachePreservingCompactionInstruction({ preparation: prep(), liveMessageCount: 1, retainedMessageCount: 0 });
+    const systemPrompt = "Summarize the conversation.";
+    const before = structuredClone(m);
+    let payload: any;
+    let normalized: any;
+    const send = vi.spyOn(BedrockRuntimeClient.prototype, "send").mockImplementation(async command => {
+      payload = (command as any).input;
+      throw new Error("synthetic Bedrock pre-dispatch stop");
+    });
+    try {
+      const result = await bedrockConverse(m, normalizeContext({ systemPrompt, messages: [...messages, instruction] }), {
+        apiKey: "synthetic-bedrock-key", reasoning: reasoning as any, maxRetries: 0,
+        onPayload(value) {
+          // A root field cannot replace Converse's nested cap, even when a
+          // legacy payload hook supplies a conflicting, valid root value.
+          const input = rootCap === undefined ? value : { ...value as any, max_tokens: rootCap };
+          const snapshot = structuredClone(input);
+          normalized = normalizeCompactionProviderPayload(input, m);
+          expect(input).toEqual(snapshot);
+          return normalized;
+        },
+      }).result();
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(result.errorMessage).toContain("synthetic Bedrock pre-dispatch stop");
+      expect(payload).toBe(normalized);
+      expect(m).toEqual(before);
+    } finally {
+      send.mockRestore();
+    }
+    const budget = estimateCachePreservingCompactionRequest({ model: m, preparation: prep(), messages, instruction, systemPrompt }).cachePreservingBudget;
+    const sdkCap = clampMaxTokensToContext(m, normalizeContext({ systemPrompt, messages: [...messages, instruction] }), m.maxTokens);
+    return { budget, payload, sdkCap };
+  }
+
+  it.each([
+    { name: "catalog Opus default", make: opus },
+    { name: "catalog Haiku default", make: haiku },
+    { name: "Opus adaptive thinking", make: opus, reasoning: "high" },
+    { name: "Haiku budget thinking", make: haiku, reasoning: "high" },
+    { name: "smaller model capability", make: () => ({ ...opus(), maxTokens: 32_768 }) },
+    { name: "remaining context below 64K", make: () => ({ ...opus(), contextWindow: 40_000 }) },
+    { name: "thinking with context clamp", make: () => ({ ...haiku(), contextWindow: 40_000 }), reasoning: "high" },
+    { name: "SDK one-token floor", make: () => ({ ...opus(), contextWindow: 256 }) },
+    { name: "explicit required capability wins dispatch", make: () => ({ ...opus(), compat: { outputCapRequired: true } }) },
+    { name: "bedrock alias", make: () => ({ ...opus(), provider: "bedrock" }) },
+    { name: "custom provider alias", make: () => ({ ...opus(), provider: "custom-bedrock-proxy" }) },
+    { name: "custom alias with context clamp", make: () => ({ ...opus(), provider: "custom-bedrock-proxy", contextWindow: 40_000 }) },
+    { name: "conflicting smaller root cap", make: opus, rootCap: 512 },
+    { name: "conflicting larger root cap", make: opus, rootCap: 256_000 },
+    { name: "ignored nested/root sampling overrides", make: () => ({ ...opus(), samplingParams: { inferenceConfig: { maxTokens: 256_000 }, max_tokens: 512 } }) },
+    { name: "ignored malformed sampling overrides", make: () => ({ ...opus(), samplingParams: { inferenceConfig: null, max_tokens: NaN }, samplingParamsByThinkingLevel: { high: { inferenceConfig: { maxTokens: "unknown" } } } }), reasoning: "high" },
+  ])("matches the command sent to the SDK: $name", async ({ make, reasoning, rootCap }) => {
+    const { budget, payload, sdkCap } = await capture(make(), reasoning, rootCap);
+    expect(payload.inferenceConfig.maxTokens).toBe(sdkCap);
+    expect(budget).toMatchObject({ outputBudgetTokens: sdkCap, outputBudgetSource: "wire-cap", maxTokens: undefined });
+    expect(budget.outputBudgetTokens).toBeGreaterThanOrEqual(payload.inferenceConfig.maxTokens);
+  });
+
+  it.each([undefined, null, NaN, Infinity, 0, -1, "unknown"])("rejects an unproven model cap %j before assigning a budget", maxTokens => {
+    const m = { ...opus(), maxTokens } as any;
+    expect(() => estimateCachePreservingCompactionRequest({ model: m, preparation: prep(), messages: [user("history")] })).toThrow(CompactionBudgetSafetyError);
+  });
+
+  it("retains F3 usage validation for the Bedrock nested cap", () => {
+    const messages = [{ role: "assistant", content: [{ type: "text", text: "tail" }], stopReason: "stop", timestamp: 2 }] as any;
+    expect(() => estimateCachePreservingCompactionRequest({ model: opus() as any, preparation: prep(), messages })).toThrow(/valid provider messages and assistant usage/);
+  });
+
+  it("cancels an unknown Bedrock cap before auth, dispatch or history mutation", async () => {
+    const m = { ...opus(), maxTokens: undefined } as any;
+    const manager = SessionManager.inMemory("/synthetic");
+    const messages = [user("old ".repeat(3000)), user("retain ".repeat(40))];
+    for (const message of messages) manager.appendMessage(message);
+    const settings = { enabled: true, reserveTokens: 640, keepRecentTokens: 10 };
+    expect(prepareCompaction(manager.getBranch(), settings)).toBeDefined();
+    const before = structuredClone(manager.getEntries());
+    const append = vi.spyOn(manager, "appendCompaction");
+    const session = {
+      model: m, sessionManager: manager, settingsManager: { getCompactionSettings: () => settings },
+      modelRegistry: { getApiKeyAndHeaders: vi.fn() }, _emit: vi.fn(),
+      agent: { state: { messages, tools: [], systemPrompt: "" }, convertToLlm: (x: any) => x, transformContext: async (x: any) => x, streamFn: vi.fn(), replaceMessages: vi.fn() },
+    };
+    const onCompacted = vi.fn();
+    await expect(runCachePreservingCompactionForSession(session, { onCompacted })).rejects.toBeInstanceOf(CompactionBudgetSafetyError);
+    for (const spy of [append, session.agent.replaceMessages, session.agent.streamFn, session.modelRegistry.getApiKeyAndHeaders, onCompacted]) expect(spy).not.toHaveBeenCalled();
+    expect(manager.getEntries()).toEqual(before);
+    expect(isDirectCompactionInProgress(session)).toBe(false);
+  });
+
+  it.each([
+    { api: "anthropic-messages", stream: anthropicMessages, provider: "synthetic", cap: (p: any) => p.max_tokens, expected: 65_536, source: "wire-cap" },
+    { api: "openai-responses", stream: openaiResponses, provider: "synthetic", cap: (p: any) => p.max_output_tokens, expected: 128_000, source: "model-limit" },
+    { api: "google-generative-ai", stream: googleGenerativeAi, provider: "synthetic", cap: (p: any) => p.config.maxOutputTokens, expected: 128_000, source: "model-limit" },
+  ])("keeps $api A policy unchanged", async ({ api, stream, provider, cap, expected, source }) => {
+    const m = { ...model(api, 128_000, 1_000_000), provider };
+    const messages = [user("history")];
+    const instruction = user("summarize");
+    let payload: any;
+    const result = await stream(m as any, normalizeContext({ messages: [...messages, instruction] }), {
+      apiKey: "synthetic-key", maxRetries: 0,
+      onPayload(value) { payload = normalizeCompactionProviderPayload(value, m); throw new Error("synthetic pre-dispatch stop"); },
+    }).result();
+    expect(result.errorMessage).toContain("synthetic pre-dispatch stop");
+    const budget = estimateCachePreservingCompactionRequest({ model: m, preparation: prep(), messages, instruction }).cachePreservingBudget;
+    expect(budget).toMatchObject({ outputBudgetTokens: expected, outputBudgetSource: source });
+    if (api === "openai-responses") expect(cap(payload)).toBeUndefined();
+    else expect(cap(payload)).toBe(expected);
   });
 });
