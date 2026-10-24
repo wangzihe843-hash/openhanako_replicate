@@ -1,0 +1,55 @@
+name: Windows merge-audit timing once
+on:
+  push:
+    branches: [diagnostic/windows-merge-audit-8a2599b4-once-20261024]
+permissions:
+  contents: read
+concurrency:
+  group: merge-audit-timing-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  observe:
+    if: github.event_name == 'push' && github.event.created == true && github.run_attempt == 1
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: observer
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          ref: 8a2599b4a25e83ce746e855bbb1ea7d124ca67c3
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24.15.0'
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+      - name: Install fixed source dependencies once
+        working-directory: source
+        timeout-minutes: 12
+        run: npm ci
+      - name: Prepare timing-only overlay on fixed source
+        run: node observer/scripts/diagnostic-merge-audit/prepare.cjs source "$env:RUNNER_TEMP/merge-audit-timing"
+      - name: Run original five cases once with original 10 second budget
+        timeout-minutes: 4
+        run: node observer/scripts/diagnostic-merge-audit/run.cjs source "$env:RUNNER_TEMP/merge-audit-timing"
+      - name: Preserve synthetic timing and raw output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-merge-audit-timing-once
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/merge-audit-timing/identity.json
+            ${{ runner.temp }}/merge-audit-timing/overlay.json
+            ${{ runner.temp }}/merge-audit-timing/events-*.jsonl
+            ${{ runner.temp }}/merge-audit-timing/observer-error-*.flag
+            ${{ runner.temp }}/merge-audit-timing/session.json
+            ${{ runner.temp }}/merge-audit-timing/result.json
+            ${{ runner.temp }}/merge-audit-timing/vitest.json
+            ${{ runner.temp }}/merge-audit-timing/cli.stdout.log
+            ${{ runner.temp }}/merge-audit-timing/cli.stderr.log
