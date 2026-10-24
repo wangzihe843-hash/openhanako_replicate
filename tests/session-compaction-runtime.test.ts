@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { SettingsManager } from "../lib/pi-sdk/index.ts";
+import { SessionManager, SettingsManager, prepareCompaction } from "../lib/pi-sdk/index.ts";
+import { isDirectCompactionInProgress } from "../core/session-compactor.ts";
 import {
   MIDRUN_COMPACTION_NOTICE,
   computeCompactionReserveTokens,
@@ -120,6 +121,62 @@ describe("installDynamicCompactionReserve", () => {
 });
 
 describe("installMidRunCompaction", () => {
+  it.each(["before", "during-transform", "none"])("F4 real direct compaction notice follows committed history: %s", async when => {
+    const manager = SessionManager.inMemory("/workspace");
+    const input = [
+      { role: "user" as const, content: "x".repeat(10_000), timestamp: 1 },
+      { role: "user" as const, content: "keep ".repeat(30), timestamp: 2 },
+    ];
+    input.forEach(message => manager.appendMessage(message));
+    const settings = { enabled: true, reserveTokens: 640, keepRecentTokens: 10 };
+    expect(prepareCompaction(manager.getBranch(), settings)?.messagesToSummarize.length).toBeGreaterThan(0);
+    const before = structuredClone(manager.getEntries());
+    const controller = new AbortController();
+    const previousSnapshot = { context: { systemPrompt: "", tools: [], messages: manager.buildSessionContext().messages } };
+    const append = vi.spyOn(manager, "appendCompaction");
+    const notice = vi.spyOn(manager, "appendCustomMessageEntry");
+    const session = {
+      model: { id: "tiny", provider: "test", api: "openai-completions", reasoning: false, contextWindow: 1000, maxTokens: 512 },
+      sessionManager: manager,
+      settingsManager: SettingsManager.inMemory({ compaction: settings }),
+      _emit: vi.fn(),
+      extensionRunner: { hasHandlers: () => true, emit: vi.fn(async () => {}) },
+      agent: {
+        state: { ...previousSnapshot.context, thinkingLevel: "off" },
+        prepareNextTurnWithContext: async (_turn: unknown, _signal: AbortSignal) => previousSnapshot,
+        convertToLlm: messages => messages,
+        transformContext: async messages => {
+          if (when === "during-transform") controller.abort();
+          return messages;
+        },
+        streamFn: vi.fn(async () => { throw new Error("hard truncation must not call a provider"); }),
+        replaceMessages: vi.fn(messages => { session.agent.state.messages = messages; }),
+      },
+    };
+    installMidRunCompaction(session);
+    if (when === "before") controller.abort();
+    const snapshot = await session.agent.prepareNextTurnWithContext(createAssistantTurn(950), controller.signal);
+    const cancelled = when !== "none";
+    expect({
+      appends: append.mock.calls.length,
+      replaces: session.agent.replaceMessages.mock.calls.length,
+      notices: notice.mock.calls.length,
+      compactedEvents: session.extensionRunner.emit.mock.calls.length,
+      providerCalls: session.agent.streamFn.mock.calls.length,
+      historyChanged: JSON.stringify(manager.getEntries()) !== JSON.stringify(before),
+      reusedSnapshot: snapshot === previousSnapshot,
+      busy: isDirectCompactionInProgress(session),
+      aborted: session._emit.mock.calls.at(-1)[0].aborted,
+    }).toEqual({
+      appends: cancelled ? 0 : 1, replaces: cancelled ? 0 : 1,
+      notices: cancelled ? 0 : 1, compactedEvents: cancelled ? 0 : 1,
+      providerCalls: 0, historyChanged: !cancelled, reusedSnapshot: cancelled,
+      busy: false, aborted: cancelled,
+    });
+    if (cancelled) expect(session.agent.state.messages).toEqual(previousSnapshot.context.messages);
+    else expect(notice).toHaveBeenCalledWith("midrun-compaction-notice", MIDRUN_COMPACTION_NOTICE, false);
+  });
+
   it("compacts between turns and appends a task-continuation notice", async () => {
     const { session, rebuiltMessages } = createFakeSession({ contextWindow: 200_000 });
     const runCompaction = vi.fn(async (_session: any, _options: any) => ({}));

@@ -1,5 +1,5 @@
 import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExtensionRunner } from "@earendil-works/pi-coding-agent";
 
 const {
@@ -17,7 +17,7 @@ const {
       : String(message?.content || message?.summary || "");
     return Math.ceil(content.length / 4);
   }),
-  findCutPointMock: vi.fn(() => ({ firstKeptEntryIndex: 1, turnStartIndex: -1, isSplitTurn: false })),
+  findCutPointMock: vi.fn<typeof import("../lib/pi-sdk/index.ts").findCutPoint>(() => ({ firstKeptEntryIndex: 1, turnStartIndex: -1, isSplitTurn: false })),
   prepareCompactionMock: vi.fn(),
 }));
 
@@ -45,6 +45,7 @@ import {
   shouldHardTruncateCachePreservingCompaction,
 } from "../core/session-compactor.ts";
 import * as sessionCompactorModule from "../core/session-compactor.ts";
+import * as compactionAgentRun from "../lib/llm/cache-preserving-compaction-agent-run.ts";
 import { buildSessionCacheSnapshot } from "../core/session-cache-snapshot.ts";
 import { createUsageLedger } from "../lib/llm/usage-ledger.ts";
 import { runSessionSnapshotSideTask } from "../lib/llm/session-snapshot-side-task-runner.ts";
@@ -2586,5 +2587,211 @@ describe("runLossyLocalCompactionForSession", () => {
       expect.objectContaining({ type: "compaction_end", mode: "lossy_local", aborted: false }),
     ]);
     expect(isDirectCompactionInProgress(session)).toBe(false);
+  });
+});
+
+// F4: use real preparation and in-memory history so cancellation cannot pass
+// merely because there was nothing to compact or persistence was stubbed out.
+describe("F4 direct compaction cancellation", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  async function fixture(path: "hard truncate" | "summary") {
+    const sdk = await vi.importActual<typeof import("../lib/pi-sdk/index.ts")>("../lib/pi-sdk/index.ts");
+    prepareCompactionMock.mockReset().mockImplementation(sdk.prepareCompaction);
+    estimateTokensMock.mockReset().mockImplementation(sdk.estimateTokens);
+    findCutPointMock.mockReset().mockImplementation(sdk.findCutPoint);
+    const manager = sdk.SessionManager.inMemory("/workspace");
+    const input = ["x".repeat(10_000), "keep ".repeat(30)].map((text, index) => ({
+      role: "user" as const, content: [{ type: "text" as const, text }], timestamp: index + 1,
+    }));
+    input.forEach(message => manager.appendMessage(message));
+    const settings = { enabled: true, keepRecentTokens: 10, reserveTokens: 640 };
+    const preparation = sdk.prepareCompaction(manager.getBranch(), settings);
+    expect(preparation?.messagesToSummarize.length).toBeGreaterThan(0);
+    expect(preparation.firstKeptEntryId).toBe(manager.getBranch()[1].id);
+    const controller = new AbortController();
+    const appendActual = manager.appendCompaction.bind(manager);
+    const append = vi.spyOn(manager, "appendCompaction");
+    const session = {
+      model: {
+        id: "test-model", provider: "test-provider", api: "openai-completions",
+        reasoning: false, contextWindow: path === "hard truncate" ? 1000 : 128_000,
+        maxTokens: 512,
+      },
+      sessionManager: manager,
+      settingsManager: { getCompactionSettings: () => settings },
+      _emit: vi.fn(),
+      extensionRunner: { hasHandlers: () => true, emit: vi.fn(async () => {}) },
+      agent: {
+        state: { messages: manager.buildSessionContext().messages, systemPrompt: "", tools: [], thinkingLevel: "off" },
+        convertToLlm: sdk.convertAgentMessagesToLlm,
+        transformContext: vi.fn(async messages => messages),
+        streamFn: vi.fn(async () => agentStreamOf()),
+        replaceMessages: vi.fn(messages => { session.agent.state.messages = messages; }),
+      },
+    };
+    const before = {
+      entries: structuredClone(manager.getEntries()),
+      messages: structuredClone(session.agent.state.messages),
+      input: structuredClone(input),
+    };
+    const onCompacted = vi.fn();
+    const options = { signal: controller.signal, emitLifecycle: true, onCompacted };
+    return { sdk, path, manager, controller, append, appendActual, session, input, before, onCompacted, options };
+  }
+
+  type Fixture = Awaited<ReturnType<typeof fixture>>;
+
+  async function expectCancelled(f: Fixture, attempt: Promise<unknown>, providerCalls = 0) {
+    const outcome = await attempt.then(result => ({ result, error: undefined }), error => ({ result: undefined, error }));
+    const end = f.session._emit.mock.calls.at(-1)?.[0];
+    expect({
+      errorName: outcome.error?.name,
+      resultPresent: outcome.result !== undefined,
+      appends: f.append.mock.calls.length,
+      replaces: f.session.agent.replaceMessages.mock.calls.length,
+      providerCalls: f.session.agent.streamFn.mock.calls.length,
+      compactedEvents: f.session.extensionRunner.emit.mock.calls.length,
+      callbacks: f.onCompacted.mock.calls.length,
+      entriesUnchanged: JSON.stringify(f.manager.getEntries()) === JSON.stringify(f.before.entries),
+      messagesUnchanged: JSON.stringify(f.session.agent.state.messages) === JSON.stringify(f.before.messages),
+      inputUnchanged: JSON.stringify(f.input) === JSON.stringify(f.before.input),
+      busy: isDirectCompactionInProgress(f.session),
+      end: { type: end?.type, aborted: end?.aborted, hasResult: end?.result !== undefined, willRetry: end?.willRetry },
+    }).toEqual({
+      errorName: "AbortError", resultPresent: false, appends: 0, replaces: 0,
+      providerCalls, compactedEvents: 0, callbacks: 0,
+      entriesUnchanged: true, messagesUnchanged: true, inputUnchanged: true, busy: false,
+      end: { type: "compaction_end", aborted: true, hasResult: false, willRetry: false },
+    });
+    expect(f.session._emit.mock.calls.map(([event]) => event.type)).toEqual(["compaction_start", "compaction_end"]);
+    expect(end.errorMessage).toBeUndefined();
+  }
+
+  async function expectCommitted(f: Fixture) {
+    const result = await runCachePreservingCompactionForSession(f.session, f.options);
+    expect(f.append).toHaveBeenCalledOnce();
+    expect(f.session.agent.replaceMessages).toHaveBeenCalledOnce();
+    expect(f.session.agent.streamFn).toHaveBeenCalledTimes(f.path === "summary" ? 1 : 0);
+    expect(f.session.extensionRunner.emit).toHaveBeenCalledOnce();
+    expect(f.onCompacted).toHaveBeenCalledOnce();
+    expect(f.manager.getEntries()).toHaveLength(f.before.entries.length + 1);
+    expect(f.manager.getEntries().at(-1).type).toBe("compaction");
+    expect(f.session.agent.state.messages).toEqual(f.manager.buildSessionContext().messages);
+    expect(f.input).toEqual(f.before.input);
+    expect(isDirectCompactionInProgress(f.session)).toBe(false);
+    expect(f.session._emit.mock.calls.at(-1)[0]).toMatchObject({ type: "compaction_end", aborted: false, result });
+    expect(result.summary).toContain(f.path === "summary" ? "## Goal" : "硬截断");
+  }
+
+  for (const path of ["hard truncate", "summary"] as const) {
+    it(`rejects a pre-aborted signal before work: ${path}`, async () => {
+      const f = await fixture(path);
+      f.controller.abort();
+      await expectCancelled(f, runCachePreservingCompactionForSession(f.session, f.options));
+      expect(prepareCompactionMock).not.toHaveBeenCalled();
+      expect(f.session.agent.transformContext).not.toHaveBeenCalled();
+    });
+
+    it(`rejects cancellation while awaiting the prefix transform: ${path}`, async () => {
+      const f = await fixture(path);
+      const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+      f.session.agent.transformContext.mockImplementation(async messages => {
+        entered.resolve();
+        await release.promise;
+        return messages;
+      });
+      const attempt = runCachePreservingCompactionForSession(f.session, f.options);
+      await entered.promise;
+      expect(isDirectCompactionInProgress(f.session)).toBe(true);
+      expect(f.append).not.toHaveBeenCalled();
+      f.controller.abort();
+      release.resolve();
+      await expectCancelled(f, attempt);
+    });
+
+    it(`rejects cancellation immediately before commit: ${path}`, async () => {
+      const f = await fixture(path);
+      let resultReady = false;
+      if (path === "hard truncate") {
+        findCutPointMock.mockImplementation((...args) => {
+          const result = f.sdk.findCutPoint(...args);
+          resultReady = true;
+          f.controller.abort();
+          return result;
+        });
+      } else {
+        const run = compactionAgentRun.runCachePreservingCompactionAgentRun;
+        vi.spyOn(compactionAgentRun, "runCachePreservingCompactionAgentRun").mockImplementationOnce(async options => {
+          const result = await run(options);
+          expect(result.summary).toBe(VALID_COMPACTION_SUMMARY);
+          resultReady = true;
+          f.controller.abort();
+          return result;
+        });
+      }
+      await expectCancelled(f, runCachePreservingCompactionForSession(f.session, f.options), path === "summary" ? 1 : 0);
+      expect(resultReady).toBe(true);
+    });
+
+    it(`commits once without cancellation: ${path}`, async () => {
+      await expectCommitted(await fixture(path));
+    });
+
+    it(`finishes synchronous append and replace if cancellation arrives inside append: ${path}`, async () => {
+      const f = await fixture(path);
+      f.append.mockImplementation((...args) => {
+        const id = f.appendActual(...args);
+        f.controller.abort();
+        return id;
+      });
+      await expectCommitted(f);
+      expect(f.controller.signal.aborted).toBe(true);
+    });
+
+    it(`does not roll back a completed commit on cancellation in the success event: ${path}`, async () => {
+      const f = await fixture(path);
+      f.session.extensionRunner.emit.mockImplementation(async () => {
+        expect(f.append).toHaveBeenCalledOnce();
+        expect(f.session.agent.replaceMessages).toHaveBeenCalledOnce();
+        f.controller.abort();
+        await Promise.resolve();
+      });
+      await expectCommitted(f);
+      expect(f.controller.signal.aborted).toBe(true);
+    });
+  }
+
+  it("rejects cancellation while awaiting a summary even if the provider returns success", async () => {
+    const f = await fixture("summary");
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    f.session.agent.streamFn.mockImplementation(async () => {
+      const stream = agentStreamOf();
+      return { ...stream, result: async () => {
+        entered.resolve();
+        await release.promise;
+        return stream.result();
+      } };
+    });
+    const attempt = runCachePreservingCompactionForSession(f.session, f.options);
+    await entered.promise;
+    expect(isDirectCompactionInProgress(f.session)).toBe(true);
+    expect(f.append).not.toHaveBeenCalled();
+    f.controller.abort();
+    release.resolve();
+    await expectCancelled(f, attempt, 1);
+  });
+
+  it("clears busy after provider failure and permits a successful retry", async () => {
+    const f = await fixture("summary");
+    f.session.agent.streamFn.mockImplementationOnce(async () => { throw new Error("synthetic provider failure"); });
+    await expect(runCachePreservingCompactionForSession(f.session, f.options)).rejects.toThrow("synthetic provider failure");
+    expect(f.manager.getEntries()).toEqual(f.before.entries);
+    expect(f.session.agent.replaceMessages).not.toHaveBeenCalled();
+    expect(f.onCompacted).not.toHaveBeenCalled();
+    expect(isDirectCompactionInProgress(f.session)).toBe(false);
+    expect(f.session._emit.mock.calls.at(-1)[0]).toMatchObject({ aborted: false, result: undefined });
+    f.session.agent.streamFn.mockClear();
+    await expectCommitted(f);
   });
 });

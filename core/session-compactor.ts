@@ -1823,6 +1823,7 @@ export async function runCachePreservingCompactionForSession(session: any, {
   }
 
   try {
+    signal?.throwIfAborted();
     const preparation = prepareCompaction(branchEntries, compactionSettings);
     if (!preparation) {
       const lastEntry = branchEntries[branchEntries.length - 1];
@@ -1848,6 +1849,7 @@ export async function runCachePreservingCompactionForSession(session: any, {
       }),
       signal,
     });
+    signal?.throwIfAborted();
     const cacheKeyParams = { thinkingLevel: reasoningPolicy.thinkingLevel };
     const providerMessages = prefix.messages;
     const tools = session.agent.state?.tools || [];
@@ -1880,6 +1882,9 @@ export async function runCachePreservingCompactionForSession(session: any, {
           `threshold=${fit.threshold}) and hard truncation is unavailable`
         );
       }
+      // Match the SDK's commit boundary: append + replace run synchronously,
+      // and cancellation after that commit cannot roll history back.
+      signal?.throwIfAborted();
       const result = await appendCompactionResultToSession(session, truncation, { fromExtension: true, onCompacted });
       if (emitLifecycle) {
         emitCompactionProgress(session, {
@@ -1939,6 +1944,7 @@ export async function runCachePreservingCompactionForSession(session: any, {
       historyRecovery: prefix.historyRecovery,
     });
 
+    signal?.throwIfAborted();
     const saved = await appendCompactionResultToSession(session, result, { fromExtension: true, onCompacted });
     if (emitLifecycle) {
       emitCompactionProgress(session, {
