@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildCliBundle, copyServerBootstrap, writeServerWrapperScripts } from "../scripts/build-server-phases.mjs";
 
@@ -10,6 +10,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const isWin = process.platform === "win32";
 let scratch: string;
 let packageDir: string;
+let packageAlias: string;
 let unrelatedCwd: string;
 let env: NodeJS.ProcessEnv;
 
@@ -30,6 +31,8 @@ beforeAll(() => {
 
   packageDir = path.join(scratch, "relocated package");
   fs.renameSync(buildDir, packageDir);
+  packageAlias = path.join(scratch, "package alias");
+  fs.symlinkSync(packageDir, packageAlias, isWin ? "junction" : "dir");
   unrelatedCwd = path.join(scratch, "unrelated cwd");
   fs.mkdirSync(unrelatedCwd);
   env = {};
@@ -55,8 +58,8 @@ afterAll(() => {
   if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
 });
 
-function runWrapper(args: string[], cwd: string) {
-  const wrapper = path.join(packageDir, isWin ? "hana.cmd" : "hana");
+function runWrapper(args: string[], cwd: string, directory = packageDir) {
+  const wrapper = path.join(directory, isWin ? "hana.cmd" : "hana");
   // All arguments below are fixed test literals. Use cmd.exe for the actual
   // Windows wrapper; direct execution of bundle/cli.js is not the contract.
   return isWin
@@ -67,6 +70,89 @@ function runWrapper(args: string[], cwd: string) {
 }
 
 describe("packaged CLI shared by full and open builds", () => {
+  for (const form of ["canonical", "directory alias", "relative alias", "dot segments", "preserved main alias"] as const) {
+    it(`executes help, disabled pull and invalid commands through the ${form}`, () => {
+      const aliasEntry = path.join(packageAlias, "bundle", "cli.js");
+      const entry = form === "canonical" ? path.join(packageDir, "bundle", "cli.js")
+        : form === "relative alias" ? path.relative(unrelatedCwd, aliasEntry)
+        : form === "dot segments" ? `${packageAlias}/bundle/../bundle/./cli.js` : aliasEntry;
+      const flags = form === "preserved main alias" ? ["--preserve-symlinks-main"] : [];
+      const run = (args: string[]) => spawnSync(process.execPath, [...flags, entry, ...args], {
+        cwd: unrelatedCwd, env, encoding: "utf8", timeout: 20_000,
+      });
+      const help = run(["--help"]);
+      const details = JSON.stringify({ entry, flags, status: help.status, stdout: help.stdout, stderr: help.stderr });
+      expect(help.error).toBeUndefined();
+      expect(help.status, details).toBe(0);
+      expect(help.stdout, details).toContain("Hana CLI");
+      expect(help.stdout, details).toContain("hana bundle pull");
+      expect(help.stderr).toBe("");
+      const pull = run(["bundle", "pull"]);
+      expect(pull.error).toBeUndefined();
+      expect(pull.status, pull.stdout + pull.stderr).toBe(1);
+      expect(pull.stdout).toBe("");
+      expect(pull.stderr.trim()).toBe("Online updates are unavailable in this fork. Upgrade using this project's instructions.");
+      const invalid = run(["not-a-command"]);
+      expect(invalid.error).toBeUndefined();
+      expect(invalid.status, invalid.stdout + invalid.stderr).toBe(1);
+      expect(invalid.stdout).toContain("Hana CLI");
+      expect(invalid.stderr).toContain("unknown command: not-a-command");
+      expect(fs.readdirSync(env.HANA_HOME!)).toEqual([]);
+    });
+  }
+
+  for (const importedPath of ["canonical", "directory alias"] as const) {
+    it.each(["absent", "unrelated file", "missing file", "directory"])(
+      `does not start the ${importedPath} module when imported with an %s argv entry`,
+      (entryKind) => {
+        const argvEntry = entryKind === "unrelated file" ? path.join(packageDir, "package.json")
+          : entryKind === "missing file" ? path.join(unrelatedCwd, "missing-cli.js") : unrelatedCwd;
+        const cli = path.join(importedPath === "canonical" ? packageDir : packageAlias, "bundle", "cli.js");
+        const script = [
+          `process.argv = ${entryKind === "absent" ? "[process.execPath]" : JSON.stringify([process.execPath, argvEntry, "bundle", "pull"])};`,
+          `const cli = await import(${JSON.stringify(pathToFileURL(cli).href)});`,
+          'if (typeof cli.main !== "function") throw new Error("missing main export");',
+          'console.log("import-only");',
+        ].join("\n");
+        const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+          cwd: unrelatedCwd, env, encoding: "utf8", timeout: 20_000,
+        });
+        expect(result.error).toBeUndefined();
+        expect(result.status, result.stdout + result.stderr).toBe(0);
+        expect(result.stdout).toBe("import-only\n");
+        expect(result.stderr).toBe("");
+        expect(fs.readdirSync(env.HANA_HOME!)).toEqual([]);
+      },
+    );
+  }
+
+  it("reports a missing direct entry as a Node error", () => {
+    const result = spawnSync(process.execPath, [path.join(packageAlias, "bundle", "missing-cli.js"), "--help"], {
+      cwd: unrelatedCwd, env, encoding: "utf8", timeout: 20_000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("MODULE_NOT_FOUND");
+  });
+
+  for (const location of ["package", "unrelated"] as const) {
+    it(`executes help and refuses pull through the directory alias wrapper from ${location} cwd`, () => {
+      const cwd = location === "package" ? packageAlias : unrelatedCwd;
+      const help = runWrapper(["--help"], cwd, packageAlias);
+      expect(help.error).toBeUndefined();
+      expect(help.status, help.stdout + help.stderr).toBe(0);
+      expect(help.stdout).toContain("Hana CLI");
+      expect(help.stdout).toContain("hana bundle pull");
+      const pull = runWrapper(["bundle", "pull"], cwd, packageAlias);
+      expect(pull.error).toBeUndefined();
+      expect(pull.status, pull.stdout + pull.stderr).toBe(1);
+      expect(pull.stdout).toBe("");
+      expect(pull.stderr.trim()).toBe("Online updates are unavailable in this fork. Upgrade using this project's instructions.");
+      expect(fs.readdirSync(env.HANA_HOME!)).toEqual([]);
+    });
+  }
+
   for (const location of ["package", "unrelated"] as const) {
     it.each([
       { args: ["--help"], output: /hana serve/ },

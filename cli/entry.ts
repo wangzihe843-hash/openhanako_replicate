@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import path from "path";
+import { realpathSync } from "node:fs";
 import { fileURLToPath } from "url";
 import { parseCliArgs, helpText } from "./args.ts";
 import { resolveConnection } from "./local-server.ts";
@@ -99,7 +100,19 @@ function shouldAutoStartServer(args) {
   return args.command === "chat" || args.command === "continue";
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    // Node resolves module URLs through symlinks by default. Compare both
+    // filesystem paths the same way, including with --preserve-symlinks-main.
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    // An import may have an unavailable argv entry; it must not start the CLI.
+    return false;
+  }
+}
+
+if (isMainModule()) {
   const code = await main();
   if (code) process.exit(code);
 }
