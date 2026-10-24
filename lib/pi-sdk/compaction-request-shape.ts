@@ -3,8 +3,8 @@ import {
   serializeConversation as defaultSerializeConversation,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { normalizeContext, type Api, type Message, type Model, type Tool } from "@earendil-works/pi-ai";
-import { clampMaxTokensToContext } from "@earendil-works/pi-ai/api/simple-options";
+import { getSupportedThinkingLevels, normalizeContext, type Api, type Message, type Model, type Tool } from "@earendil-works/pi-ai";
+import { clampMaxTokensToContext, resolveSamplingParams } from "@earendil-works/pi-ai/api/simple-options";
 
 export const NATIVE_SUMMARIZATION_SYSTEM_PROMPT =
   `You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.
@@ -107,7 +107,9 @@ export class CompactionBudgetSafetyError extends Error {
   }
 }
 
-export type CompactionBudgetModel = Pick<Model<Api>, "maxTokens"> & {
+export type CompactionBudgetModel = Pick<Model<Api>, "maxTokens"> & Partial<Pick<Model<Api>,
+  "reasoning" | "thinkingLevelMap" | "samplingParams" | "samplingParamsByThinkingLevel"
+>> & {
   contextWindow?: number;
   api?: string;
   provider?: string;
@@ -189,6 +191,35 @@ export function estimateDefaultCompactionOutputTokens(
   return estimateDefaultCompactionOutputBudget(...args).outputBudgetTokens;
 }
 
+function estimateNativeCompactionOutputBudget(model: CompactionBudgetModel, messages: Message[], systemPrompt: string) {
+  // Keep the shared context/usage validation, including omitted-cap providers.
+  const budget = estimateDefaultCompactionOutputBudget(model, messages, systemPrompt);
+  const capFields = model.api === "openai-completions"
+    ? ["max_tokens", "max_completion_tokens"]
+    : model.api === "openai-responses" || model.api === "azure-openai-responses"
+      ? ["max_output_tokens"] : [];
+  // Only these serializers apply sampling after the named cap. A model-limit
+  // budget does not depend on that wire cap surviving in the first place.
+  if (budget.outputBudgetSource !== "wire-cap" || capFields.length === 0) return budget;
+
+  const sdkModel = model as Model<Api>;
+  const levels = getSupportedThinkingLevels(sdkModel);
+  // Native planning has no session thinking level. Cover every reachable SDK
+  // level (including its empty-map fallback), using the SDK's merge/clamp rules.
+  // This check belongs to B: A has a separate final-payload normalization path.
+  for (const level of levels.length ? levels : ["off"] as const) {
+    const sampling = resolveSamplingParams(sdkModel, level);
+    for (const field of capFields) {
+      if (!sampling || !Object.hasOwn(sampling, field)) continue;
+      const cap = sampling[field];
+      if (typeof cap !== "number" || !Number.isInteger(cap) || cap <= 0 || cap > budget.outputBudgetTokens) {
+        throw new CompactionBudgetSafetyError(`Native compaction sampling ${field} at ${level} does not preserve the planned output bound`);
+      }
+    }
+  }
+  return budget;
+}
+
 function requestMessage(promptText: string) {
   return {
     role: "user" as const,
@@ -253,7 +284,7 @@ export function buildNativeCompactionRequestShapes({
       promptText,
       messages: [requestMessage(promptText)],
       maxTokens: undefined,
-      ...(model ? estimateDefaultCompactionOutputBudget(model, [requestMessage(promptText)], NATIVE_SUMMARIZATION_SYSTEM_PROMPT) : {}),
+      ...(model ? estimateNativeCompactionOutputBudget(model, [requestMessage(promptText)], NATIVE_SUMMARIZATION_SYSTEM_PROMPT) : {}),
     });
   }
 
@@ -274,7 +305,7 @@ export function buildNativeCompactionRequestShapes({
       promptText,
       messages: [requestMessage(promptText)],
       maxTokens: undefined,
-      ...(model ? estimateDefaultCompactionOutputBudget(model, [requestMessage(promptText)], NATIVE_SUMMARIZATION_SYSTEM_PROMPT) : {}),
+      ...(model ? estimateNativeCompactionOutputBudget(model, [requestMessage(promptText)], NATIVE_SUMMARIZATION_SYSTEM_PROMPT) : {}),
     });
   }
 

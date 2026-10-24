@@ -4,6 +4,8 @@ import { compact } from "@earendil-works/pi-coding-agent";
 import { normalizeContext } from "@earendil-works/pi-ai";
 import { clampMaxTokensToContext } from "@earendil-works/pi-ai/api/simple-options";
 import { streamSimple as openaiCompletions } from "@earendil-works/pi-ai/api/openai-completions";
+import { streamSimple as azureResponses } from "@earendil-works/pi-ai/api/azure-openai-responses";
+import { SessionManager, prepareCompaction } from "../lib/pi-sdk/index.ts";
 import { streamSimple as openaiResponses } from "@earendil-works/pi-ai/api/openai-responses";
 import { streamSimple as codexResponses } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { streamSimple as piMessages } from "@earendil-works/pi-ai/api/pi-messages";
@@ -16,6 +18,9 @@ import {
   CompactionBudgetSafetyError,
 } from "../lib/pi-sdk/compaction-request-shape.ts";
 import {
+  canUseNativeCompactionFallback,
+  runCachePreservingCompactionForSession,
+  isDirectCompactionInProgress,
   estimateCachePreservingCompactionRequest,
   normalizeCompactionProviderPayload,
   shouldHardTruncateCachePreservingCompaction,
@@ -386,5 +391,182 @@ describe("Pi 1.4 native summaries and provider-default planning", () => {
     const actual = estimateDefaultCompactionOutputTokens(requestModel, messages, systemPrompt, tools);
     expect(actual).toBe(clampMaxTokensToContext(requestModel as any, normalizeContext({ systemPrompt, messages, tools }), requestModel.maxTokens));
     expect(actual).toBeLessThan(estimateDefaultCompactionOutputTokens(requestModel, messages));
+  });
+});
+
+describe("F1 Native B sampling output bounds", () => {
+  const prep = () => ({ ...preparation("short history"), previousSummary: undefined, isSplitTurn: false, turnPrefixMessages: [] });
+  const fixtures = [
+    { api: "openai-responses", stream: openaiResponses, field: "max_output_tokens" },
+    { api: "azure-openai-responses", stream: azureResponses, field: "max_output_tokens" },
+    { api: "openai-completions", stream: openaiCompletions, field: "max_tokens" },
+    { api: "openai-completions", stream: openaiCompletions, field: "max_completion_tokens" },
+  ];
+  const requestModel = (fixture: typeof fixtures[number]) => ({
+    ...model(fixture.api, 8192, 8192),
+    compat: { supportsMaxOutputTokens: true, maxTokensField: fixture.field },
+  });
+  const shape = (m: any, preparation = prep()) => buildNativeCompactionRequestShapes({ model: m, preparation }).requests[0];
+
+  async function captureNative(fixture: typeof fixtures[number], m: any, level: any = "off") {
+    const network = vi.fn(() => { throw new Error("Unexpected network attempt"); });
+    vi.stubGlobal("fetch", network);
+    const requests: any[] = [];
+    await compact(prep() as any, m, "synthetic-key", undefined, undefined, undefined, level, (async (actualModel: any, context: any, options: any) => {
+      let payload: any;
+      const response = await fixture.stream(actualModel, context, {
+        ...options, maxRetries: 0,
+        env: { AZURE_OPENAI_BASE_URL: "https://synthetic.openai.azure.invalid/openai/v1" },
+        onPayload(value: any) { payload = value; throw new Error("synthetic pre-dispatch stop"); },
+      }).result();
+      expect(response.errorMessage).toContain("synthetic pre-dispatch stop");
+      requests.push({ payload, context, options });
+      return { result: async () => ({ role: "assistant", content: [{ type: "text", text: "synthetic summary" }], stopReason: "stop" }) };
+    }) as any);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].options.maxTokens).toBeUndefined();
+    expect(network).not.toHaveBeenCalled();
+    return requests[0];
+  }
+
+  it.each(fixtures)("rejects $api $field overriding the formal native clamp", async fixture => {
+    const plain = requestModel(fixture);
+    const planned = shape(plain).outputBudgetTokens;
+    const m = { ...plain, samplingParams: { [fixture.field]: 8192 } };
+    const before = structuredClone(m);
+    const { payload } = await captureNative(fixture, m);
+    expect(planned).toBe(3740);
+    expect(payload[fixture.field]).toBe(8192);
+    expect(() => shape(m)).toThrow(CompactionBudgetSafetyError);
+    expect(() => canUseNativeCompactionFallback({ model: m, preparation: prep() })).toThrow(CompactionBudgetSafetyError);
+    expect(() => shouldHardTruncateCachePreservingCompaction({ model: m, preparation: prep(), messages: prep().messagesToSummarize })).toThrow(CompactionBudgetSafetyError);
+    expect(m).toEqual(before);
+  });
+
+  it("rejects the high-level override after the SDK merges base and per-level sampling", async () => {
+    const fixture = fixtures[0];
+    const m = { ...requestModel(fixture), reasoning: true, samplingParams: { max_output_tokens: 512, top_p: 0.8 }, samplingParamsByThinkingLevel: { high: { max_output_tokens: 8192 } } };
+    const { payload, options } = await captureNative(fixture, m, "high");
+    expect(options.reasoning).toBe("high");
+    expect(payload.max_output_tokens).toBe(8192);
+    expect(payload.top_p).toBe(0.8);
+    expect(() => shape(m)).toThrow(CompactionBudgetSafetyError);
+  });
+
+  it.each(fixtures)("rejects exactly one token beyond $api $field budget", fixture => {
+    const m = requestModel(fixture);
+    const bound = shape(m).outputBudgetTokens!;
+    expect(() => shape({ ...m, samplingParams: { [fixture.field]: bound + 1 } })).toThrow(CompactionBudgetSafetyError);
+  });
+
+  it.each([
+    { level: "off", effective: "low", thinkingLevelMap: { off: null, minimal: null } },
+    { level: "max", effective: "high", thinkingLevelMap: {} },
+  ])("observes formal SDK sampling after $level clamps to $effective", async ({ level, effective, thinkingLevelMap }) => {
+    const m = { ...requestModel(fixtures[0]), reasoning: true, thinkingLevelMap, samplingParamsByThinkingLevel: { [effective]: { max_output_tokens: 8192 } } };
+    const { payload } = await captureNative(fixtures[0], m, level);
+    expect(payload.max_output_tokens).toBe(8192);
+    expect(() => shape(m)).toThrow(CompactionBudgetSafetyError);
+  });
+
+  for (const scenario of ["absent", "non-cap", "equal", "smaller"] as const) {
+    it.each(fixtures)(`preserves ${scenario} sampling for $api $field with the real native serializer`, async fixture => {
+      const plain = requestModel(fixture);
+      const bound = shape(plain).outputBudgetTokens!;
+      const samplingParams = scenario === "absent" ? undefined : scenario === "non-cap" ? { top_p: 0.7 } : { [fixture.field]: scenario === "equal" ? bound : 512 };
+      const m = { ...plain, samplingParams };
+      const before = structuredClone(m);
+      const budget = shape(m);
+      const { payload } = await captureNative(fixture, m);
+      expect(budget.outputBudgetTokens).toBe(bound);
+      expect(payload[fixture.field]).toBe(scenario === "smaller" ? 512 : bound);
+      expect(payload[fixture.field]).toBeLessThanOrEqual(budget.outputBudgetTokens!);
+      expect(canUseNativeCompactionFallback({ model: m, preparation: prep() })).toBe(true);
+      expect(m).toEqual(before);
+    });
+  }
+
+  for (const invalid of [null, undefined, NaN, Infinity, 0, -1, 1.5, "512"]) {
+    it.each(fixtures)(`rejects unproven ${String(invalid)} cap for $api $field`, fixture => {
+      expect(() => shape({ ...requestModel(fixture), samplingParams: { [fixture.field]: invalid } })).toThrow(CompactionBudgetSafetyError);
+    });
+  }
+
+  it.each(["max_tokens", "max_completion_tokens"])("checks the alternate completions alias %s without guessing precedence", field => {
+    const fixture = fixtures.find(f => f.api === "openai-completions" && f.field !== field)!;
+    expect(() => shape({ ...requestModel(fixture), samplingParams: { [fixture.field]: 512, [field]: 8192 } })).toThrow(CompactionBudgetSafetyError);
+    expect(shape({ ...requestModel(fixture), samplingParams: { [fixture.field]: 512, [field]: 256 } }).outputBudgetTokens).toBe(3740);
+  });
+
+  it.each([
+    { name: "off override", reasoning: false, samplingParamsByThinkingLevel: { off: { max_output_tokens: 8192 } } },
+    { name: "off clamped to low", reasoning: true, thinkingLevelMap: { off: null, minimal: null }, samplingParamsByThinkingLevel: { low: { max_output_tokens: 8192 } } },
+    { name: "xhigh enabled", reasoning: true, thinkingLevelMap: { xhigh: "xhigh" }, samplingParamsByThinkingLevel: { xhigh: { max_output_tokens: 8192 } } },
+    { name: "max enabled", reasoning: true, thinkingLevelMap: { max: "max" }, samplingParamsByThinkingLevel: { max: { max_output_tokens: 8192 } } },
+    { name: "all levels disabled SDK off fallback", reasoning: true, thinkingLevelMap: { off: null, minimal: null, low: null, medium: null, high: null, xhigh: null, max: null }, samplingParamsByThinkingLevel: { off: { max_output_tokens: 8192 } } },
+  ])("covers SDK reachable level: $name", ({ name: _name, ...extra }) => {
+    expect(() => shape({ ...requestModel(fixtures[0]), ...extra })).toThrow(CompactionBudgetSafetyError);
+  });
+
+  it.each([
+    { name: "non-reasoning high ignored", reasoning: false, samplingParamsByThinkingLevel: { high: { max_output_tokens: 8192 } } },
+    { name: "unsupported high ignored", reasoning: true, thinkingLevelMap: { high: null }, samplingParamsByThinkingLevel: { high: { max_output_tokens: 8192 } } },
+    { name: "unmapped xhigh/max ignored", reasoning: true, samplingParamsByThinkingLevel: { xhigh: { max_output_tokens: 8192 }, max: { max_output_tokens: 8192 } } },
+    { name: "safe off replaces unsafe base", reasoning: false, samplingParams: { max_output_tokens: 8192 }, samplingParamsByThinkingLevel: { off: { max_output_tokens: 512 } } },
+    { name: "safe only reachable high replaces unsafe base", reasoning: true, thinkingLevelMap: { off: null, minimal: null, low: null, medium: null }, samplingParams: { max_output_tokens: 8192 }, samplingParamsByThinkingLevel: { high: { max_output_tokens: 512 } } },
+  ])("preserves effective safe sampling: $name", async ({ name: _name, ...extra }) => {
+    const m = { ...requestModel(fixtures[0]), ...extra };
+    const budget = shape(m);
+    const { payload } = await captureNative(fixtures[0], m, "off");
+    expect(payload.max_output_tokens).toBeLessThanOrEqual(budget.outputBudgetTokens!);
+  });
+
+  it("checks both split summaries against their own clamp", () => {
+    const m = { ...requestModel(fixtures[0]), samplingParams: { max_output_tokens: 512 } };
+    expect(shape(m).outputBudgetTokens).toBeGreaterThan(512);
+    expect(() => buildNativeCompactionRequestShapes({ model: m, preparation: { ...prep(), isSplitTurn: true, turnPrefixMessages: [user("x".repeat(18000))] } })).toThrow(CompactionBudgetSafetyError);
+  });
+
+  it("does not apply Native B's cap check to A's different request or unrelated APIs/fields", () => {
+    const m = { ...requestModel(fixtures[0]), samplingParams: { max_output_tokens: 512 } };
+    expect(estimateDefaultCompactionOutputBudget(m, [user("x".repeat(20000))]).outputBudgetTokens).toBe(16);
+    expect(shape(m).outputBudgetTokens).toBe(3740);
+    expect(shape({ ...m, samplingParams: { max_tokens: 8192, top_p: 0.9 } }).outputBudgetTokens).toBe(3740);
+    for (const api of ["anthropic-messages", "google-generative-ai", "bedrock-converse-stream", "openai-codex-responses"]) {
+      expect(shape({ ...model(api, 8192, 8192), samplingParams: { max_tokens: NaN, max_output_tokens: 8192 } }).outputBudgetTokens).toBeGreaterThan(0);
+    }
+  });
+
+  it.each([null, undefined, 512, 8192])("preserves existing model-limit planning when Responses omits a cap (%j)", cap => {
+    const m = { ...requestModel(fixtures[0]), compat: { supportsMaxOutputTokens: false }, samplingParams: { max_output_tokens: cap } };
+    expect(shape(m)).toMatchObject({ outputBudgetTokens: 8192, outputBudgetSource: "model-limit" });
+  });
+
+  it("retains the F3 usage validation before Native B sampling admission", () => {
+    const m = { ...requestModel(fixtures[0]), samplingParams: { max_output_tokens: 512 } };
+    const messages = [{ role: "assistant", content: [{ type: "text", text: "tail" }], stopReason: "stop", timestamp: 2 }] as any;
+    expect(() => shouldHardTruncateCachePreservingCompaction({ model: m, preparation: prep(), messages })).toThrow(/valid provider messages and assistant usage/);
+  });
+
+  it("direct entry rejects before provider/auth/history effects with real preparation", async () => {
+    const m = { ...requestModel(fixtures[0]), samplingParams: { max_output_tokens: 8192 } };
+    const manager = SessionManager.inMemory("/synthetic");
+    const old = user("x".repeat(10000));
+    const tail = user("retain ".repeat(40));
+    manager.appendMessage(old); manager.appendMessage(tail);
+    const settings = { enabled: true, reserveTokens: 640, keepRecentTokens: 10 };
+    expect(prepareCompaction(manager.getBranch(), settings)).toBeDefined();
+    const before = structuredClone(manager.getEntries());
+    const append = vi.spyOn(manager, "appendCompaction");
+    const session = {
+      model: m, sessionManager: manager, settingsManager: { getCompactionSettings: () => settings },
+      modelRegistry: { getApiKeyAndHeaders: vi.fn() }, _emit: vi.fn(),
+      agent: { state: { messages: [old, tail], tools: [], systemPrompt: "" }, convertToLlm: (x: any) => x, transformContext: async (x: any) => x, streamFn: vi.fn(), replaceMessages: vi.fn() },
+    };
+    const onCompacted = vi.fn();
+    await expect(runCachePreservingCompactionForSession(session, { onCompacted })).rejects.toBeInstanceOf(CompactionBudgetSafetyError);
+    for (const spy of [append, session.agent.replaceMessages, session.agent.streamFn, session.modelRegistry.getApiKeyAndHeaders, onCompacted]) expect(spy).not.toHaveBeenCalled();
+    expect(manager.getEntries()).toEqual(before);
+    expect(isDirectCompactionInProgress(session)).toBe(false);
   });
 });

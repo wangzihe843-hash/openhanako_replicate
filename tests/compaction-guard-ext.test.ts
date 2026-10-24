@@ -404,6 +404,47 @@ describe("CompactionGuardExtension", () => {
       expect(computeHardTruncation).not.toHaveBeenCalled();
     });
 
+    for (const entry of ["ordinary", "pre-fit exception"] as const) {
+      it.each([
+        { name: "Responses", api: "openai-responses", samplingParams: { max_output_tokens: 8192 } },
+        { name: "Azure", api: "azure-openai-responses", samplingParams: { max_output_tokens: 8192 } },
+        { name: "Completions max_tokens", api: "openai-completions", samplingParams: { max_tokens: 8192 } },
+        { name: "Completions max_completion_tokens", api: "openai-completions", samplingParams: { max_completion_tokens: 8192 } },
+        { name: "high-level Responses", api: "openai-responses", reasoning: true, samplingParamsByThinkingLevel: { high: { max_output_tokens: 8192 } } },
+        { name: "removed cap", api: "openai-responses", samplingParams: { max_output_tokens: undefined } },
+      ])(`F1 cancels ${entry} $name before auth/provider/history effects`, async ({ name: _name, ...extra }) => {
+        if (entry === "pre-fit exception") getSessionTransformContext.mockImplementationOnce(() => { throw new Error("synthetic pre-fit dependency failure"); });
+        const requestModel = { ...model, contextWindow: 8192, ...extra };
+        const input = structuredClone({ model: requestModel, preparation, messages: [oldMessage, retainedTail] });
+        const before = structuredClone(input);
+        const appendCompaction = vi.fn();
+        const replaceMessages = vi.fn();
+        const result = await pi.trigger("session_before_compact", { preparation: input.preparation }, {
+          ...ctx, model: input.model,
+          sessionManager: { ...ctx.sessionManager, appendCompaction, replaceMessages, buildSessionContext: () => ({ messages: input.messages }) },
+        });
+        expect(result).toEqual({ cancel: true });
+        expect(input).toEqual(before);
+        for (const spy of [cacheCompactor, computeHardTruncation, buildSessionCacheSnapshot,
+          ctx.modelRegistry.getApiKeyAndHeaders, appendCompaction, replaceMessages]) expect(spy).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        { name: "absent", samplingParams: undefined },
+        { name: "non-cap", samplingParams: { top_p: 0.7 } },
+        { name: "smaller", samplingParams: { max_output_tokens: 512 } },
+        { name: "effective safe", samplingParams: { max_output_tokens: 8192 }, samplingParamsByThinkingLevel: { off: { max_output_tokens: 512 } } },
+      ])(`F1 preserves ${entry} native fallback for $name sampling`, async ({ name: _name, ...extra }) => {
+        if (entry === "pre-fit exception") getSessionTransformContext.mockImplementationOnce(() => { throw new Error("synthetic pre-fit dependency failure"); });
+        const result = await pi.trigger("session_before_compact", { preparation }, {
+          ...ctx, model: { ...model, api: "openai-responses", contextWindow: 8192, ...extra },
+        });
+        expect(result).toBeUndefined();
+        expect(cacheCompactor).not.toHaveBeenCalled();
+        expect(computeHardTruncation).not.toHaveBeenCalled();
+      });
+    }
+
     it.each([
       { label: "completions", api: "openai-completions" },
       { label: "Responses capped", api: "openai-responses" },
