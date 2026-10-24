@@ -724,6 +724,7 @@
     "shared/tool-arg-summary.ts",
     "shared/tool-categories.ts",
     "shared/tool-outcome.ts",
+    "shared/update-policy.cjs",
     "shared/video-mime.ts",
     "shared/workspace-history.ts",
     "shared/workspace-output.cjs",

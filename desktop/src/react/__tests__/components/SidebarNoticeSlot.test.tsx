@@ -512,9 +512,11 @@ describe('SidebarNoticeSlot (wired to the real hook)', () => {
     useStore.setState({ locale: 'zh-CN' });
   });
 
-  function installHana(status: Partial<TrainUpdateStatus>) {
+  // Existing wired-hook cases describe an enabled build; negative cases opt out explicitly.
+  function installHana(status: Partial<TrainUpdateStatus>, policy: boolean | 'missing' = true) {
     window.hana = {
       trainUpdateStatus: vi.fn().mockResolvedValue({
+        ...(policy === 'missing' ? {} : { onlineUpdatesEnabled: policy }),
         staged: false,
         train: null,
         version: null,
@@ -646,4 +648,42 @@ describe('SidebarNoticeSlot (wired to the real hook)', () => {
 
     expect(await screen.findByText('版本 0.391.0 连续启动失败，已退回 0.390.0。出问题的版本已被隔离，不会自动重试。')).toBeInTheDocument();
   });
+  for (const policy of [false, 'missing'] as const) {
+    it(`keeps stale update state and events closed with ${policy} policy while preserving fallback and ack`, async () => {
+      useStore.setState({ metaRecovery: null });
+      installHana({
+        minShellBlocked: true,
+        available: { train: 9, version: '9.0.0', serverSha256: 'a'.repeat(64), rendererSha256: 'b'.repeat(64), sizes: { server: 1, renderer: 1 }, recordedAt: '2026-01-01T00:00:00Z' },
+        lastCheckedAt: '2026-01-01T00:00:00Z',
+        fallbackNotice: { kind: 'renderer', fromVersion: '0.390.0', toVersion: '0.389.0', quarantinedTrain: 9 },
+      }, policy);
+      const api = window.hana!;
+      const listeners: {
+        available?: Parameters<NonNullable<PlatformApi['onTrainUpdateAvailable']>>[0];
+        progress?: Parameters<NonNullable<PlatformApi['onTrainUpdateProgress']>>[0];
+        fallback?: Parameters<NonNullable<PlatformApi['onTrainFallbackNotice']>>[0];
+      } = {};
+      api.onTrainUpdateAvailable = cb => { listeners.available = cb; return () => { listeners.available = undefined; }; };
+      api.onTrainUpdateProgress = cb => { listeners.progress = cb; return () => { listeners.progress = undefined; }; };
+      api.onTrainFallbackNotice = cb => { listeners.fallback = cb; return () => { listeners.fallback = undefined; }; };
+      const { container } = render(<SidebarNoticeSlot />);
+      expect(await screen.findByText('版本 0.390.0 连续启动失败，已退回 0.389.0。出问题的版本已被隔离，不会自动重试。')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: '知道了' }));
+      await waitFor(() => expect(container).toBeEmptyDOMElement());
+      expect(api.ackTrainFallbackNotice).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        listeners.available?.({ version: '10.0.0', minShellBlocked: true });
+        listeners.progress?.({ phase: 'downloading', kind: 'server', receivedBytes: 1, totalBytes: 2 });
+      });
+      expect(container).toBeEmptyDOMElement();
+      expect(screen.queryByText('有新版本可用')).not.toBeInTheDocument();
+      expect(screen.queryByText('完成此更新后才能继续接收新版本')).not.toBeInTheDocument();
+      await act(async () => { listeners.fallback?.({ kind: 'server', fromVersion: '0.391.0', toVersion: '0.390.0', quarantinedTrain: 10 }); });
+      expect(await screen.findByText('版本 0.391.0 连续启动失败，已退回 0.390.0。出问题的版本已被隔离，不会自动重试。')).toBeInTheDocument();
+      expect(api.trainUpdateCheck).not.toHaveBeenCalled();
+      expect(api.trainUpdateApply).not.toHaveBeenCalled();
+      expect(api.autoUpdateInstall).not.toHaveBeenCalled();
+    });
+  }
+
 });

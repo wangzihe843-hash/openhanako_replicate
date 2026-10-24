@@ -198,6 +198,7 @@ export const CLI_RUNTIME_FILES = [
   "shared/artifact-core/ustar.cjs",
   "shared/contract-versions.cjs",
   "shared/contract-versions.json",
+  "shared/update-policy.cjs",
 ];
 
 /**

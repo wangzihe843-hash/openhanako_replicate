@@ -230,11 +230,43 @@ describe("desktop browser control lifecycle", () => {
     assert.ok(applyNow.indexOf("setupBrowserCommands();") > applyNow.indexOf("await startServer()"));
   });
 
+  it("rejects apply-now under the actual default policy without disturbing the browser channel", async () => {
+    const h = makeBrowserHarness();
+    const updatePolicy = require("./shared/update-policy.cjs");
+    assert.equal(Object.isFrozen(updatePolicy), true);
+    assert.equal(updatePolicy.onlineUpdatesEnabled, false);
+    const effects: string[] = [];
+    const forbidden = (name: string) => () => { effects.push(name); throw new Error(`unexpected ${name}`); };
+    Object.assign(h.context, {
+      updatePolicy,
+      _isApplyingTrainUpdate: false,
+      readUpdateChannelPreference: forbidden("channel"),
+      artifactOta: { downloadAndApplyArtifacts: forbidden("download") },
+      shutdownServer: forbidden("shutdown"), startServer: forbidden("restart"),
+    });
+    loadFunctions(h.context, ["applyTrainUpdateNow"]);
+    h.context.setupBrowserCommands();
+    const original = h.sockets[0];
+    const generation = h.context._browserCmdGeneration;
+    const result = await h.context.applyTrainUpdateNow(null);
+    assert.equal(result.ok, false);
+    assert.equal(result.error, updatePolicy.disabledMessage);
+    assert.deepEqual(effects, []);
+    assert.equal(h.context._isApplyingTrainUpdate, false);
+    assert.equal(h.context._browserCmdGeneration, generation);
+    assert.equal(h.context._browserCmdWs, original);
+    assert.equal(original.closeCalls, 0);
+    assert.equal(h.sockets.length, 1);
+    assert.equal(h.timers.size, 0);
+  });
+
   for (const shutdownOutcome of ["external-running", "unconfirmed-owned", "throws", "confirmed"]) {
     it(`keeps a single usable browser channel after apply-now shutdown is ${shutdownOutcome}`, async () => {
       const h = makeBrowserHarness();
       let restartCalls = 0;
       Object.assign(h.context, {
+        // These four cases exercise the enabled update lifecycle, not the fork default.
+        updatePolicy: Object.freeze({ onlineUpdatesEnabled: true }),
         app: { isPackaged: true, getVersion: () => "1.0.0" },
         process: { platform: "darwin", arch: "arm64" },
         readUpdateChannelPreference: () => "beta",

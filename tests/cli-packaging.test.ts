@@ -70,13 +70,24 @@ describe("packaged CLI shared by full and open builds", () => {
   for (const location of ["package", "unrelated"] as const) {
     it.each([
       { args: ["--help"], output: /hana serve/ },
-      { args: ["bundle", "status"], output: /No web frontend has been pulled/ },
+      { args: ["bundle", "status"], output: /^Online updates are unavailable in this fork\. Upgrade using this project's instructions\.\s*$/ },
       { args: ["data", "diagnose"], output: /Kernel DATA_EPOCH/ },
     ])(`runs $args through the relocated wrapper from ${location} cwd`, ({ args, output }) => {
       const result = runWrapper(args, location === "package" ? packageDir : unrelatedCwd);
       expect(result.error).toBeUndefined();
       expect(result.status, result.stdout + result.stderr).toBe(0);
       expect(result.stdout).toMatch(output);
+      expect(fs.readdirSync(env.HANA_HOME!)).toEqual([]);
+    });
+  }
+
+  for (const location of ["package", "unrelated"] as const) {
+    it(`refuses online pull explicitly through the relocated wrapper from ${location} cwd`, () => {
+      const result = runWrapper(["bundle", "pull"], location === "package" ? packageDir : unrelatedCwd);
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stderr.trim()).toBe("Online updates are unavailable in this fork. Upgrade using this project's instructions.");
+      expect(result.stderr).not.toContain("Cannot find module");
       expect(fs.readdirSync(env.HANA_HOME!)).toEqual([]);
     });
   }
