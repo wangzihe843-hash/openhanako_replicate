@@ -3,6 +3,7 @@ import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import type { BridgeOutboundRequestOptions } from "../lib/bridge/outbound-http.ts";
 
 vi.mock("ws", () => {
   class MockWebSocket {
@@ -24,15 +25,15 @@ vi.mock("../lib/debug-log.js", () => ({
 // 这里 mock 成 globalThis.fetch 透传，既捕获 stage 标签，又让既有断言继续工作。
 const outboundCapture = vi.hoisted(() => ({
   platforms: [] as string[],
-  requests: [] as Array<{ stage: string; url: string; method: string }>,
+  requests: [] as Array<{ stage: string; url: string; method: string; idempotent?: boolean }>,
 }));
 
 vi.mock("../lib/bridge/outbound-http.ts", () => ({
   createBridgeOutboundHttp: ({ platform }: any) => {
     outboundCapture.platforms.push(platform);
     return {
-      request: async ({ stage, url, method = "GET", headers, body }: any) => {
-        outboundCapture.requests.push({ stage, url: String(url), method });
+      request: async ({ stage, url, method = "GET", headers, body, idempotent }: BridgeOutboundRequestOptions) => {
+        outboundCapture.requests.push({ stage, url: String(url), method, idempotent });
         return (globalThis as any).fetch(url, { method, headers, body });
       },
     };
@@ -226,15 +227,13 @@ describe("createQQAdapter media delivery", () => {
 
     const messageCalls = (fetch as any).mock.calls.filter(([url]: any) => String(url).includes("/v2/groups/group-openid/messages"));
     expect(messageCalls).toHaveLength(2);
-    expect(JSON.parse(messageCalls[0][1].body)).toMatchObject({
-      content: " ",
+    expect(JSON.parse(messageCalls[0][1].body)).toEqual({
       msg_type: 2,
       markdown: { content: "first" },
       msg_id: "qq-mid-1",
       msg_seq: 1,
     });
-    expect(JSON.parse(messageCalls[1][1].body)).toMatchObject({
-      content: " ",
+    expect(JSON.parse(messageCalls[1][1].body)).toEqual({
       msg_type: 2,
       markdown: { content: "second" },
       msg_id: "qq-mid-1",
@@ -259,8 +258,7 @@ describe("createQQAdapter media delivery", () => {
     });
 
     const messageCall = (fetch as any).mock.calls.find(([url]: any) => String(url).includes("/v2/users/user-openid/messages"));
-    expect(JSON.parse(messageCall[1].body)).toMatchObject({
-      content: " ",
+    expect(JSON.parse(messageCall[1].body)).toEqual({
       msg_type: 2,
       markdown: { content: "**bold**\n- item" },
       msg_id: "qq-dm-1",
@@ -284,12 +282,102 @@ describe("createQQAdapter media delivery", () => {
     });
 
     const messageCall = (fetch as any).mock.calls.find(([url]: any) => String(url).includes("/channels/channel-id/messages"));
-    expect(JSON.parse(messageCall[1].body)).toMatchObject({
+    expect(JSON.parse(messageCall[1].body)).toEqual({
       markdown: { content: "# Title" },
       msg_id: "qq-channel-mid-1",
       msg_seq: 1,
     });
-    expect(JSON.parse(messageCall[1].body)).not.toHaveProperty("msg_type");
+    adapter.stop();
+  });
+
+  it.each(["user", "group"])("preserves %s markdown chunks and sequence across later text and media", async (targetType) => {
+    const adapter = createQQAdapter({
+      appID: "app-id",
+      appSecret: "app-secret",
+      agentId: "hana",
+      onMessage: vi.fn(),
+      dmGuildMap: undefined,
+      onDmGuildDiscovered: undefined,
+      onStatus: undefined,
+    });
+    const chatId = `${targetType}-openid`;
+    const isGroup = targetType === "group";
+    const context = { messageId: "qq-chunk-mid", targetType, isGroup };
+    const chunks = ["中".repeat(2000), "文".repeat(100)];
+
+    await adapter.sendReply(chatId, chunks.join(""), context);
+    await adapter.sendReply(chatId, "**later**", context);
+    await adapter.sendMedia(chatId, "https://cdn.example.com/image.png", {
+      kind: "image",
+      isGroup,
+      replyContext: context,
+    });
+
+    const messageCalls = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/messages"));
+    expect(messageCalls.map(([url]) => new URL(String(url)).pathname)).toEqual(
+      Array(4).fill(`/v2/${isGroup ? "groups" : "users"}/${chatId}/messages`),
+    );
+    expect(messageCalls.map(([, init]) => JSON.parse(init?.body as string))).toEqual([
+      ...[...chunks, "**later**"].map((content, index) => ({
+        msg_type: 2,
+        markdown: { content },
+        msg_id: context.messageId,
+        msg_seq: index + 1,
+      })),
+      {
+        content: " ",
+        msg_type: 7,
+        media: { file_info: "file-info" },
+        msg_id: context.messageId,
+        msg_seq: 4,
+      },
+    ]);
+    expect(outboundCapture.requests.filter(({ stage }) => stage === "send_reply").map(({ idempotent }) => idempotent))
+      .toEqual([false, false, false]);
+    adapter.stop();
+  });
+
+  it.each([
+    ["user", 403], ["group", 403], ["channel", 403],
+    ["user", 503], ["group", 503], ["channel", 503],
+    ["user", "network"], ["group", "network"], ["channel", "network"],
+  ])("does not resend or send later chunks after %s markdown fails with %s", async (targetType, failure) => {
+    const adapter = createQQAdapter({
+      appID: "app-id",
+      appSecret: "app-secret",
+      agentId: "hana",
+      onMessage: vi.fn(),
+      dmGuildMap: undefined,
+      onDmGuildDiscovered: undefined,
+      onStatus: undefined,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(fetch).mockClear();
+    vi.mocked(fetch).mockImplementation(async () => {
+      if (failure === "network") throw new TypeError("synthetic unknown send result");
+      return new Response('{"message":"synthetic rejection"}', { status: Number(failure) });
+    });
+
+    await expect(adapter.sendReply("target-id", "x".repeat(2001), {
+      messageId: "qq-failed-mid",
+      targetType,
+    })).rejects.toThrow(failure === "network" ? /unknown send result/ : /synthetic rejection/);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    expect(new URL(String(url)).pathname).toBe(targetType === "channel"
+      ? "/channels/target-id/messages"
+      : `/v2/${targetType === "group" ? "groups" : "users"}/target-id/messages`);
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(init?.body as string)).toEqual({
+      ...(targetType === "channel" ? {} : { msg_type: 2 }),
+      markdown: { content: "x".repeat(2000) },
+      msg_id: "qq-failed-mid",
+      msg_seq: 1,
+    });
+    expect(outboundCapture.requests.filter(({ stage }) => stage === "send_reply"))
+      .toEqual([{ stage: "send_reply", url: String(url), method: "POST", idempotent: false }]);
     adapter.stop();
   });
 

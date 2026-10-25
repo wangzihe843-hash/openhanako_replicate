@@ -272,7 +272,6 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       return { markdown };
     }
     return {
-      content: " ",
       msg_type: 2,
       markdown,
     };
