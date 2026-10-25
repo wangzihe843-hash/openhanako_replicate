@@ -551,6 +551,23 @@ async function readNftTraceSource(filePath) {
   }).outputText;
 }
 
+function buildMammothRuntimeSmokeScript() {
+  // A synthetic 806-byte DOCX: content types, the root relationship and one
+  // document paragraph containing "Hana DOCX 打包验证". No user file or network.
+  const docx = "UEsDBBQAAAAIAAAAIQB0JJxTuwAAAD4BAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbJWQuQ7CMAyGX6XKiqgRAwNquwArMPACVuq2EbkUuxxvT8o1sDHa//FZrk73SFzcnPVcq0EkrgFYD+SQyxDJZ6ULyaHkMfUQUZ+xJ1guFivQwQt5mcvUoZpqSx2OVordLa/ZBF+rRJZVsXkZJ1atMEZrNErW4eLbH8r8TShz8unhwUSeZYOCpjpcKCXTUnHEJHt0uQ6uIbXQBj26jCgn41+80HVG0zc/tcUUNDEb3ztbfhWHxn/ugOfbmgdQSwMEFAAAAAgAAAAhAGF7L0OJAAAA8gAAAAsAAABfcmVscy8ucmVsc43POw4CIRAG4KsQDrCzWlgYoLLZ1ngBAsMjLo8MGPX2UlisxsJy5p98f0accdU9ltxCrI090pqb5KH3egRoJmDSbSoV80hcoaT7GMlD1eaqPcJ+ng9AW4MrsTXZYiWnxe44uzwr/mMX56LBUzG3hLn/qPi6GLImj13yeyEL9r2eBstBCfh4Ub0AUEsDBBQAAAAIAAAAIQAniGHNigAAAKgAAAARAAAAd29yZC9kb2N1bWVudC54bWyzKbdKyU8uzU3NK1GoyM3JK7Yqt1XKKCkpsNLXL07OSM1NLNbLL0jNA8ql5RflJpYAuUXp+uX5RSkFRfnJqcXFmXnpuTn6RgYGZvq5iZl5SnY25VZJ+SmVILoARBSBiBI7j8S8RAUXf+cIhWedk5/2tL5c1fNifaONPkgORBaByQIwCdGvj3CbHQBQSwECFAMUAAAACAAAACEAdCScU7sAAAA+AQAAEwAAAAAAAAAAAAAAgAEAAAAAW0NvbnRlbnRfVHlwZXNdLnhtbFBLAQIUAxQAAAAIAAAAIQBhey9DiQAAAPIAAAALAAAAAAAAAAAAAACAAewAAABfcmVscy8ucmVsc1BLAQIUAxQAAAAIAAAAIQAniGHNigAAAKgAAAARAAAAAAAAAAAAAACAAZ4BAAB3b3JkL2RvY3VtZW50LnhtbFBLBQYAAAAAAwADALkAAABXAgAAAAA=";
+  return [
+    "const { default: mammoth } = await import('mammoth');",
+    `const buffer = Buffer.from(${JSON.stringify(docx)}, 'base64');`,
+    "const text = await mammoth.extractRawText({ buffer });",
+    "const html = await mammoth.convertToHtml({ buffer });",
+    "if (text.value !== 'Hana DOCX 打包验证\\n\\n' || html.value !== '<p>Hana DOCX 打包验证</p>') {",
+    "  throw new Error(`mammoth DOCX runtime smoke failed: ${JSON.stringify({ text, html })}`);",
+    "}",
+    "console.log('[build-server] mammoth DOCX runtime smoke passed');",
+    "",
+  ].join("\n");
+}
+
 /**
  * @vercel/nft-traces from `nftRoots` (relative to `outDir`) and deletes
  * every node_modules file that trace didn't reach, except files inside a
@@ -558,7 +575,7 @@ async function readNftTraceSource(filePath) {
  * their conditional-export / CJS-ESM resolution isn't always traced
  * correctly, plus their installed optionalDependencies). Then re-verifies
  * external entrypoints and runs the better-sqlite3 / @node-rs/jieba /
- * @firecrawl/anydoc runtime smoke tests when those packages are present in
+ * @firecrawl/anydoc / mammoth runtime smoke tests when those packages are present in
  * `externalPackageNames`.
  *
  * @param {{
@@ -598,7 +615,9 @@ export async function pruneServerNodeModulesViaNft({
         {
           base: traceRoot,
           processCwd: traceRoot,
-          conditions: ["node", "import"],
+          // NFT selects require/import per call site. Forcing "import" here
+          // also selects that branch for CJS require() and can omit its entry.
+          conditions: ["node"],
           fileIOConcurrency,
           // NFT's default boundary check misses absolute path.relative results
           // across Windows volumes. Keep traced assets inside the packaged tree.
@@ -643,15 +662,19 @@ export async function pruneServerNodeModulesViaNft({
     let removedFiles = 0;
     let removedSize = 0;
 
-    function pruneDir(dir) {
+    function pruneDir(dir, preserveNotices = false) {
       let entries;
       try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      // The later dead-file trim protects these notices too, but cannot restore
+      // files deleted here. Keep only notice files belonging to traced packages.
+      preserveNotices ||= tracedFiles.has(path.join(dir, "package.json"));
 
       for (const entry of entries) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) {
           if (protectedDirs.has(path.resolve(full))) continue;
-          pruneDir(full);
+          // A retained package does not retain notices of unused nested deps.
+          pruneDir(full, entry.name !== "node_modules" && preserveNotices);
           try {
             const remaining = fs.readdirSync(full);
             if (remaining.length === 0) fs.rmdirSync(full);
@@ -662,7 +685,8 @@ export async function pruneServerNodeModulesViaNft({
             }
           }
         } else if (entry.isFile() || entry.isSymbolicLink()) {
-          if (!tracedFiles.has(full)) {
+          const isNotice = preserveNotices && entry.isFile() && /^(license|licence|copying|notice)/i.test(entry.name);
+          if (!tracedFiles.has(full) && !isNotice) {
             const size = entry.isFile() ? (fs.statSync(full).size || 0) : 0;
             fs.unlinkSync(full);
             removedFiles++;
@@ -680,6 +704,16 @@ export async function pruneServerNodeModulesViaNft({
   }
 
   verifyExternalEntrypoints(outDir, externalPackageNames);
+
+  if (externalPackageNames.includes("mammoth")) {
+    const smokeScript = path.join(outDir, ".mammoth-smoke.mjs");
+    await writeSmokeScriptWithRetry(smokeScript, buildMammothRuntimeSmokeScript());
+    try {
+      runWithTargetNode(path.basename(smokeScript));
+    } finally {
+      fs.rmSync(smokeScript, { force: true });
+    }
+  }
 
   if (externalPackageNames.includes("better-sqlite3")) {
     const smokeScript = path.join(outDir, ".better-sqlite3-smoke.mjs");

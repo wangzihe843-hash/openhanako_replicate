@@ -908,7 +908,9 @@ export async function traceNftRoot({ rootDir, root, deps = {} }) {
     const deferredSdkRoots = resolveDeferredBridgeSdkEntrypoints(rootDir, root.deferredPackages || []);
     const { fileList, warnings } = await nodeFileTrace([scratchPath, ...deferredSdkRoots], {
       base: rootDir,
-      conditions: ["node", "import"],
+      // NFT chooses require/import from each call site; making "import" a
+      // global condition incorrectly sends CJS requires down the ESM branch.
+      conditions: ["node"],
       analysis: { emitGlobs: false },
       ignore: [...NFT_IGNORE_PATTERNS, repoRelative(rootDir, scratchPath)],
     });
