@@ -16,7 +16,7 @@ import WebSocket from "ws";
 import { debugLog } from "../debug-log.ts";
 import { webSocketOptionsForUrl } from "../net/outbound-proxy.ts";
 import { createMediaCapabilities } from "./media-capabilities.ts";
-import { createBridgeOutboundHttp } from "./outbound-http.ts";
+import { BridgeHttpRedirectError, createBridgeOutboundHttp } from "./outbound-http.ts";
 import { QQApiError, QQ_FILE_TYPE, QQ_UPLOAD_SIZE_LIMITS, uploadQQLocalFile } from "./qq-local-upload.ts";
 import { createModuleLogger } from "../debug-log.ts";
 
@@ -242,6 +242,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
   let reconnectAttempts = 0;
   let heartbeatAckReceived = true;
   let lastConnectedAt = 0;
+  let tokenRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
   const userGuildMap = new Map(Object.entries(dmGuildMap || {}));
   const passiveReplySeq = new Map();
@@ -288,6 +289,9 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ appId: appID, clientSecret: appSecret }),
       idempotent: true,
+    }).catch((err) => {
+      if (err instanceof BridgeHttpRedirectError) clearInterval(tokenRefreshTimer);
+      throw err;
     });
     const data = await res.json();
     if (!data.access_token) {
@@ -391,7 +395,8 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
     } catch (err) {
       log.error(`连接失败: ${err.message}`);
       onStatus?.("error", err.message);
-      if (!stopped) scheduleReconnect();
+      if (err instanceof BridgeHttpRedirectError) clearInterval(tokenRefreshTimer);
+      if (!stopped && !(err instanceof BridgeHttpRedirectError)) scheduleReconnect();
     }
   }
 
@@ -622,7 +627,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
 
   // ── Token 定时刷新 ──
   let tokenRefreshFailures = 0;
-  const tokenRefreshTimer = setInterval(async () => {
+  tokenRefreshTimer = setInterval(async () => {
     try {
       await refreshToken();
       tokenRefreshFailures = 0;
@@ -630,7 +635,9 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       tokenRefreshFailures++;
       log.error(`token 刷新失败（连续第 ${tokenRefreshFailures} 次）: ${err.message}`);
       debugLog()?.error("bridge", `[qq] token 刷新失败: ${err.message}`);
-      if (tokenRefreshFailures >= 3) {
+      if (err instanceof BridgeHttpRedirectError) {
+        onStatus?.("error", err.message);
+      } else if (tokenRefreshFailures >= 3) {
         onStatus?.("error", `Token 连续 ${tokenRefreshFailures} 次刷新失败`);
       }
     }
@@ -645,6 +652,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
         await apiRequest("POST", endpoint, msgBody, { stage: "send_media_message" });
         return;
       } catch (err) {
+        if (err instanceof BridgeHttpRedirectError) throw err;
         if (endpoint === messageEndpoints.at(-1)) {
           debugLog()?.error("bridge", `[qq] 富媒体消息发送失败: ${err.message}`);
           throw err;
@@ -675,6 +683,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
             lastError = null;
             break;
           } catch (err) {
+            if (err instanceof BridgeHttpRedirectError) throw err;
             lastError = err;
             errors.push(`${endpoint.label}=${err.message}`);
           }
@@ -714,6 +723,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
           fileInfo = res.file_info;
           break;
         } catch (err) {
+          if (err instanceof BridgeHttpRedirectError) throw err;
           if (endpoint === uploadEndpoints.at(-1)) {
             debugLog()?.error("bridge", `[qq] 媒体上传失败: ${err.message}`);
             throw err;

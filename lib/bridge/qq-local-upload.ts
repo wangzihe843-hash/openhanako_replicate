@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { BridgeHttpRedirectError } from "./outbound-http.ts";
 
 export const QQ_FILE_TYPE = Object.freeze({
   IMAGE: 1,
@@ -58,6 +59,7 @@ export async function uploadQQLocalFile({ apiRequest, outboundHttp, chatId, file
     try {
       return await chunkedUploadLocalFile({ apiRequest, outboundHttp, target, filePath, fileType, metadata });
     } catch (err) {
+      if (err instanceof BridgeHttpRedirectError) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
       if (metadata.isGroup !== undefined) throw lastError;
     }
@@ -238,6 +240,7 @@ async function finishUploadPart(apiRequest, endpoint, body, retryTimeoutMs) {
       await apiRequest("POST", endpoint, body, { stage: "upload_part_finish" });
       return;
     } catch (err) {
+      if (err instanceof BridgeHttpRedirectError) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
       if (err instanceof QQApiError && err.bizCode === PART_FINISH_RETRYABLE_CODE) {
         await retryUploadPartFinishUntilReady(apiRequest, endpoint, body, retryTimeoutMs);
@@ -276,6 +279,7 @@ async function completeUploadWithRetry(apiRequest, endpoint, body) {
     try {
       return await apiRequest("POST", endpoint, body, { stage: "upload_complete" });
     } catch (err) {
+      if (err instanceof BridgeHttpRedirectError) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
       if (attempt < COMPLETE_UPLOAD_MAX_RETRIES) {
         await sleep(COMPLETE_UPLOAD_BASE_DELAY_MS * Math.pow(2, attempt));

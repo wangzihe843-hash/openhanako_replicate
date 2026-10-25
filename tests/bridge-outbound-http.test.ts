@@ -16,14 +16,19 @@
  *   5. 诊断不泄漏完整 URL（path/query 可能含签名）与代理凭证
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   BRIDGE_HTTP_MAX_RETRIES,
   BRIDGE_HTTP_RETRY_BASE_DELAY_MS,
   BRIDGE_HTTP_TIMEOUT_MS,
   BridgeHttpError,
+  BridgeHttpRedirectError,
   createBridgeOutboundHttp,
 } from "../lib/bridge/outbound-http.ts";
+
+import { fetch as undiciFetch } from "undici";
+import { downloadMedia } from "../lib/bridge/media-utils.ts";
+import { bridgeHttpLoopback } from "./fixtures/bridge-http-loopback.ts";
 
 function fakeResponse(status = 200) {
   return {
@@ -251,4 +256,96 @@ describe("createBridgeOutboundHttp", () => {
     expect(res503.status).toBe(503);
     expect(fetchOnce).toHaveBeenCalledTimes(1);
   });
+});
+
+
+describe("Bridge redirect policy over real HTTPS loopback", () => {
+  let loop: Awaited<ReturnType<typeof bridgeHttpLoopback>>;
+  beforeAll(async () => { loop = await bridgeHttpLoopback(); });
+  afterAll(async () => { await loop?.close(); });
+  const shapes = [
+    ["qq_token", { clientSecret: "SYNTHETIC_BODY_SECRET" }, {}],
+    ["qq_api", { content: "message" }, { Authorization: "QQBot SYNTHETIC_AUTH_TOKEN" }],
+    ["dingtalk_current", { client_secret: "SYNTHETIC_BODY_SECRET" }, {}],
+    ["dingtalk_legacy", { appSecret: "SYNTHETIC_BODY_SECRET" }, {}],
+    ["dingtalk_stream", { clientSecret: "SYNTHETIC_BODY_SECRET" }, {}],
+    ["dingtalk_robot", { msgParam: "message" }, { "x-acs-dingtalk-access-token": "SYNTHETIC_CUSTOM_TOKEN" }],
+    ["qq_presigned_put", null, {}],
+  ] as const;
+  for (const fetchImpl of [undiciFetch, globalThis.fetch]) {
+    for (const destination of ["same-origin", "cross-host", "downgrade"] as const) {
+      for (const [stage, payload, headers] of shapes) {
+        it.each([301, 302, 303, 307, 308])(`${fetchImpl === undiciFetch ? "undici" : "native"} ${stage} ${destination} refuses HTTP %i without second station or retry`, async status => {
+          loop.reset();
+          const location = (destination === "same-origin" ? loop.source : destination === "cross-host" ? loop.sink : loop.downgrade) + "/capture?secret=SYNTHETIC_LOCATION_SECRET";
+          loop.respond((_request, response) => { response.writeHead(status, { Location: location }); response.end("SYNTHETIC_RESPONSE_SECRET"); });
+          const sleep = vi.fn(async () => {});
+          const http = createBridgeOutboundHttp({ platform: "qq", fetchImpl: fetchImpl as unknown as typeof undiciFetch, resolveDispatcher: () => ({ dispatcher: loop.agent, proxyUrl: "" }), sleep });
+          const error = await http.request({ stage, url: loop.source + "/source?signature=SYNTHETIC_URL_SECRET", method: payload ? "POST" : "PUT", headers: { ...headers }, body: payload ? JSON.stringify(payload) : new Blob(["SYNTHETIC_FILE_BYTES"]), idempotent: true }).catch(error => error);
+          expect(error).toBeInstanceOf(BridgeHttpRedirectError);
+          expect(error).toMatchObject({ code: "BRIDGE_HTTP_REDIRECT_REJECTED", status, attempts: 1, timedOut: false });
+          expect(loop.sourceRequests).toHaveLength(1);
+          expect(loop.sourceRequests[0].path).toContain("/source?");
+          expect(loop.sourceRequests[0].remoteAddress).toBe("127.0.0.1");
+          expect(loop.sinkRequests).toEqual([]);
+          expect(sleep).not.toHaveBeenCalled();
+          expect(error.cause).toBeUndefined();
+          expect(error.message + JSON.stringify(error)).not.toMatch(/SYNTHETIC_|capture|signature=/);
+        });
+      }
+    }
+  }
+
+  it("keeps ordinary media CDN downloads on their independent redirect-capable path", async () => {
+    loop.reset();
+    loop.respond((_req, res) => { res.writeHead(302, { Location: loop.sink + "/public-media" }); res.end(); });
+    vi.stubGlobal("fetch", (url: string) => undiciFetch(url, { dispatcher: loop.agent }));
+    try {
+      expect((await downloadMedia(loop.source + "/public-media")).toString()).toBe("{}");
+      expect(loop.sourceRequests).toHaveLength(1);
+      expect(loop.sinkRequests).toHaveLength(1);
+      expect(loop.sinkRequests[0].body).toBe("");
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it.each([200, 204, 304, 400, 401, 404, 429, 500, 503])("preserves HTTP %i response and existing retry rules", async status => {
+    loop.reset();
+    loop.respond((_request, response) => { response.writeHead(status); response.end(status === 204 || status === 304 ? undefined : "control"); });
+    const sleep = vi.fn(async () => {});
+    const http = createBridgeOutboundHttp({ platform: "qq", resolveDispatcher: () => ({ dispatcher: loop.agent, proxyUrl: "" }), sleep });
+    const response = await http.request({ stage: "control", url: loop.source, idempotent: true });
+    expect(response.status).toBe(status);
+    await response.text();
+    const count = status === 429 || status >= 500 ? 3 : 1;
+    expect(loop.sourceRequests).toHaveLength(count);
+    expect(sleep).toHaveBeenCalledTimes(count - 1);
+    expect(loop.sinkRequests).toHaveLength(0);
+  });
+});
+
+describe("Bridge redirect error contract", () => {
+  it.each([301, 302, 303, 307, 308])("refuses %i even without Location; cancels body and ignores release errors", async status => {
+    const response = fakeResponse(status);
+    response.body.cancel.mockRejectedValue(new Error("SYNTHETIC_CANCEL_SECRET"));
+    const fetchImpl = vi.fn(async () => response);
+    const sleep = vi.fn(async () => {});
+    const http = createBridgeOutboundHttp({ platform: "dingtalk", fetchImpl: fetchImpl as unknown as typeof undiciFetch, resolveDispatcher: directResolver, sleep });
+    await expect(http.request({ stage: "token", url: "https://source.invalid", idempotent: true })).rejects.toMatchObject({ code: "BRIDGE_HTTP_REDIRECT_REJECTED", attempts: 1, status });
+    expect(response.body.cancel).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledExactlyOnceWith("https://source.invalid", expect.objectContaining({ redirect: "manual" }));
+    expect(sleep).not.toHaveBeenCalled();
+  });
+});
+
+
+it("stops after a retryable status followed by redirect, with safe proxy diagnostics", async () => {
+  const fetchImpl = vi.fn().mockResolvedValueOnce(fakeResponse(503)).mockResolvedValueOnce(fakeResponse(307));
+  const sleep = vi.fn(async () => {});
+  const http = createBridgeOutboundHttp({ platform: "qq", fetchImpl, sleep, resolveDispatcher: () => ({ dispatcher: null, proxyUrl: "http://SYNTHETIC_USER:SYNTHETIC_PASS@proxy.invalid/path?secret=SYNTHETIC_QUERY#SYNTHETIC_FRAGMENT" }) });
+  const error = await http.request({ stage: "token", url: "https://source.invalid", idempotent: true }).catch(error => error);
+  expect(error).toBeInstanceOf(BridgeHttpRedirectError);
+  expect(error).toMatchObject({ attempts: 2, status: 307 });
+  expect(JSON.stringify(error) + error.message).not.toContain("SYNTHETIC_");
+  expect(fetchImpl).toHaveBeenCalledTimes(2);
+  expect(sleep).toHaveBeenCalledExactlyOnceWith(BRIDGE_HTTP_RETRY_BASE_DELAY_MS);
 });

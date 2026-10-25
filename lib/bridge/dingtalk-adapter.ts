@@ -14,7 +14,7 @@ import WebSocket from "ws";
 import { createModuleLogger, debugLog } from "../debug-log.ts";
 import { webSocketOptionsForUrl } from "../net/outbound-proxy.ts";
 import { formatSecretFingerprintComparison, redactSecretsFromText } from "../secret-fingerprint.ts";
-import { createBridgeOutboundHttp } from "./outbound-http.ts";
+import { BridgeHttpRedirectError, createBridgeOutboundHttp } from "./outbound-http.ts";
 import { createStreamingCapabilities } from "./streaming-capabilities.ts";
 import {
   DINGTALK_BOT_CALLBACK_TOPIC,
@@ -449,7 +449,7 @@ export function createDingTalkAdapter({
       );
       log.error(`connect failed: ${message}`);
       onStatus?.("error", message);
-      scheduleReconnect(message);
+      if (!(err instanceof BridgeHttpRedirectError)) scheduleReconnect(message);
     }
   }
 
@@ -481,6 +481,10 @@ export function createDingTalkAdapter({
       );
       outboundError = message;
       onStatus?.("error", message);
+      if (err instanceof BridgeHttpRedirectError) {
+        err.message = message;
+        throw err;
+      }
       if (err instanceof Error && err.message === message) throw err;
       throw new Error(message);
     }

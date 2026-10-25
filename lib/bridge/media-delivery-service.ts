@@ -3,6 +3,7 @@ import { debugLog } from "../debug-log.ts";
 import { extOfName, inferFileKind } from "../file-metadata.ts";
 import { downloadMedia, detectMime, resolveAllowedLocalPath } from "./media-utils.ts";
 import { normalizeMediaItems } from "./media-item-normalizer.ts";
+import { BridgeHttpRedirectError } from "./outbound-http.ts";
 
 export class MediaDeliveryService {
   declare engine: any;
@@ -43,6 +44,7 @@ export class MediaDeliveryService {
   }
 
   async sendFailureNotice(adapter, chatId, err, replyContext = null) {
+    if (err instanceof BridgeHttpRedirectError) return;
     if (!adapter?.sendReply) return;
     try {
       const message = `[文件发送失败] ${err.message || err}`;

@@ -17,6 +17,7 @@ vi.mock("../lib/debug-log.js", () => ({
 }));
 
 import os from "os";
+import { BridgeHttpRedirectError } from "../lib/bridge/outbound-http.ts";
 import { BridgeManager } from "../lib/bridge/bridge-manager.ts";
 import { createSlashSystem } from "../core/slash-commands/index.ts";
 
@@ -148,6 +149,24 @@ describe("BridgeManager RC attached-session routing", () => {
     expect(replies.some(r => /回复生成失败/.test(r))).toBe(true);
     expect(replies.some(r => /\[Error\]/.test(r))).toBe(false);
     expect(replies.some(r => /model timeout/.test(r))).toBe(false);
+  });
+
+  it.each(["qq", "dingtalk"])("%s redirect refusal never sends a second failure reply", async platform => {
+    const { bm, adapter, engine, hub, rcState } = createMocks();
+    engine.getBridgeReceiptEnabled = vi.fn(() => false);
+    engine.getAgent.mockReturnValue({ id: "hana", agentName: "T", config: { bridge: { [platform]: { owner: "owner123" } } }, sessionDir: os.tmpdir() });
+    bm._platforms.clear();
+    bm._platforms.set(`${platform}:hana`, { adapter, status: "connected", agentId: "hana", platform });
+    const sessionKey = `${platform === "qq" ? "qq" : "dt"}_dm_owner123@hana`;
+    rcState.attach(sessionKey, "/redirect-test.jsonl");
+    adapter.sendReply.mockRejectedValue(new BridgeHttpRedirectError("redirect refused", {
+      platform, stage: "token", method: "POST", host: "source.invalid", proxied: false,
+      proxyUrl: "", attempts: 1, timedOut: false, status: 307,
+    }));
+    bm._handleMessage(platform, { sessionKey, text: "hello", userId: "owner123", chatId: "owner123", agentId: "hana" });
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(hub.send).toHaveBeenCalledOnce();
+    expect(adapter.sendReply).toHaveBeenCalledExactlyOnceWith("owner123", "desktop reply");
   });
 
   it("desktop session busy → keeps the dedicated busy notice", async () => {

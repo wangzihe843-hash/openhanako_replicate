@@ -28,7 +28,8 @@ const outboundCapture = vi.hoisted(() => ({
   requests: [] as Array<{ stage: string; url: string; method: string; idempotent?: boolean }>,
 }));
 
-vi.mock("../lib/bridge/outbound-http.ts", () => ({
+vi.mock("../lib/bridge/outbound-http.ts", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../lib/bridge/outbound-http.ts")>(),
   createBridgeOutboundHttp: ({ platform }: any) => {
     outboundCapture.platforms.push(platform);
     return {

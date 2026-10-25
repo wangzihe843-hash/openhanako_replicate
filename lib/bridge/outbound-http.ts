@@ -20,8 +20,9 @@
  *   - 诊断：失败必带 [platform:stage]、目标 host（不含 path/query，预签名
  *     URL 的签名不泄漏）、尝试次数、代理路由（凭证打码）、底层错误码
  *
- * 设计为所有 Bridge adapter 可复用；当前只有 QQ adapter 迁入（#1612 控制
- * 爆炸半径），其余平台后续逐个迁移。
+ * QQ / 钉钉的凭据与 API 请求，以及 QQ 预签名上传使用本模块。
+ * 所有 HTTP 重定向（包括同 origin）均拒绝，禁止凭据或文件随 Location 重发；
+ * 普通媒体 CDN 下载不经过本模块。
  */
 
 import { fetch as undiciFetch } from "undici";
@@ -68,11 +69,30 @@ export class BridgeHttpError extends Error {
   }
 }
 
+/** 服务端重定向是目的地策略拒绝，不是可重试的网络故障。 */
+export class BridgeHttpRedirectError extends BridgeHttpError {
+  readonly code = "BRIDGE_HTTP_REDIRECT_REJECTED";
+  readonly status: number;
+
+  constructor(message: string, fields: ConstructorParameters<typeof BridgeHttpError>[1] & { status: number }) {
+    super(message, fields);
+    this.name = "BridgeHttpRedirectError";
+    this.status = fields.status;
+  }
+}
+
+function isRedirectStatus(status: number) {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
 function redactUrlCredentials(value: string) {
   try {
     const url = new URL(value);
     if (url.username) url.username = "***";
     if (url.password) url.password = "***";
+    url.pathname = "/";
+    url.search = "";
+    url.hash = "";
     return url.href.replace(/\/$/, "");
   } catch {
     return "";
@@ -170,9 +190,18 @@ export function createBridgeOutboundHttp({
           method,
           headers,
           body,
+          redirect: "manual",
           signal: controller.signal,
           ...(dispatcher ? { dispatcher } : {}),
         } as any);
+        if (isRedirectStatus(res.status)) {
+          // 不读取 Location 或响应正文：它们可能回显 secret 或包含签名。
+          try { await res.body?.cancel?.(); } catch { /* 释放失败也不能重发 */ }
+          throw new BridgeHttpRedirectError(
+            `[${platform}:${stage}] ${method} ${host} redirect refused (HTTP ${res.status}, attempt ${attempt}, ${route})`,
+            { platform, stage, method, host, proxied, proxyUrl: redactedProxy, attempts: attempt, timedOut: false, status: res.status },
+          );
+        }
         if (attempt < attempts && isRetryableStatus(res.status)) {
           // 释放连接，丢弃这轮可重试响应的 body（状态语义仍归调用方：
           // 最后一轮的响应原样返回，由调用方解析错误细节）
@@ -182,6 +211,7 @@ export function createBridgeOutboundHttp({
         }
         return res;
       } catch (err) {
+        if (err instanceof BridgeHttpRedirectError) throw err;
         if (attempt < attempts) {
           await sleep(BRIDGE_HTTP_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
           continue;

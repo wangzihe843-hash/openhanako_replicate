@@ -921,7 +921,10 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
         }
       } else if (platform === "qq") {
         // v2 鉴权：appID + appSecret → access_token → /users/@me
-        const tokenRes = await fetch("https://bots.qq.com/app/getAppAccessToken", {
+        const qqHttp = createBridgeOutboundHttp({ platform: "qq", fetchImpl: fetch as unknown as typeof import("undici").fetch });
+        const tokenRes = await qqHttp.request({
+          stage: "token_test",
+          url: "https://bots.qq.com/app/getAppAccessToken",
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ appId: effectiveCredentials.appID, clientSecret: effectiveCredentials.appSecret }),
@@ -930,7 +933,9 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
         if (!tokenData.access_token) {
           return c.json({ ok: false, error: tokenData.message || t("error.tokenFetchFailed") });
         }
-        const meRes = await fetch("https://api.sgroup.qq.com/users/@me", {
+        const meRes = await qqHttp.request({
+          stage: "me_test",
+          url: "https://api.sgroup.qq.com/users/@me",
           headers: { Authorization: `QQBot ${tokenData.access_token}` },
         });
         const me = await meRes.json();

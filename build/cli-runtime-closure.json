@@ -4464,6 +4464,11 @@
       "provenance": [
         {
           "root": "server-bootstrap",
+          "from": "lib/bridge/dingtalk-api.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "server/routes/bridge.ts",
           "kind": "import-statement"
         },
@@ -4474,11 +4479,26 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/bridge/qq-local-upload.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/bridge/qq-adapter.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/bridge/media-delivery-service.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/bridge/bridge-manager.ts",
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by server/routes/bridge.ts (import-statement); lib/bridge/dingtalk-adapter.ts (import-statement); lib/bridge/qq-adapter.ts (import-statement)."
+      "reason": "Reached via esbuild source module graph, imported by lib/bridge/dingtalk-api.ts (import-statement); server/routes/bridge.ts (import-statement); lib/bridge/dingtalk-adapter.ts (import-statement); +4 more importer(s)."
     },
     {
       "path": "lib/bridge/owner-policy.ts",

@@ -4,6 +4,7 @@ import {
   type DingTalkBridgeCredentials,
 } from "./dingtalk-contract.ts";
 import { redactSecretsFromText } from "../secret-fingerprint.ts";
+import { BridgeHttpRedirectError } from "./outbound-http.ts";
 
 export const DINGTALK_TOKEN_RESPONSE_BODY_TIMEOUT_MS = 10_000;
 export const DINGTALK_TOKEN_RESPONSE_MAX_BYTES = 64 * 1024;
@@ -275,6 +276,8 @@ export async function requestDingTalkAccessToken(
   try {
     response = await transport(request);
   } catch (error: any) {
+    // 保留目的地拒绝类型，让上层停止重试/失败通知；它不含响应或凭据。
+    if (error instanceof BridgeHttpRedirectError) throw error;
     const safeMessage = redactSecretsFromText(error?.message || String(error), [credentials.clientSecret]);
     const safeCode = error?.code
       ? redactSecretsFromText(error.code, [credentials.clientSecret])

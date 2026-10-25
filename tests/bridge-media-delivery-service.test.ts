@@ -17,6 +17,7 @@ vi.mock("../lib/debug-log.js", () => ({
   createModuleLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
 }));
 
+import { BridgeHttpRedirectError } from "../lib/bridge/outbound-http.ts";
 import { MediaDeliveryService } from "../lib/bridge/media-delivery-service.ts";
 import { setMediaLocalRoots } from "../lib/bridge/media-utils.ts";
 import { TELEGRAM_MEDIA_CAPABILITIES } from "../lib/bridge/telegram-adapter.ts";
@@ -501,4 +502,15 @@ describe("MediaDeliveryService", () => {
       expect.objectContaining({ filename: "image.png" }),
     );
   });
+});
+
+
+it("suppresses media failure notices only for a typed redirect refusal", async () => {
+  const service = new MediaDeliveryService();
+  const adapter = { sendReply: vi.fn() };
+  const error = new BridgeHttpRedirectError("redirect refused", { platform: "qq", stage: "token", method: "POST", host: "source.invalid", proxied: false, proxyUrl: "", attempts: 1, timedOut: false, status: 307 });
+  await service.sendFailureNotice(adapter, "chat", error);
+  expect(adapter.sendReply).not.toHaveBeenCalled();
+  await service.sendFailureNotice(adapter, "chat", new Error("ordinary failure"));
+  expect(adapter.sendReply).toHaveBeenCalledExactlyOnceWith("chat", "[文件发送失败] ordinary failure");
 });

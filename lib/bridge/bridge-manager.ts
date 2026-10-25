@@ -17,6 +17,7 @@ import { createWechatAdapter } from "./wechat-adapter.ts";
 import { downloadMedia, bufferToBase64, detectMime, splitMediaFromOutput, formatSize, setMediaLocalRoots, isExtractableReplyMediaSource } from "./media-utils.ts";
 import { mediaItemKey, normalizeMediaItems } from "./media-item-normalizer.ts";
 import { MediaDeliveryService } from "./media-delivery-service.ts";
+import { BridgeHttpRedirectError } from "./outbound-http.ts";
 import { MediaPublisher } from "./media-publisher.ts";
 import { collectBridgeMediaAllowedRoots } from "./media-roots.ts";
 import { AppError } from "../../shared/errors.ts";
@@ -2444,7 +2445,7 @@ export class BridgeManager {
       if (binding.isCurrent() && !isAbortLikeError(err)) {
         log.error(`rc-attached prompt failed (${platform}, ${desktopSessionPath}): ${err.message}`);
         debugLog()?.error("bridge", `rc-attached failed: ${err.message}`);
-        if (adapter) {
+        if (adapter && !(err instanceof BridgeHttpRedirectError)) {
           // 用户提示用人话：低层错误字符串只进日志，不作为聊天正文发出（#1607）。
           const notice = err.message === "session_busy"
             ? t("bridge.sessionBusy")
