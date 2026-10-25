@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   DINGTALK_BOT_CALLBACK_TOPIC,
@@ -9,7 +9,11 @@ import {
 type FakeWebSocketHandler = (payload?: unknown) => void;
 
 class FakeWebSocket {
+  static OPEN = 1;
+  static CLOSED = 3;
   static instances: FakeWebSocket[] = [];
+  readyState = 0;
+  closeCalls = 0;
   url: string;
   options: any;
   sent: string[] = [];
@@ -29,6 +33,8 @@ class FakeWebSocket {
   }
 
   emit(event: string, payload?: any) {
+    if (event === "open") this.readyState = FakeWebSocket.OPEN;
+    if (event === "close") this.readyState = FakeWebSocket.CLOSED;
     for (const handler of this.handlers.get(event) || []) {
       handler(payload);
     }
@@ -39,6 +45,7 @@ class FakeWebSocket {
   }
 
   close() {
+    this.closeCalls += 1;
     this.emit("close");
   }
 }
@@ -84,6 +91,162 @@ function streamEnvelope(data: any, messageId = "msg-1") {
     data: JSON.stringify(data),
   });
 }
+
+function pingEnvelope(messageId = "ping-1", opaque: unknown = "opaque-1") {
+  return JSON.stringify({
+    type: "SYSTEM",
+    headers: { topic: "ping", contentType: "application/json", messageId, time: 123 },
+    data: JSON.stringify({ opaque }),
+  });
+}
+
+describe("DingTalk Stream application ping", () => {
+  const adapters: ReturnType<typeof makeAdapter>[] = [];
+  afterEach(() => {
+    for (const adapter of adapters.splice(0)) adapter.stop();
+    vi.useRealTimers();
+  });
+
+  async function fixture(overrides: Record<string, unknown> = {}) {
+    FakeWebSocket.instances = [];
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      endpoint: "wss://stream.example/connect?region=synthetic",
+      ticket: "ticket-1",
+    }));
+    const onMessage = vi.fn();
+    const onStatus = vi.fn();
+    const adapter = makeAdapter(fetchMock, onMessage, onStatus, overrides);
+    adapters.push(adapter);
+    // Registration is fully fake; no socket opens until the fixture emits open.
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    return { adapter, fetchMock, onMessage, onStatus, socket: FakeWebSocket.instances[0] };
+  }
+
+  it("echoes the complete application ACK once per ping without normalizing messageId or opaque", async () => {
+    const { socket, fetchMock, onMessage, onStatus } = await fixture();
+    socket.emit("open");
+    const statuses = onStatus.mock.calls.slice();
+    socket.emit("message", pingEnvelope(" ping-original ", " opaque-original "));
+    socket.emit("message", Buffer.from(pingEnvelope("ping-2", { nested: [0, false, "opaque"] })));
+    expect(socket.sent.map((frame) => JSON.parse(frame))).toEqual([
+      {
+        code: 200,
+        headers: { contentType: "application/json", messageId: " ping-original " },
+        message: "OK",
+        data: JSON.stringify({ opaque: " opaque-original " }),
+      },
+      {
+        code: 200,
+        headers: { contentType: "application/json", messageId: "ping-2" },
+        message: "OK",
+        data: JSON.stringify({ opaque: { nested: [0, false, "opaque"] } }),
+      },
+    ]);
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(onStatus.mock.calls).toEqual(statuses);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(socket.readyState).toBe(FakeWebSocket.OPEN);
+  });
+
+  it.each([
+    ["bad envelope JSON", "{"],
+    ["null envelope", "null"],
+    ["missing headers", JSON.stringify({ type: "SYSTEM", data: '{"opaque":"one"}' })],
+    ["missing messageId", JSON.stringify({ type: "SYSTEM", headers: { topic: "ping" }, data: '{"opaque":"one"}' })],
+    ["empty messageId", pingEnvelope("")],
+    ["blank messageId", pingEnvelope(" ")],
+    ["non-string messageId", JSON.stringify({ type: "SYSTEM", headers: { topic: "ping", messageId: 7 }, data: '{"opaque":"one"}' })],
+    ["missing data", JSON.stringify({ type: "SYSTEM", headers: { topic: "ping", messageId: "one" } })],
+    ["bad data JSON", JSON.stringify({ type: "SYSTEM", headers: { topic: "ping", messageId: "one" }, data: "{" })],
+    ["null data", JSON.stringify({ type: "SYSTEM", headers: { topic: "ping", messageId: "one" }, data: "null" })],
+    ["missing opaque", JSON.stringify({ type: "SYSTEM", headers: { topic: "ping", messageId: "one" }, data: "{}" })],
+    ["array data", JSON.stringify({ type: "SYSTEM", headers: { topic: "ping", messageId: "one" }, data: "[]" })],
+    ["unknown SYSTEM topic", JSON.stringify({ type: "SYSTEM", headers: { topic: "other", messageId: "one" }, data: '{"opaque":"one"}' })],
+    ["ping on CALLBACK type", JSON.stringify({ type: "CALLBACK", headers: { topic: "ping", messageId: "one" }, data: '{"opaque":"one"}' })],
+  ])("ignores %s without ACK or state changes", async (_label, raw) => {
+    const { socket, onMessage, onStatus, fetchMock } = await fixture();
+    socket.emit("open");
+    const statuses = onStatus.mock.calls.slice();
+    expect(() => socket.emit("message", raw)).not.toThrow();
+    expect(socket.sent).toEqual([]);
+    expect(socket.closeCalls).toBe(0);
+    expect(socket.readyState).toBe(FakeWebSocket.OPEN);
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(onStatus.mock.calls).toEqual(statuses);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([0, 2, 3, undefined])("does not ACK on a non-OPEN socket (%s)", async (readyState) => {
+    const { socket, onStatus, onMessage } = await fixture();
+    socket.readyState = readyState as number;
+    const statuses = onStatus.mock.calls.slice();
+    socket.emit("message", pingEnvelope());
+    expect(socket.sent).toEqual([]);
+    expect(socket.readyState).toBe(readyState);
+    expect(onStatus.mock.calls).toEqual(statuses);
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not turn WebSocket control ping/pong events into application ACKs", async () => {
+    const { socket, onStatus } = await fixture();
+    socket.emit("open");
+    const statuses = onStatus.mock.calls.slice();
+    socket.emit("ping", Buffer.from("control-ping"));
+    socket.emit("pong", Buffer.from("control-pong"));
+    expect(socket.sent).toEqual([]);
+    expect(onStatus.mock.calls).toEqual(statuses);
+  });
+
+  it("ignores a stale socket ping and ACKs only the current OPEN socket after fresh registration", async () => {
+    const { socket: oldSocket, fetchMock, onStatus, onMessage } = await fixture({ reconnectDelayMs: 1 });
+    oldSocket.emit("open");
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      endpoint: "wss://another-stream.example/next?region=second",
+      ticket: "ticket-2",
+    }));
+    vi.useFakeTimers();
+    oldSocket.emit("message", JSON.stringify({ type: "SYSTEM", headers: { topic: "disconnect", messageId: "disconnect-1" } }));
+    expect(oldSocket.closeCalls).toBe(1);
+    expect(oldSocket.sent).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    const currentSocket = FakeWebSocket.instances[1];
+    expect(currentSocket.url).toBe("wss://another-stream.example/next?region=second&ticket=ticket-2");
+    expect(oldSocket.url).toBe("wss://stream.example/connect?region=synthetic&ticket=ticket-1");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Even a late message whose old source still claims OPEN cannot ACK on either socket.
+    oldSocket.readyState = FakeWebSocket.OPEN;
+    currentSocket.emit("open");
+    const statuses = onStatus.mock.calls.slice();
+    oldSocket.emit("message", pingEnvelope("stale-ping"));
+    expect(oldSocket.sent).toEqual([]);
+    expect(currentSocket.sent).toEqual([]);
+    currentSocket.emit("message", pingEnvelope("current-ping", "current-opaque"));
+    expect(currentSocket.sent.map((frame) => JSON.parse(frame))).toEqual([{
+      code: 200,
+      headers: { contentType: "application/json", messageId: "current-ping" },
+      message: "OK",
+      data: '{"opaque":"current-opaque"}',
+    }]);
+    expect(onStatus.mock.calls).toEqual(statuses);
+    expect(onMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not ACK late ping messages after stop even if the source still claims OPEN", async () => {
+    const { adapter, socket, onStatus, onMessage, fetchMock } = await fixture();
+    socket.emit("open");
+    adapter.stop();
+    const statuses = onStatus.mock.calls.slice();
+    expect(statuses.at(-1)).toEqual(["disconnected"]);
+    socket.readyState = FakeWebSocket.OPEN;
+    socket.emit("message", pingEnvelope());
+    expect(socket.sent).toEqual([]);
+    expect(socket.closeCalls).toBe(1);
+    expect(onStatus.mock.calls).toEqual(statuses);
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("DingTalk bridge adapter", () => {
   it("opens the official stream connection and subscribes to bot callbacks", async () => {
@@ -156,13 +319,15 @@ describe("DingTalk bridge adapter", () => {
       isGroup: false,
       _msgId: "ding-msg-1",
     }));
-    expect(JSON.parse(FakeWebSocket.instances[0].sent[0])).toMatchObject({
+    expect(FakeWebSocket.instances[0].sent).toHaveLength(1);
+    expect(JSON.parse(FakeWebSocket.instances[0].sent[0])).toEqual({
       code: 200,
       headers: {
         contentType: "application/json",
         messageId: "stream-msg-1",
       },
       message: "OK",
+      data: "{}",
     });
 
     adapter.stop();

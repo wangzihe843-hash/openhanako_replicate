@@ -366,11 +366,26 @@ export function createDingTalkAdapter({
     }));
   }
 
-  function handleStreamMessage(raw: any) {
+  function handleStreamMessage(raw: unknown, sourceSocket: { readyState: number; send: (payload: string) => void }) {
     const envelope = safeJsonParse(raw);
     if (!envelope || typeof envelope !== "object") return;
     const topic = envelope.headers?.topic;
     const type = envelope.type;
+    if (type === "SYSTEM" && topic === "ping") {
+      const messageId = envelope.headers?.messageId;
+      if (stopped || sourceSocket !== ws || sourceSocket.readyState !== (WebSocketImpl.OPEN ?? 1)) return;
+      if (typeof messageId !== "string" || !messageId.trim()) return;
+      const data = safeJsonParse(envelope.data);
+      if (!data || typeof data !== "object" || Array.isArray(data) || !Object.hasOwn(data, "opaque")) return;
+      // Stream application ACK; WebSocket control ping/pong is a separate protocol.
+      sourceSocket.send(JSON.stringify({
+        code: 200,
+        headers: { contentType: "application/json", messageId },
+        message: "OK",
+        data: JSON.stringify({ opaque: data.opaque }),
+      }));
+      return;
+    }
     if (type === "SYSTEM" && topic === "disconnect") {
       try { ws?.close?.(); } catch {}
       return;
@@ -419,13 +434,14 @@ export function createDingTalkAdapter({
       const url = appendTicket(endpoint, ticket);
       streamUrl = url;
       ws = new WebSocketImpl(url, webSocketOptionsForUrl(url));
+      const sourceSocket = ws;
       ws.on("open", () => {
         streamConnected = true;
         log.log("stream connected");
         if (outboundError) onStatus?.("error", outboundError);
         else onStatus?.("connected");
       });
-      ws.on("message", handleStreamMessage);
+      ws.on("message", (raw: unknown) => handleStreamMessage(raw, sourceSocket));
       ws.on("error", (err: any) => {
         streamConnected = false;
         const message = redactSecretsFromText(
