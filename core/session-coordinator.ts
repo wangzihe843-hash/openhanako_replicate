@@ -5234,16 +5234,19 @@ export class SessionCoordinator implements SessionCancellation {
       if (!currentPath) throw new Error(t("error.noActiveSessionPrompt"));
       this._session = await this.ensureSessionLoaded(currentPath);
     }
-    this._assertSessionModelAvailable(this._session);
+    const session = this._session;
+    this._assertSessionModelAvailable(session);
     this._sessionStarted = true;
-    const sp = this._session.sessionManager?.getSessionFile?.();
-    if (sp) {
-      const entry = this._getSessionEntryByPath(sp);
-      if (entry) entry.lastTouchedAt = Date.now();
-    }
+    const sp = session.sessionManager?.getSessionFile?.();
+    const entry = sp ? this._getSessionEntryByPath(sp) : null;
+    // Stop can release this runtime while its SDK prompt is still settling.
+    const ownsRuntime = () => entry
+      ? this._getSessionEntryByPath(sp) === entry && entry.session === session
+      : this._session === session;
+    if (entry) entry.lastTouchedAt = Date.now();
     const engine = this._d.getEngine?.();
     ({ text, opts } = await prepareVisionInputForTextOnlyModel({
-      targetModel: this._session.model,
+      targetModel: session.model,
       text,
       opts,
       sessionPath: sp,
@@ -5253,24 +5256,26 @@ export class SessionCoordinator implements SessionCancellation {
       signal: null,
     } as any));
     ({ text, opts } = await prepareModelImageInputsForPrompt({ text, opts }));
-    assertVideoInputSupported(this._session.model, opts?.videos);
-    assertAudioInputSupported(this._session.model, opts?.audios);
+    if (!ownsRuntime()) throw Object.assign(new Error("session runtime replaced"), { name: "AbortError" });
+    assertVideoInputSupported(session.model, opts?.videos);
+    assertAudioInputSupported(session.model, opts?.audios);
     const promptOpts = buildPromptMediaOptions(opts);
     const nativeMediaTurn = engine?.beginCurrentTurnNativeMedia?.(sp, opts);
     if (sp && turnContext) this._setRuntimeValueForPath(this._turnContextBySession, sp, turnContext);
     try {
       if (sp) this.preflightSessionInput(sp);
-      await this._session.prompt(text, promptOpts);
+      await session.prompt(text, promptOpts);
     } finally {
-      if (sp && turnContext) this._deleteRuntimeValueForPath(this._turnContextBySession, sp);
+      if (sp && turnContext && this._getRuntimeValueForPath(this._turnContextBySession, sp) === turnContext) this._deleteRuntimeValueForPath(this._turnContextBySession, sp);
       engine?.endCurrentTurnNativeMedia?.(nativeMediaTurn);
-      pruneSessionInlineMediaHistory(this._session);
-      this._projectOversizedSessionHistory(this._session, sp);
-      if (sp) this._syncSessionBranchHeadQuiet(sp, this._session.sessionManager, "prompt_finally");
-      if (sp) this._scheduleRuntimePressureCheck(sp, "prompt");
+      if (ownsRuntime()) {
+        pruneSessionInlineMediaHistory(session);
+        this._projectOversizedSessionHistory(session, sp);
+        if (sp) this._syncSessionBranchHeadQuiet(sp, session.sessionManager, "prompt_finally");
+        if (sp) this._scheduleRuntimePressureCheck(sp, "prompt");
+      }
     }
-    if (sp) {
-      const entry = this._getSessionEntryByPath(sp);
+    if (sp && ownsRuntime()) {
       const agent = entry ? this._d.getAgentById(entry.agentId) : this._d.getAgent();
       const forceSummary = entry?.memoryBranchReplacementPending === true;
       if (entry) entry.memoryBranchReplacementPending = false;
