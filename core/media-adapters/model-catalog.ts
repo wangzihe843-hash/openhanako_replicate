@@ -27,7 +27,7 @@ export const MODEL_CATALOG = {
   openai: [
     { id: "dall-e-3", name: "DALL-E 3", aliases: ["dalle3", "dall-e-3"], listed: false },
     { id: "gpt-image-1-mini", name: "GPT Image 1 Mini", aliases: ["1-mini", "mini"] },
-    { id: "gpt-image-1", name: "GPT Image 1", aliases: ["1"] },
+    { id: "gpt-image-1", name: "GPT Image 1", aliases: ["1"], listed: false },
     { id: "gpt-image-1.5", name: "GPT Image 1.5", aliases: ["1.5"], default: true },
     { id: "gpt-image-2", name: "GPT Image 2", aliases: ["2"] },
   ],

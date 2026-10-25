@@ -25,6 +25,23 @@ const DALL_E_3_SIZE_BY_RATIO = {
   "9:16": "1024x1792",
 };
 
+function assertOfficialImageModelAvailable(modelId, endpoint) {
+  // https://developers.openai.com/api/docs/deprecations — keep proxy IDs usable.
+  const retiredOn = modelId === "gpt-image-1" ? "2026-10-23"
+    : modelId === "dall-e-3" ? "2026-05-12" : null;
+  if (!retiredOn) return;
+  let url;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return;
+  }
+  if (url.origin === "https://api.openai.com"
+    && (url.pathname === "/v1/images/generations" || url.pathname === "/v1/images/edits")) {
+    throw new Error(`OpenAI image model "${modelId}" was retired on ${retiredOn}; new image requests to the official API are no longer supported.`);
+  }
+}
+
 function normalizeImages(image) {
   if (!image) return [];
   return (Array.isArray(image) ? image : [image]).filter((item) => typeof item === "string" && item.trim());
@@ -135,6 +152,11 @@ export const openaiImageAdapter = {
 
     // 4. Translate params → API body
     const images = normalizeImages(params.image);
+    const base = baseUrl.replace(/\/+$/, "");
+    const endpoint = images.length > 0
+      ? `${base}/images/edits`
+      : `${base}/images/generations`;
+    assertOfficialImageModelAvailable(modelId, endpoint);
     const effectiveRatio = params.aspect_ratio || params.aspectRatio || params.ratio || providerDefaults?.aspect_ratio;
     const body: any = isDallE3(modelId)
       ? {
@@ -191,10 +213,6 @@ export const openaiImageAdapter = {
     }
 
     // 6. Call HTTP API — OpenAI gpt-image 用 /images/edits 做图生图
-    const base = baseUrl.replace(/\/+$/, "");
-    const endpoint = images.length > 0
-      ? `${base}/images/edits`
-      : `${base}/images/generations`;
     const jsonEditBody = images.length > 0 ? buildEditJsonBody(body, images) : null;
     const multipartEditBody = images.length > 0 && !jsonEditBody ? buildEditMultipartBody(body, images) : null;
     if (images.length > 0 && !jsonEditBody && !multipartEditBody) {

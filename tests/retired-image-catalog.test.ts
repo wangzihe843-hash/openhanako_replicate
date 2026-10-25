@@ -12,7 +12,7 @@ import { getDefaultModelId, getKnownModels, resolveModelId } from "../core/media
 import { createMediaRoute } from "../server/routes/media.ts";
 
 const roots: string[] = [];
-const currentOpenAiModels = ["gpt-image-1.5", "gpt-image-1", "gpt-image-1-mini"];
+const currentOpenAiModels = ["gpt-image-1.5", "gpt-image-1-mini"];
 const legacyDefaults = { openai: { models: { "dall-e-3": { modes: { text2image: { quality: "hd" } } } } } };
 
 function fixture({
@@ -74,7 +74,7 @@ afterEach(() => {
 });
 
 describe("retired OpenAI image catalog compatibility", () => {
-  it("omits DALL-E 3 from the registry and both settings routes without adding models or changing defaults", async () => {
+  it("omits retired models from new suggestions without adding models or changing defaults", async () => {
     const { registry, manager, app, bus } = fixture();
     expect(registry.getMediaModels("openai", "image_generation").map(model => model.id)).toEqual(currentOpenAiModels);
     expect(registry.getMediaProviders("image_generation").find(provider => provider.providerId === "openai")?.models.map(model => model.id))
@@ -86,22 +86,27 @@ describe("retired OpenAI image catalog compatibility", () => {
       const payload = await response.json();
       expect(payload.providers.openai.models.map((model: { id: string }) => model.id)).toEqual(currentOpenAiModels);
       expect(payload.providers.openai.availableModels).not.toContainEqual(expect.objectContaining({ id: "dall-e-3" }));
+      expect(payload.providers.openai.availableModels).not.toContainEqual(expect.objectContaining({ id: "gpt-image-1" }));
       expect(payload.config).toEqual({});
     }
-    const target = await resolveImageTarget({ provider: "openai" }, manager.registry, { config: manager.config, bus });
-    expect(target.modelId).toBe("gpt-image-1.5");
+    for (const input of [{}, { provider: "openai" }]) {
+      const target = await resolveImageTarget(input, manager.registry, { config: manager.config, bus });
+      expect(target).toMatchObject({ providerId: "openai", modelId: "gpt-image-1.5" });
+    }
   });
 
-  it("keeps adapter aliases and its default while excluding DALL-E 3 from known-model suggestions", () => {
+  it("keeps adapter aliases and its default while excluding retired models from suggestions", () => {
     expect(getKnownModels("openai").map(model => model.id)).toEqual([
-      "gpt-image-1-mini", "gpt-image-1", "gpt-image-1.5", "gpt-image-2",
+      "gpt-image-1-mini", "gpt-image-1.5", "gpt-image-2",
     ]);
     expect(getDefaultModelId("openai")).toBe("gpt-image-1.5");
     for (const value of [undefined, null, ""]) expect(resolveModelId("openai", value)).toBe("gpt-image-1.5");
     for (const value of ["dall-e-3", "dalle3", "DALLE3"]) expect(resolveModelId("openai", value)).toBe("dall-e-3");
+    for (const value of ["gpt-image-1", "1"]) expect(resolveModelId("openai", value)).toBe("gpt-image-1");
     expect(resolveModelId("custom-proxy", "dall-e-3")).toBe("dall-e-3");
     expect(() => resolveModelId("openai", "unknown-image")).toThrow(/Unknown image model/);
     expect(() => resolveModelId("openai", "unknown-image")).not.toThrow(/Available models:.*dall-e-3/);
+    expect(() => resolveModelId("openai", "unknown-image")).not.toThrow(/Available models:.*gpt-image-1,/);
   });
 
   it.each([false, true])("preserves saved DALL-E selections, parameters and explicit resolution (legacy store=%s)", async legacy => {
@@ -140,6 +145,33 @@ describe("retired OpenAI image catalog compatibility", () => {
     const response = await save({ providerDefaults: { openai: { models: { "dall-e-3": { modes: { text2image: { quality: "high" } } } } } } });
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: expect.stringContaining("quality") });
+    expect(snapshot()).toEqual(before);
+  });
+
+  it.each([false, true])("preserves saved GPT Image 1 defaults and explicit resolution (legacy store=%s)", async legacy => {
+    const config = { defaultImageModel: { provider: "openai", id: "gpt-image-1" } };
+    const { registry, manager, app, snapshot, bus } = fixture({ imageConfig: config, legacy });
+    const before = snapshot();
+    expect((await (await app.request("/api/media/image/providers")).json()).config).toEqual(config);
+    for (const modelId of ["gpt-image-1", "1"]) {
+      expect(registry.resolveMediaModel({ providerId: "openai", modelId }).model.id).toBe("gpt-image-1");
+    }
+    expect(await resolveImageTarget({}, manager.registry, { config: manager.config, bus })).toMatchObject({
+      providerId: "openai", modelId: "gpt-image-1", protocolId: "openai-images",
+    });
+    expect(snapshot()).toEqual(before);
+  });
+
+  it.each(["openai", "custom-proxy"])("preserves explicit proxy GPT Image 1 model lists (%s)", async providerId => {
+    const { registry, manager, snapshot } = fixture({ providers: {
+      [providerId]: { api_key: "test-key", base_url: "https://proxy.example.test/v1", api: "openai-completions",
+        media: { image_generation: { models: ["gpt-image-1"] } } },
+    } });
+    const before = snapshot();
+    expect(registry.getMediaModels(providerId, "image_generation")).toContainEqual(expect.objectContaining({ id: "gpt-image-1" }));
+    expect((await manager.listImageProviders()).providers[providerId].models)
+      .toContainEqual(expect.objectContaining({ id: "gpt-image-1", adapterAvailable: true }));
+    registry.reload();
     expect(snapshot()).toEqual(before);
   });
 

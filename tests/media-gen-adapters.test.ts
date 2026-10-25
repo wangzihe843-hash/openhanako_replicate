@@ -279,7 +279,7 @@ describe("openai adapter", () => {
     const ctx = makeBusCtx("sk-test", "https://api.openai.com/v1", "openai");
     const result = await openaiImageAdapter.submit({
       prompt: "a dog",
-      model: "gpt-image-1",
+      model: "gpt-image-1.5",
       size: "1024x1024",
       quality: "medium",
       format: "png",
@@ -289,7 +289,7 @@ describe("openai adapter", () => {
     expect(url).toBe("https://api.openai.com/v1/images/generations");
     expect(opts.headers["Authorization"]).toBe("Bearer sk-test");
     const body = JSON.parse(opts.body);
-    expect(body.model).toBe("gpt-image-1");
+    expect(body.model).toBe("gpt-image-1.5");
     expect(body.prompt).toBe("a dog");
     expect(body.quality).toBe("medium");
     expect(body.n).toBe(1);
@@ -378,14 +378,14 @@ describe("openai adapter", () => {
 
     await openaiImageAdapter.submit({
       prompt: "test",
-      model: "gpt-image-1",
+      model: "gpt-image-1.5",
     }, ctx);
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body.background).toBe("transparent");
   });
 
-  it("uses DALL-E 3-specific response fields instead of GPT Image fields", async () => {
+  it("preserves DALL-E 3-specific response fields for compatible proxies", async () => {
     const { openaiImageAdapter } = await import("../core/media-adapters/openai.ts");
 
     const fakeB64 = Buffer.from("dalle").toString("base64");
@@ -394,7 +394,7 @@ describe("openai adapter", () => {
       json: async () => ({ data: [{ b64_json: fakeB64 }] }),
     });
 
-    const ctx = makeBusCtx("key", "https://api.openai.com/v1", "openai");
+    const ctx = makeBusCtx("key", "https://proxy.example.test/v1", "openai");
     await openaiImageAdapter.submit({
       prompt: "a poster",
       model: "dall-e-3",

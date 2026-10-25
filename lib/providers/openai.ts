@@ -65,7 +65,11 @@ export const openaiPlugin = {
         defaultModelId: "gpt-image-1.5",
         models: [
           gptImageModel("gpt-image-1.5", "GPT Image 1.5", ["1.5"]),
-          gptImageModel("gpt-image-1", "GPT Image 1", ["1"]),
+          {
+            ...gptImageModel("gpt-image-1", "GPT Image 1", ["1"]),
+            // Retired by OpenAI on 2026-10-23; retain explicit config/proxy compatibility.
+            listed: false,
+          },
           gptImageModel("gpt-image-1-mini", "GPT Image 1 Mini", ["1-mini", "mini"]),
           {
             id: "dall-e-3",
