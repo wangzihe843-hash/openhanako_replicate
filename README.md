@@ -7,7 +7,7 @@
 “星野陪伴型 Agent”是本仓库的描述性称呼；本项目与同名商业产品没有官方关联。应用名称、包名和部分界面仍沿用 HanaAgent / Hanako。
 
 - 开发分支：[feature/xingye-mvp](https://github.com/wangzihe843-hash/openhanako_replicate/tree/feature/xingye-mvp)
-- 当前状态：源码开发项目；截至 2026-10-11，本 fork 尚未发布可下载的 [Release](https://github.com/wangzihe843-hash/openhanako_replicate/releases)，分支与 CI 状态见下方验证边界
+- 当前状态：源码开发项目；截至 2026-10-25，本 fork 尚未发布可下载的 [Release](https://github.com/wangzihe843-hash/openhanako_replicate/releases)，分支与 CI 状态见下方验证边界
 - 本页说明本 fork 已提交的功能；[README_EN.md](README_EN.md) 仍是上游英文介绍，尚未同步为本 fork 的译文
 
 ## 目前能做什么
@@ -47,7 +47,9 @@
 
 ### 工具 Agent 与桌面工作流
 
-沿用并持续适配 OpenHanako 的引擎和 Pi SDK（当前固定为 1.0.3），包括文件读写、终端命令、网页读取/搜索、浏览器工具、工作台、技能、插件、定时任务、多 Agent 委派与频道协作，以及 server-first CLI。Windows 与 macOS 桌面端另有桌宠窗口；Linux 暂不支持桌宠。Computer Use 当前支持的平台也仅限 macOS 与 Windows，不能由浏览器工具可用推定所有平台都支持原生电脑操作。
+沿用并持续适配 OpenHanako 的引擎和 Pi SDK（七个 Pi 家族包当前固定为 1.4.0），包括文件读写、终端命令、网页读取/搜索、浏览器工具、工作台、技能、插件、定时任务、多 Agent 委派与频道协作，以及 server-first CLI。Windows 与 macOS 桌面端另有桌宠窗口；Linux 暂不支持桌宠。Computer Use 当前支持的平台也仅限 macOS 与 Windows，不能由浏览器工具可用推定所有平台都支持原生电脑操作。
+
+源码内置 Telegram、飞书、QQ、微信和钉钉五个 Bridge 适配器，需分别配置并启用渠道身份与权限；收发、媒体和重连能力按各平台适配范围使用。本轮仅核对源码，未验证真实渠道收发、媒体或重连。
 
 这些工具可能产生真实的文件修改或外部操作，需要正确配置模型、工作目录、权限及所需服务。桌面原生能力与沙盒实现随平台而异；本地模型、联网模型和插件也有各自的依赖与限制。
 
@@ -133,7 +135,9 @@ npm run smoke:server:open
 
 在上述前置条件就绪后，本地打包使用 `npm run dist -- --publish never`（macOS）、`npm run dist:win -- --publish never` 或 `npm run dist:linux -- --publish never`，显式禁用发布。它们需要对应平台的构建条件；Windows 打包还依赖 MinGit 等资源。具体流程见 [package.json](package.json)、[构建工作流](.github/workflows/build.yml)。
 
-**正式分发尚有前置工作**：`package.json` 中的 `productName`、`appId`、`publish` 和部分更新地址仍沿用上游。发布本 fork 前必须核对并独立配置应用标识、更新源、签名和发布目标，不能把上游安装包或更新渠道当成本 fork 的分发渠道。
+**应用更新与插件来源**：当前源码构建已在[更新策略](shared/update-policy.cjs)中禁用在线应用更新；偏好、环境覆盖或旧邀请不能开启它。已安装的旧版本需单独核对。插件市场是独立内容来源，默认仍引用上游 OH-Plugins，可由本地配置覆盖；不能把应用更新禁用理解为所有插件或外部服务都离线。
+
+**正式分发尚有前置工作**：`package.json` 中的 `productName`、`appId` 仍沿用上游，`publish` 已指向本 fork 的 GitHub 仓库，部分更新地址仍保留上游配置。发布本 fork 前必须核对并独立配置应用标识、更新源、签名和发布目标，不能把上游安装包或更新渠道当成本 fork 的分发渠道。
 
 ### 当前验证边界
 
@@ -141,7 +145,7 @@ npm run smoke:server:open
 
 可查阅 [Windows Pi 1.0.2 验收记录](docs/audits/2026-10-06-pi-1.0.2-followup-windows.md)、[Windows Pi 1.0.3 验收记录](docs/audits/2026-10-06-pi-1.0.3-windows-acceptance.md)、[macOS 开发版验收记录](docs/audits/2026-10-08-macos-desktop-acceptance.md)及 [Linux L1 / L2 验证记录](docs/audits/2026-10-01-l1-l2-runtime-validation.md)。历史验收只覆盖各自记录的提交与环境，不能自动视为后续版本全部通过。
 
-本轮已交付基线（2026-10-20）为 [`ec6927a2`](https://github.com/wangzihe843-hash/openhanako_replicate/commit/ec6927a21264d98421710a58134edfe2d4cc6868)，`feature/xingye-mvp` 与远端 `review/ci22-integration-20261009` 对齐到同一提交，七个 Pi 家族包固定为 1.3.0。该提交的 [review CI 39466529603](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/39466529603) 和 [feature CI 39470431534](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/39470431534) 均为五项检查通过；这些结果只对应上述提交与各自运行环境。CI 不能替代完整桌面交互、实际安装/卸载、生产签名公证或真实模型服务验收。
+当前已交付基线（2026-10-25）为 [`da1e935a`](https://github.com/wangzihe843-hash/openhanako_replicate/commit/da1e935a012158afc4071b0f59caa779a21dd7e4)，本次 README 维护前核对的 `feature/xingye-mvp` 与远端 `review/ci22-integration-20261009` 均指向该基线，七个 Pi 家族包固定为 1.4.0。该提交的 [review CI 40179769193](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/40179769193) 和 [feature CI 40182384830](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/40182384830) 均为五项检查通过；feature 于10月25日10:19 UTC完成。结果仅覆盖该SHA及各自运行环境，不表示本机所有历史测试均绿，也不能代替完整桌面交互、真实Windows/NTFS专项、安装/卸载、生产签名公证或真实模型服务验收。10/20的ec6927a2 / Pi1.3.0为先前已交付历史基线。
 
 [CI](.github/workflows/ci.yml) 在推送 `main`、`feature/xingye-mvp`、`review/ci22-integration-20261009`、`review/pi-1.2.0-prep-20261013` 或向 `main` 提 PR 时触发。当前包括 macOS / Windows 2022 检查与测试、独立 Windows 原生 auth-lock 检查，以及 Linux 边界检查和 open 构建/冒烟检查。CI token 仅授予仓库内容读取权限，同一分支/PR 的新运行会取消旧 CI；Build 保留正在生成的产物，不取消已有运行。后续提交仍须核验其精确提交的实际运行结果。
 
@@ -167,7 +171,7 @@ npm run smoke:server:open
 
 ## 参与与反馈
 
-截至 2026-10-11，本 fork 尚未启用 Issues，反馈入口待维护者公布。准备反馈时，请记录分支/提交、操作系统、Node/npm 版本、复现步骤，以及脱敏后的日志；本 fork 特有问题不要直接当成上游问题提交。修改前先阅读相关模块说明；涉及持久化、工具副作用、权限或构建链时，需要同时检查兼容性和失败路径。
+截至 2026-10-25，本 fork 尚未启用 Issues，反馈入口待维护者公布。准备反馈时，请记录分支/提交、操作系统、Node/npm 版本、复现步骤，以及脱敏后的日志；本 fork 特有问题不要直接当成上游问题提交。修改前先阅读相关模块说明；涉及持久化、工具副作用、权限或构建链时，需要同时检查兼容性和失败路径。
 
 [CONTRIBUTING.md](CONTRIBUTING.md)、[插件指南](PLUGINS.md)和 [Plugin SDK](PLUGIN_SDK.md)保留了上游开发背景；其中品牌、投稿政策与分发说明尚未全面针对本 fork 更新。命令和支持范围优先以当前源码及本页为准。
 

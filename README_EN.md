@@ -24,7 +24,7 @@
 HanaAgent is a personal AI agent that is easier to use than traditional coding agents. It has memory, personality, and can act autonomously. Multiple agents can work together on your machine.
 
 As an assistant, it is gentle: no complex configuration files, no obscure jargon. HanaAgent is designed not just for coders, but for everyone who works at a computer.
-As a tool, it is powerful: it remembers everything you've said, operates your computer, browses the web, searches for information, reads and writes files, executes code, manages schedules, and can even learn new skills on its own.
+It can retain selected memories from conversations, operate your computer, browse the web, search for information, read and write files, execute code, manage schedules, and load additional skills.
 
 ## Features
 
@@ -52,7 +52,7 @@ As a tool, it is powerful: it remembers everything you've said, operates your co
 
 **Plugins** — Extensible plugin system with a convention-first architecture. Install community plugins by drag-and-drop. Plugins can contribute tools, skills, commands, agent templates, HTTP routes, Pi SDK extensions, LLM providers, pages, widgets, configuration schemas, and background tasks. Routes have direct access to core services (PluginContext injection) and can interact with agent sessions via the Session Bus; plugin cards flow through the same message-block and history replay pipeline as built-in cards. The two-level permission model (restricted / full-access) keeps advanced surfaces safe: `extensions/`, routes, providers, pages, and lifecycle hooks only load for full-access plugins.
 
-**Multi-Platform Bridge** — A single agent can connect to Telegram, Feishu, QQ, and WeChat bots simultaneously. Chat from any platform and remotely operate your computer. Bridge sessions carry platform context, and notifications can be delivered back to the current external platform.
+**Multi-Platform Bridge** — The source includes five adapters: Telegram, Feishu, QQ, WeChat, and DingTalk. Each requires its own channel identity, permissions and explicit enablement. Bridge sessions carry platform context, and messaging, media, reconnection and notifications depend on the adapter's supported capabilities. This maintenance checked source coverage only; real channel messaging, media and reconnection were not verified.
 
 **Mobile & LAN Frontends** — HanaAgent Server can host the `/mobile/` PWA. Phones can sign in with a device access key or local account, view sessions, chat, and manage workbench files. Another desktop frontend can also connect to an existing LAN HanaAgent Server with a LAN URL and access key.
 
@@ -68,7 +68,7 @@ As a tool, it is powerful: it remembers everything you've said, operates your co
 
 ### Source setup for this fork
 
-The last release-status check recorded in the Chinese README is dated 2026-10-11; it found no fork release. Check this fork's own [Releases](https://github.com/wangzihe843-hash/openhanako_replicate/releases) for published artifacts. Upstream installers are separate products. This fork's Actions builds are test artifacts; independent signing, notarization, update sources and distribution remain pending.
+A repository check on 2026-10-25 found no published release for this fork. Check this fork's own [Releases](https://github.com/wangzihe843-hash/openhanako_replicate/releases) for published artifacts. Upstream installers are separate products. This fork's Actions builds are test artifacts; independent signing, notarization, update sources and distribution remain pending.
 
 Use Git, Node.js `>=24.12.0 <25`, npm `>=11.10.0`, Python and the platform C/C++ build tools. Linux command sandboxing requires Bubblewrap. Electron needs a graphical desktop.
 
@@ -162,11 +162,13 @@ npm run typecheck
 
 ### Fork CI and build status
 
-The delivered baseline dated 2026-10-20 is [`ec6927a21264d98421710a58134edfe2d4cc6868`](https://github.com/wangzihe843-hash/openhanako_replicate/commit/ec6927a21264d98421710a58134edfe2d4cc6868), shared by feature and the remote `review/ci22-integration-20261009` branch, with seven Pi family packages pinned to 1.3.0. Both [review CI 39466529603](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/39466529603) and [feature CI 39470431534](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/39470431534) passed all five jobs for that exact commit. Those results apply only to the recorded commit and environments; full desktop interaction, installation/uninstallation, production signing/notarization and real model services require separate acceptance.
+The delivered baseline on 2026-10-25 is [`da1e935a`](https://github.com/wangzihe843-hash/openhanako_replicate/commit/da1e935a012158afc4071b0f59caa779a21dd7e4), which both `feature/xingye-mvp` and the remote `review/ci22-integration-20261009` branch pointed to at the pre-maintenance check, with seven Pi family packages pinned to 1.4.0. Both [review CI 40179769193](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/40179769193) and [feature CI 40182384830](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/40182384830) passed all five jobs for that exact commit; feature completed at 10:19 UTC on October 25. These results do not mean all historical local tests passed. Full desktop interaction, real Windows/NTFS checks, installation/uninstallation, production signing/notarization and real model services require separate acceptance. The previous ec6927a2 / Pi 1.3.0 delivery remains a historical baseline.
 
 [CI](.github/workflows/ci.yml) covers macOS / Windows 2022 checks and tests, an independent native Windows auth-lock check, and Linux boundary/open-build smoke jobs. It runs for pushes to `main`, `feature/xingye-mvp`, `review/ci22-integration-20261009` and `review/pi-1.2.0-prep-20261013`, and pull requests targeting `main`. Repository permissions are read-only, and superseded CI runs are cancelled. Later commits need their own exact-commit results.
 
 The [Build workflow](.github/workflows/build.yml) keeps tag/manual builds for macOS arm64/x64, Windows x64, and Linux x64, producing Actions test artifacts with ephemeral seed keys. It uses no publishing credentials or Developer ID signing/notarization. All five publishing jobs are explicitly disabled: downstream Release, OTA, and AtomGit, plus standalone OTA and AtomGit. Manual inputs cannot enable them. Both AtomGit destinations remain upstream `liliMozi/OpenHanako-Releases` for later review.
+
+Online application updates are disabled in the current source build by the [fork update policy](shared/update-policy.cjs); preferences, environment overrides and old invitations cannot enable them. Older installed applications require separate verification. The plugin marketplace is a separate content source and still defaults to upstream OH-Plugins unless local configuration overrides it.
 
 Independent distribution is still pending: application identity, user-data migration, update sources, signing, and OTA compatibility need a separate review. Test artifacts are not production releases; the upstream platform and release descriptions above do not establish this fork's release readiness. See the [Chinese README](README.md) for the fork's current scope. Upstream attribution and licensing remain intact.
 
