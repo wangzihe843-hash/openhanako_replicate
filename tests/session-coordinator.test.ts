@@ -1773,6 +1773,202 @@ describe("SessionCoordinator", () => {
     expect(session.steer).toHaveBeenCalledWith("interrupt");
   });
 
+  describe("legacy focus prompt completion ownership", () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    function fixture() {
+      const model = { id: "test-model", provider: "test", name: "test-model" };
+      const notifyTurn = vi.fn();
+      const agent = { id: "hana", _memoryTicker: { notifyTurn } };
+      const engine = {
+        beginCurrentTurnNativeMedia: vi.fn(() => Symbol("native turn")),
+        endCurrentTurnNativeMedia: vi.fn(),
+      };
+      const store = createTestSessionManifestStore();
+      const coordinator = new SessionCoordinator({
+        agentsDir: tempDir, sessionManifestStore: store,
+        getAgent: () => agent, getAgentById: () => agent, getActiveAgentId: () => "hana",
+        getModels: () => ({ currentModel: model, availableModels: [model] }),
+        getResourceLoader: () => null, getSkills: () => null,
+        buildTools: () => ({ tools: [], customTools: [] }), emitEvent: vi.fn(),
+        getHomeCwd: () => tempDir, agentIdFromSessionPath: () => "hana",
+        switchAgentOnly: async () => {}, getConfig: () => ({}),
+        getPrefs: () => ({ getThinkingLevel: () => "medium" }),
+        getAgents: () => new Map(), getActivityStore: () => null, listAgents: () => [],
+        getEngine: () => engine,
+      });
+      vi.spyOn(BrowserManager, "instance").mockReturnValue({ closeBrowserForSession: vi.fn() } as unknown as ReturnType<typeof BrowserManager.instance>);
+      const project = vi.spyOn(coordinator, "_projectOversizedSessionHistory");
+      const sync = vi.spyOn(coordinator, "_syncSessionBranchHeadQuiet").mockImplementation(() => {});
+      const pressure = vi.spyOn(coordinator, "_scheduleRuntimePressureCheck");
+
+      function focus(sessionPath = path.join(tempDir, "legacy-prompt.jsonl")) {
+        const pending = Promise.withResolvers<void>();
+        const started = Promise.withResolvers<void>();
+        const message = { role: "user", content: [
+          { type: "text", text: "[attached_image: /tmp/synthetic.png]" },
+          { type: "image", data: "SYNTHETIC_BASE64", mimeType: "image/png" },
+        ] };
+        const session = {
+          model, isStreaming: false,
+          sessionManager: {
+            getSessionFile: () => sessionPath,
+            fileEntries: [{ id: "u1", type: "message", message }],
+            _rewriteFile: vi.fn(),
+          },
+          agent: { state: { model, systemPrompt: "BASE", tools: [], messages: [message] } },
+          prompt: vi.fn(() => {
+            session.isStreaming = true;
+            started.resolve();
+            return pending.promise.finally(() => { session.isStreaming = false; });
+          }),
+          abort: vi.fn(), dispose: vi.fn(),
+        };
+        const entry = {
+          sessionId: store.createForPath({ sessionPath }).sessionId,
+          sessionPath, session, agentId: "hana", lastTouchedAt: 0,
+          memoryBranchReplacementPending: true,
+        };
+        coordinator._sessions.set(entry.sessionId, entry);
+        coordinator._session = session;
+        coordinator._currentSessionPath = sessionPath;
+        return { sessionPath, session, entry, pending, started: started.promise };
+      }
+      return { coordinator, engine, notifyTurn, project, sync, pressure, focus };
+    }
+
+    it("keeps normal pruning, persistence and memory notification on the accepted runtime", async () => {
+      const f = fixture();
+      const runtime = f.focus();
+      const result = f.coordinator.prompt("hello", { context: { beforeUser: "old context" } });
+      await runtime.started;
+      runtime.pending.resolve();
+      await expect(result).resolves.toBeUndefined();
+
+      expect(runtime.session.sessionManager._rewriteFile).toHaveBeenCalledOnce();
+      expect(JSON.stringify(runtime.session.agent.state.messages)).not.toContain("SYNTHETIC_BASE64");
+      expect(f.project).toHaveBeenCalledWith(runtime.session, runtime.sessionPath);
+      expect(f.sync).toHaveBeenCalledWith(runtime.sessionPath, runtime.session.sessionManager, "prompt_finally");
+      expect(f.pressure).toHaveBeenCalledWith(runtime.sessionPath, "prompt");
+      expect(f.notifyTurn).toHaveBeenCalledWith(runtime.sessionPath, { forceSummary: true });
+      expect(runtime.entry.memoryBranchReplacementPending).toBe(false);
+      expect(f.coordinator._getRuntimeValueForPath(f.coordinator._turnContextBySession, runtime.sessionPath)).toBeNull();
+      expect(f.engine.endCurrentTurnNativeMedia).toHaveBeenCalledWith(f.engine.beginCurrentTurnNativeMedia.mock.results[0].value);
+    });
+
+    it("preserves provider rejection while retaining normal history cleanup", async () => {
+      const f = fixture();
+      const runtime = f.focus();
+      const error = new Error("synthetic provider failure");
+      const result = f.coordinator.prompt("hello", {});
+      const rejected = expect(result).rejects.toBe(error);
+      await runtime.started;
+      runtime.pending.reject(error);
+      await rejected;
+
+      expect(f.sync).toHaveBeenCalledWith(runtime.sessionPath, runtime.session.sessionManager, "prompt_finally");
+      expect(runtime.session.sessionManager._rewriteFile).toHaveBeenCalledOnce();
+      expect(f.notifyTurn).not.toHaveBeenCalled();
+      expect(f.engine.endCurrentTurnNativeMedia).toHaveBeenCalledOnce();
+    });
+
+    it.each(["resolve", "reject"] as const)("settles a canceled prompt that later %ss with no focus session", async outcome => {
+      const f = fixture();
+      const runtime = f.focus();
+      const error = new Error("late provider failure after abort");
+      const result = f.coordinator.prompt("hello", { context: { beforeUser: "old context" } });
+      const settled = outcome === "resolve" ? expect(result).resolves.toBeUndefined() : expect(result).rejects.toBe(error);
+      await runtime.started;
+      await expect(f.coordinator.abortSession(runtime.sessionPath)).resolves.toBe(true);
+      expect(f.coordinator.session).toBeNull();
+      expect(runtime.session.abort).toHaveBeenCalledOnce();
+      expect(runtime.session.dispose).toHaveBeenCalled();
+      if (outcome === "resolve") runtime.pending.resolve();
+      else runtime.pending.reject(error);
+      await settled;
+
+      expect(f.project).not.toHaveBeenCalled();
+      expect(f.sync).not.toHaveBeenCalled();
+      expect(f.pressure).not.toHaveBeenCalled();
+      expect(f.notifyTurn).not.toHaveBeenCalled();
+      expect(runtime.entry.memoryBranchReplacementPending).toBe(true);
+      expect(f.engine.endCurrentTurnNativeMedia).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+      ["same", "resolve"], ["same", "reject"],
+      ["different", "resolve"], ["different", "reject"],
+    ] as const)("does not touch a %s-path replacement when the canceled prompt later %ss", async (pathKind, outcome) => {
+      const f = fixture();
+      const old = f.focus();
+      const error = new Error("late old provider failure");
+      const result = f.coordinator.prompt("old", { context: { beforeUser: "old context" } });
+      const settled = outcome === "resolve" ? expect(result).resolves.toBeUndefined() : expect(result).rejects.toBe(error);
+      await old.started;
+      await f.coordinator.abortSession(old.sessionPath);
+      const next = f.focus(pathKind === "same" ? old.sessionPath : path.join(tempDir, "next.jsonl"));
+      const nextResult = f.coordinator.prompt("new", { context: { beforeUser: "new context" } });
+      await next.started;
+      const nextContext = f.coordinator._getRuntimeValueForPath(f.coordinator._turnContextBySession, next.sessionPath);
+      if (outcome === "resolve") old.pending.resolve();
+      else old.pending.reject(error);
+      await settled;
+
+      expect(f.coordinator.session).toBe(next.session);
+      expect(next.session.isStreaming).toBe(true);
+      expect(f.coordinator._getRuntimeValueForPath(f.coordinator._turnContextBySession, next.sessionPath)).toBe(nextContext);
+      expect(JSON.stringify(next.session.agent.state.messages)).toContain("SYNTHETIC_BASE64");
+      expect(next.session.sessionManager._rewriteFile).not.toHaveBeenCalled();
+      expect(next.entry.memoryBranchReplacementPending).toBe(true);
+      expect(f.project).not.toHaveBeenCalled();
+      expect(f.sync).not.toHaveBeenCalled();
+      expect(f.pressure).not.toHaveBeenCalled();
+      expect(f.notifyTurn).not.toHaveBeenCalled();
+      expect(f.engine.endCurrentTurnNativeMedia.mock.calls).toEqual([[f.engine.beginCurrentTurnNativeMedia.mock.results[0].value]]);
+
+      next.pending.resolve();
+      await nextResult;
+      expect(f.sync).toHaveBeenCalledExactlyOnceWith(next.sessionPath, next.session.sessionManager, "prompt_finally");
+      expect(f.notifyTurn).toHaveBeenCalledExactlyOnceWith(next.sessionPath, { forceSummary: true });
+      expect(next.session.sessionManager._rewriteFile).toHaveBeenCalledOnce();
+    });
+
+    it("rejects a runtime replaced during async preparation before starting either SDK prompt", async () => {
+      const f = fixture();
+      const old = f.focus();
+      const result = f.coordinator.prompt("old", { context: { beforeUser: "old context" } });
+      const rejected = expect(result).rejects.toMatchObject({ name: "AbortError", message: "session runtime replaced" });
+      const next = f.focus(old.sessionPath);
+      next.pending.resolve();
+      await rejected;
+
+      expect(old.session.prompt).not.toHaveBeenCalled();
+      expect(next.session.prompt).not.toHaveBeenCalled();
+      expect(f.coordinator.session).toBe(next.session);
+      expect(f.engine.beginCurrentTurnNativeMedia).not.toHaveBeenCalled();
+      expect(f.project).not.toHaveBeenCalled();
+      expect(f.sync).not.toHaveBeenCalled();
+      expect(f.notifyTurn).not.toHaveBeenCalled();
+    });
+
+    it("finishes the original cached runtime after focus moves without cancellation", async () => {
+      const f = fixture();
+      const old = f.focus();
+      const result = f.coordinator.prompt("old", {});
+      await old.started;
+      const next = f.focus(path.join(tempDir, "other-focus.jsonl"));
+      old.pending.resolve();
+      await result;
+
+      expect(f.sync).toHaveBeenCalledExactlyOnceWith(old.sessionPath, old.session.sessionManager, "prompt_finally");
+      expect(f.project).toHaveBeenCalledWith(old.session, old.sessionPath);
+      expect(old.session.sessionManager._rewriteFile).toHaveBeenCalledOnce();
+      expect(next.session.sessionManager._rewriteFile).not.toHaveBeenCalled();
+      expect(f.notifyTurn).toHaveBeenCalledExactlyOnceWith(old.sessionPath, { forceSummary: true });
+      expect(next.entry.memoryBranchReplacementPending).toBe(true);
+    });
+  });
+
   it("lists sessions from a lightweight projection without delegating to the Pi SDK full scan", async () => {
     const agentsDir = path.join(tempDir, "agents");
     const agentDir = path.join(agentsDir, "hana");
