@@ -32,6 +32,7 @@ import * as openaiVideoUrl from "./provider-compat/openai-video-url.ts";
 import * as openrouter from "./provider-compat/openrouter.ts";
 import * as anthropic from "./provider-compat/anthropic.ts";
 import * as codexResponses from "./provider-compat/codex-responses.ts";
+import * as ollama from "./provider-compat/ollama.ts";
 import { normalizeImplicitOutputBudget } from "./provider-compat/output-budget.ts";
 import { stripOrphanToolResults } from "./provider-compat/tool-pairing.ts";
 import { normalizeOpenAIInputAudioPayload } from "./provider-compat/input-audio.ts";
@@ -64,6 +65,9 @@ interface ProviderModule {
  * 新 provider 默认加在末尾；只有当模块的 matches 是另一模块子集（更具体规则）时才前置。
  */
 const PROVIDER_MODULES: ProviderModule[] = [
+  // An explicit Ollama Chat Completions transport is more specific than
+  // model-family quirks/profiles (for example local Qwen or MiMo models).
+  ollama,
   // deepseekResponses 前置于 deepseek：同一批 DeepSeek 官方 endpoint 上，Responses
   // 协议是更具体的子集，落到 deepseek 会被按 ChatCompletions 语义改写。
   deepseekResponses,

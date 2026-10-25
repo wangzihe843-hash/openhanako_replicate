@@ -2203,6 +2203,18 @@
       "reason": "Reached via esbuild source module graph, imported by core/provider-compat.ts (import-statement)."
     },
     {
+      "path": "core/provider-compat/ollama.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "core/provider-compat.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by core/provider-compat.ts (import-statement)."
+    },
+    {
       "path": "core/provider-compat/openai-input-audio.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -86597,9 +86609,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 7147,
+    "totalFiles": 7148,
     "byInputType": {
-      "source-graph": 743,
+      "source-graph": 744,
       "runtime-asset": 11,
       "nft-runtime-trace": 6393
     }

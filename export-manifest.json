@@ -124,6 +124,7 @@
     "core/provider-compat/kimi.ts",
     "core/provider-compat/longcat.ts",
     "core/provider-compat/mimo.ts",
+    "core/provider-compat/ollama.ts",
     "core/provider-compat/openai-input-audio.ts",
     "core/provider-compat/openai-video-url.ts",
     "core/provider-compat/openrouter.ts",
