@@ -22,8 +22,8 @@ import { createModuleLogger } from "../debug-log.ts";
 
 const log = createModuleLogger("qq");
 
-const API_BASE = "https://api.sgroup.qq.com";
-const TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken";
+const API_BASE = "https://api.bot.qq.com";
+const TOKEN_URL = "https://api.bot.qq.com/app/getAppAccessToken";
 const MAX_MSG_SIZE = 100_000;
 const QQ_PLACEHOLDER_NAMES = new Set(["user"]);
 export const QQ_MEDIA_CAPABILITIES = createMediaCapabilities({

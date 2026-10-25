@@ -924,7 +924,7 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
         const qqHttp = createBridgeOutboundHttp({ platform: "qq", fetchImpl: fetch as unknown as typeof import("undici").fetch });
         const tokenRes = await qqHttp.request({
           stage: "token_test",
-          url: "https://bots.qq.com/app/getAppAccessToken",
+          url: "https://api.bot.qq.com/app/getAppAccessToken",
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ appId: effectiveCredentials.appID, clientSecret: effectiveCredentials.appSecret }),
@@ -935,7 +935,7 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
         }
         const meRes = await qqHttp.request({
           stage: "me_test",
-          url: "https://api.sgroup.qq.com/users/@me",
+          url: "https://api.bot.qq.com/users/@me",
           headers: { Authorization: `QQBot ${tokenData.access_token}` },
         });
         const me = await meRes.json();

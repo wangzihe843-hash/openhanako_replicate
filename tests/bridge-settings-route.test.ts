@@ -129,7 +129,7 @@ describe("bridge credential-test redirect policy over HTTPS loopback", () => {
     // rewritten to loopback BEFORE transport; the dispatcher also denies egress.
     const fetchSpy = vi.fn((url: string, init: RequestInit) => {
       const parsed = new URL(url);
-      if (!["bots.qq.com", "api.sgroup.qq.com", "api.dingtalk.com", "api.dingtalk.io"].includes(parsed.hostname)) throw new Error("Unexpected credential-test origin");
+      if (!["api.bot.qq.com", "bots.qq.com", "api.sgroup.qq.com", "api.dingtalk.com", "api.dingtalk.io"].includes(parsed.hostname)) throw new Error("Unexpected credential-test origin");
       const requestInit = { ...init, dispatcher: loop.agent };
       return nativeFetch(loop.source + parsed.pathname, requestInit);
     });
@@ -168,7 +168,7 @@ describe("bridge credential-test redirect policy over HTTPS loopback", () => {
 
   it.each(["qq", "dingtalk"] as const)("preserves successful %s credential response", async platform => {
     loop.reset();
-    remapToLoopback();
+    const spy = remapToLoopback();
     loop.respond((req, response) => response.end(JSON.stringify(req.path === "/users/@me"
       ? { id: "bot", username: "synthetic-bot" }
       : { access_token: "SYNTHETIC_AUTH_TOKEN", expires_in: 7200 })));
@@ -176,5 +176,21 @@ describe("bridge credential-test redirect policy over HTTPS loopback", () => {
     expect(await response.json()).toMatchObject({ ok: true });
     expect(loop.sourceRequests).toHaveLength(platform === "qq" ? 2 : 1);
     expect(loop.sinkRequests).toEqual([]);
+    if (platform === "qq") {
+      // Inspect before loopback rewriting: settings and the adapter must use
+      // the same official endpoints, credentials and redirect policy.
+      expect(spy.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
+        ["https://api.bot.qq.com/app/getAppAccessToken", "POST"],
+        ["https://api.bot.qq.com/users/@me", "GET"],
+      ]);
+      const tokenInit = spy.mock.calls[0][1];
+      expect(JSON.parse(String(tokenInit.body))).toEqual({ appId: "SYNTHETIC_ID", clientSecret: "SYNTHETIC_BODY_SECRET" });
+      expect(new Headers(tokenInit.headers).get("authorization")).toBeNull();
+      expect(new Headers(tokenInit.headers).get("content-type")).toBe("application/json");
+      const meInit = spy.mock.calls[1][1];
+      expect(new Headers(meInit.headers).get("authorization")).toBe("QQBot SYNTHETIC_AUTH_TOKEN");
+      expect(meInit.body).toBeUndefined();
+      for (const [, init] of spy.mock.calls) expect(init.redirect).toBe("manual");
+    }
   });
 });

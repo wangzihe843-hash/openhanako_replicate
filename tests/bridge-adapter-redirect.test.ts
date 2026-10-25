@@ -33,7 +33,7 @@ describe("actual QQ and DingTalk adapters reject redirects", () => {
     fs.writeFileSync(path.join(tmp, "synthetic.txt"), "SYNTHETIC_FILE_BYTES");
     transport.fetch = (url: string, init: Init, fetchImpl: Fetch = globalThis.fetch as unknown as Fetch) => {
       const parsed = new URL(url);
-      if (!["bots.qq.com", "api.sgroup.qq.com", "api.dingtalk.com", "api.dingtalk.io", "127.0.0.1"].includes(parsed.hostname)) throw new Error("Unexpected adapter origin");
+      if (!["api.bot.qq.com", "bots.qq.com", "api.sgroup.qq.com", "api.dingtalk.com", "api.dingtalk.io", "127.0.0.1"].includes(parsed.hostname)) throw new Error("Unexpected adapter origin");
       return fetchImpl(loop.source + parsed.pathname, { ...init, dispatcher: loop.agent });
     };
   });

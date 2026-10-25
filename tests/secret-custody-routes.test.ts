@@ -1506,9 +1506,21 @@ describe("secret custody across HTTP routes", () => {
 
     expect(body).toEqual({ ok: true, info: { username: "Agent B Bot", name: "Agent B Bot" } });
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://bots.qq.com/app/getAppAccessToken",
+      "https://api.bot.qq.com/app/getAppAccessToken",
       expect.objectContaining({
         body: JSON.stringify({ appId: "app-b", clientSecret: "secret-b" }),
+      }),
+    );
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://api.bot.qq.com/app/getAppAccessToken",
+      "https://api.bot.qq.com/users/@me",
+    ]);
+    expect(fetchMock).toHaveBeenNthCalledWith(2,
+      "https://api.bot.qq.com/users/@me",
+      expect.objectContaining({
+        method: "GET",
+        headers: { Authorization: "QQBot qq-token" },
+        redirect: "manual",
       }),
     );
   });
