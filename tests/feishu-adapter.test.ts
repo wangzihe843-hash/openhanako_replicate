@@ -6,6 +6,7 @@ const mockImageGet = vi.fn();
 const mockMessageResourceGet = vi.fn();
 const mockMessageCreate = vi.fn();
 const mockMessageUpdate = vi.fn();
+const mockMessagePatch = vi.fn();
 const mockCardCreate = vi.fn();
 const mockCardSettings = vi.fn();
 const mockCardElementContent = vi.fn();
@@ -56,7 +57,7 @@ vi.mock("../lib/bridge/optional-sdks.ts", () => {
       image: { get: typeof mockImageGet; create: typeof mockImageCreate };
       file: { create: typeof mockFileCreate };
       messageResource: { get: typeof mockMessageResourceGet };
-      message: { create: typeof mockMessageCreate; update: typeof mockMessageUpdate };
+      message: { create: typeof mockMessageCreate; update: typeof mockMessageUpdate; patch: typeof mockMessagePatch };
     };
     constructor(args) {
       mockClientConstructorArgs.push(args);
@@ -90,6 +91,7 @@ vi.mock("../lib/bridge/optional-sdks.ts", () => {
         message: {
           create: mockMessageCreate,
           update: mockMessageUpdate,
+          patch: mockMessagePatch,
         },
       };
     }
@@ -147,6 +149,7 @@ describe("createFeishuAdapter", () => {
     mockMessageResourceGet.mockReset();
     mockMessageCreate.mockReset();
     mockMessageUpdate.mockReset();
+    mockMessagePatch.mockReset();
     mockCardCreate.mockReset();
     mockCardSettings.mockReset();
     mockCardElementContent.mockReset();
@@ -926,6 +929,9 @@ describe("createFeishuAdapter", () => {
         ],
       },
     });
+    expect(mockMessageCreate).toHaveBeenCalledOnce();
+    expect(mockMessageUpdate).not.toHaveBeenCalled();
+    expect(mockMessagePatch).not.toHaveBeenCalled();
   });
 
   it("renders explicit Feishu at tokens as post at elements", async () => {
@@ -990,6 +996,9 @@ describe("createFeishuAdapter", () => {
         content: markdownPostContent("final"),
       },
     });
+    expect(mockMessageCreate).toHaveBeenCalledOnce();
+    expect(mockMessageUpdate).toHaveBeenCalledTimes(2);
+    expect(mockMessagePatch).not.toHaveBeenCalled();
   });
 
   it("rejects nested resolved business failures from edit-message updates", async () => {
@@ -1103,6 +1112,8 @@ describe("createFeishuAdapter", () => {
         sequence: 5,
       },
     });
+    expect(mockMessageUpdate).not.toHaveBeenCalled();
+    expect(mockMessagePatch).not.toHaveBeenCalled();
   });
 
   it("rejects resolved CardKit business failures during stream start", async () => {
@@ -1201,7 +1212,8 @@ describe("createFeishuAdapter", () => {
 
     const state = await adapter.startStreamReply("oc_chat", "working");
     await adapter.updateStreamReply("oc_chat", state, table);
-    await adapter.finishStreamReply("oc_chat", state, `${table}\n\nfinal`);
+    await adapter.updateStreamReply("oc_chat", state, `${table}\n\ncontinued`);
+    await adapter.finishStreamReply("oc_chat", state, "final");
 
     expect(state).toEqual({
       messageId: "om_stream_card",
@@ -1223,15 +1235,19 @@ describe("createFeishuAdapter", () => {
         content: expect.any(String),
       },
     });
-    expect(mockMessageUpdate).toHaveBeenNthCalledWith(2, {
-      path: { message_id: "om_stream_card" },
-      data: {
-        msg_type: "interactive",
-        content: expect.any(String),
-      },
-    });
-    expect(JSON.parse(mockMessageUpdate.mock.calls[1][0].data.content).body.elements[0].content)
-      .toContain("final");
+    expect(mockMessageCreate).toHaveBeenCalledTimes(2);
+    expect(mockMessageUpdate).toHaveBeenCalledOnce();
+    expect(mockMessagePatch).toHaveBeenCalledTimes(2);
+    for (const [index, text] of [`${table}\n\ncontinued`, "final"].entries()) {
+      expect(mockMessagePatch).toHaveBeenNthCalledWith(index + 1, {
+        path: { message_id: "om_stream_card" },
+        data: { content: expect.any(String) },
+      });
+      expect(JSON.parse(mockMessagePatch.mock.calls[index][0].data.content)).toMatchObject({
+        config: { update_multi: true },
+        body: { elements: [{ tag: "markdown", content: text }] },
+      });
+    }
   });
 
   it("parses Feishu stream message ids from every SDK response shape", async () => {
@@ -1249,6 +1265,126 @@ describe("createFeishuAdapter", () => {
     });
   });
 
+  it("patches updates and finish when a stream starts as an interactive card", async () => {
+    mockMessageCreate.mockResolvedValue({ data: { message_id: "om_initial_card" } });
+    const adapter = createFeishuAdapter({
+      appId: "app-id", appSecret: "app-secret", agentId: "hana", onMessage: vi.fn(),
+    });
+    const table = "| Issue | Status |\n| --- | --- |\n| #1516 | open |";
+    const state = await adapter.startStreamReply("oc_chat", table);
+    await adapter.updateStreamReply("oc_chat", state, "second");
+    await adapter.finishStreamReply("oc_chat", state, "final");
+
+    expect(state).toEqual({ messageId: "om_initial_card", renderKind: "interactive" });
+    expect(mockMessageCreate).toHaveBeenCalledOnce();
+    expect(mockMessageUpdate).not.toHaveBeenCalled();
+    expect(mockMessagePatch).toHaveBeenCalledTimes(2);
+    for (const [index, text] of ["second", "final"].entries()) {
+      expect(mockMessagePatch).toHaveBeenNthCalledWith(index + 1, {
+        path: { message_id: "om_initial_card" },
+        data: { content: expect.any(String) },
+      });
+      expect(JSON.parse(mockMessagePatch.mock.calls[index][0].data.content)).toMatchObject({
+        config: { update_multi: true },
+        body: { elements: [{ tag: "markdown", content: text }] },
+      });
+    }
+  });
+
+  it.each(["updateStreamReply", "finishStreamReply"] as const)(
+    "propagates interactive business failures from %s without another send or retry",
+    async (operation) => {
+      mockMessageCreate.mockResolvedValue({ data: { message_id: "om_card" } });
+      mockMessagePatch.mockResolvedValue({ data: {
+        code: "230004", msg: "card update denied", error: { log_id: "card-patch-log" },
+      } });
+      const adapter = createFeishuAdapter({
+        appId: "app-id", appSecret: "app-secret", agentId: "hana", onMessage: vi.fn(),
+      });
+      const state = await adapter.startStreamReply("oc_chat", "| A | B |\n| --- | --- |\n| a | b |");
+
+      await expect(adapter[operation]("oc_chat", state, "next")).rejects.toMatchObject({
+        name: "FeishuBusinessError", operation: "消息更新", code: "230004",
+        businessMessage: "card update denied", logId: "card-patch-log",
+      });
+      expect(mockMessageCreate).toHaveBeenCalledOnce();
+      expect(mockMessageUpdate).not.toHaveBeenCalled();
+      expect(mockMessagePatch).toHaveBeenCalledOnce();
+      expect(state).toEqual({ messageId: "om_card", renderKind: "interactive" });
+    },
+  );
+
+  it.each(["updateStreamReply", "finishStreamReply"] as const)(
+    "does not resend an interactive card after an uncertain transport failure in %s",
+    async (operation) => {
+      mockMessageCreate.mockResolvedValue({ data: { message_id: "om_card" } });
+      mockMessagePatch.mockRejectedValue(new Error("synthetic connection reset after write"));
+      const adapter = createFeishuAdapter({
+        appId: "app-id", appSecret: "app-secret", agentId: "hana", onMessage: vi.fn(),
+      });
+      const state = await adapter.startStreamReply("oc_chat", "| A | B |\n| --- | --- |\n| a | b |");
+
+      await expect(adapter[operation]("oc_chat", state, "next"))
+        .rejects.toThrow("synthetic connection reset after write");
+      expect(mockMessageCreate).toHaveBeenCalledOnce();
+      expect(mockMessageUpdate).not.toHaveBeenCalled();
+      expect(mockMessagePatch).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("disables updates when the transition card has no message_id without sending it again", async () => {
+    mockMessageCreate
+      .mockResolvedValueOnce({ data: { message_id: "om_post" } })
+      .mockResolvedValueOnce({ data: {} });
+    const adapter = createFeishuAdapter({
+      appId: "app-id", appSecret: "app-secret", agentId: "hana", onMessage: vi.fn(),
+    });
+    const state = await adapter.startStreamReply("oc_chat", "working");
+    await adapter.updateStreamReply("oc_chat", state, "| A | B |\n| --- | --- |\n| a | b |");
+    await adapter.updateStreamReply("oc_chat", state, "next");
+    await adapter.finishStreamReply("oc_chat", state, "final");
+
+    expect(state).toEqual({
+      messageId: null, previousMessageId: "om_post", renderKind: "interactive", missingMessageId: true,
+    });
+    expect(mockMessageCreate).toHaveBeenCalledTimes(2);
+    expect(mockMessageUpdate).toHaveBeenCalledOnce();
+    expect(mockMessagePatch).not.toHaveBeenCalled();
+  });
+
+  it.each(["updateStreamReply", "finishStreamReply"] as const)(
+    "rejects an interactive state without messageId in %s without sending",
+    async (operation) => {
+      const adapter = createFeishuAdapter({
+        appId: "app-id", appSecret: "app-secret", agentId: "hana", onMessage: vi.fn(),
+      });
+      await expect(adapter[operation]("oc_chat", { renderKind: "interactive" }, "next"))
+        .rejects.toThrow("Feishu stream update requires messageId");
+      expect(mockMessageCreate).not.toHaveBeenCalled();
+      expect(mockMessageUpdate).not.toHaveBeenCalled();
+      expect(mockMessagePatch).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["notice", "card"])("does not retry a failed post-to-card transition at %s", async (stage) => {
+    mockMessageCreate.mockResolvedValueOnce({ data: { message_id: "om_post" } });
+    if (stage === "notice") {
+      mockMessageUpdate.mockRejectedValue(new Error("synthetic notice failure"));
+    } else {
+      mockMessageCreate.mockRejectedValueOnce(new Error("synthetic card delivery unknown"));
+    }
+    const adapter = createFeishuAdapter({
+      appId: "app-id", appSecret: "app-secret", agentId: "hana", onMessage: vi.fn(),
+    });
+    const state = await adapter.startStreamReply("oc_chat", "working");
+    await expect(adapter.updateStreamReply("oc_chat", state, "| A | B |\n| --- | --- |\n| a | b |"))
+      .rejects.toThrow(stage === "notice" ? "synthetic notice failure" : "synthetic card delivery unknown");
+    expect(mockMessageCreate).toHaveBeenCalledTimes(stage === "notice" ? 1 : 2);
+    expect(mockMessageUpdate).toHaveBeenCalledOnce();
+    expect(mockMessagePatch).not.toHaveBeenCalled();
+    expect(state).toEqual({ messageId: "om_post", renderKind: "post" });
+  });
+
   it("marks created Feishu stream messages without message_id as non-updatable instead of throwing", async () => {
     mockMessageCreate.mockResolvedValueOnce({ data: {} });
     const adapter = createFeishuAdapter({
@@ -1263,6 +1399,8 @@ describe("createFeishuAdapter", () => {
     await adapter.finishStreamReply("oc_chat", state, "final");
 
     expect(state).toEqual({ messageId: null, missingMessageId: true });
+    expect(mockMessageCreate).toHaveBeenCalledOnce();
     expect(mockMessageUpdate).not.toHaveBeenCalled();
+    expect(mockMessagePatch).not.toHaveBeenCalled();
   });
 });

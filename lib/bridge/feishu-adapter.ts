@@ -758,7 +758,12 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
 
   async function updateOutboundMessage(messageId: string, rendered: FeishuOutboundMessage) {
     return callFeishu("消息更新", () => (
-      client.im.message.update(feishuOutboundUpdatePayload(messageId, rendered))
+      rendered.kind === "interactive"
+        ? client.im.message.patch({
+          path: { message_id: messageId },
+          data: { content: rendered.content },
+        })
+        : client.im.message.update(feishuOutboundUpdatePayload(messageId, rendered))
     ));
   }
 
