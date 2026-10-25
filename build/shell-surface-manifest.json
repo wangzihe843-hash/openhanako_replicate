@@ -17,7 +17,7 @@
   "shellBundledDependencies": [
     {
       "name": "mammoth",
-      "declaredVersion": "^1.11.0",
+      "declaredVersion": "1.13.0",
       "reason": "desktop/main.cjs read-docx-html uses mammoth; vite.config.main.js bundles it because the asar excludes node_modules except ws."
     },
     {
