@@ -70,7 +70,7 @@ describe("fork workflow safety", () => {
       matrix: { os: ["macos-latest", "windows-2022"], "node-version": ["24.15.0"] },
     });
     for (const name of ["lint-open-boundary", "open-build-smoke"]) {
-      expect(ci.jobs[name]?.["runs-on"]).toBe("ubuntu-latest");
+      expect(ci.jobs[name]?.["runs-on"]).toBe("ubuntu-24.04");
     }
   });
 
@@ -104,7 +104,7 @@ describe("fork workflow safety", () => {
   it("uses the triggering commit for every checkout without a ref input or secrets", () => {
     for (const [name, job] of Object.entries(ci.jobs)) {
       const checkouts = (job.steps ?? []).filter((step) => String(step.uses).startsWith("actions/checkout@"));
-      expect(checkouts).toEqual([{ uses: ["test", "windows-auth-lock-native"].includes(name) ? "actions/checkout@v5" : "actions/checkout@v4" }]);
+      expect(checkouts, name).toEqual([{ uses: "actions/checkout@v5" }]);
     }
     expect(JSON.stringify(ci)).not.toContain("inputs.");
     expect(JSON.stringify(ci)).not.toContain("secrets.");
@@ -119,7 +119,7 @@ describe("fork workflow safety", () => {
         expect(step["continue-on-error"] ?? false).toBe(false);
         if (step.name === "Preserve native Windows auth lock evidence") {
           expect(step.if).toBe(NATIVE_UPLOAD_IF);
-          expect(step.uses).toBe("actions/upload-artifact@v4");
+          expect(step.uses).toBe("actions/upload-artifact@v6");
         } else if (step.name === "Check native Windows auth lock evidence") {
           expect(step.if).toBe(NATIVE_EVIDENCE_IF);
         } else {
@@ -258,7 +258,7 @@ describe("fork workflow safety", () => {
     expect(steps[probeIndex + 2]).toEqual({
       name: "Preserve native Windows auth lock evidence",
       if: NATIVE_UPLOAD_IF,
-      uses: "actions/upload-artifact@v4",
+      uses: "actions/upload-artifact@v6",
       with: {
         name: "windows-auth-lock-native-windows-2022",
         path: "output/windows-auth-lock-native/",
