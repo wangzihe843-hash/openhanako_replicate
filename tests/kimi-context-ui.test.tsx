@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { ModelManager } from '../core/model-manager.ts';
 import { ProviderRegistry } from '../core/provider-registry.ts';
@@ -24,6 +24,23 @@ vi.mock('../desktop/src/react/settings/helpers', async importOriginal => ({
 import { ProviderModelList } from '../desktop/src/react/settings/tabs/providers/ProviderModelList';
 import { lookupModelMeta } from '../desktop/src/react/settings/helpers';
 import { useSettingsStore, type ProviderSummary } from '../desktop/src/react/settings/store';
+
+async function saveModelAndWait(onRefresh: ReturnType<typeof vi.fn>, expectedRefreshes: number) {
+  const callIndex = mocks.hanaFetch.mock.calls.length;
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'settings.api.save' }));
+    expect(mocks.hanaFetch).toHaveBeenCalledTimes(callIndex + 1);
+    expect(mocks.hanaFetch.mock.calls[callIndex][1]).toMatchObject({ method: 'PUT' });
+    // This request runs the real route and filesystem-backed model sync. Await
+    // its completion instead of polling the refresh spy on a separate deadline.
+    const response = await mocks.hanaFetch.mock.results[callIndex].value;
+    expect(response.ok).toBe(true);
+  });
+  expect(onRefresh).toHaveBeenCalledTimes(expectedRefreshes);
+  // Refresh is called before onClose; flush and check the completed edit before
+  // reopening it or unmounting the provider for the next budget.
+  expect(screen.queryByRole('button', { name: 'settings.api.save' })).not.toBeInTheDocument();
+}
 
 let fixtureHome: string;
 beforeEach(() => {
@@ -119,8 +136,7 @@ it.each(kimiProjectionCases.filter(c => c.base_url && c.api))(
       fireEvent.click(screen.getByRole('button', { name: 'settings.api.editModel' }));
       expect(screen.getAllByRole('spinbutton')[0]).toHaveValue(expected);
       fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Renamed Kimi' } });
-      fireEvent.click(screen.getByRole('button', { name: 'settings.api.save' }));
-      await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
+      await saveModelAndWait(onRefresh, 1);
       const update = mocks.hanaFetch.mock.calls.filter(([, options]) => options?.method === 'PUT').at(-1);
       expect(JSON.parse(update[1].body)).not.toHaveProperty('context');
       const saved = manager.providerRegistry.getAllProvidersRaw()[provider].models[0];
@@ -130,8 +146,7 @@ it.each(kimiProjectionCases.filter(c => c.base_url && c.api))(
         fireEvent.click(screen.getByRole('button', { name: 'settings.api.editModel' }));
         fireEvent.change(screen.getAllByRole('spinbutton')[0], { target: { value: '999999' } });
         fireEvent.change(screen.getAllByRole('spinbutton')[0], { target: { value: String(edited) } });
-        fireEvent.click(screen.getByRole('button', { name: 'settings.api.save' }));
-        await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(edited === 1048576 ? 2 : 3));
+        await saveModelAndWait(onRefresh, edited === 1048576 ? 2 : 3);
         expect(manager.providerRegistry.getAllProvidersRaw()[provider].models[0]).toMatchObject({ context: edited });
         expect(manager.providerRegistry.getAllProvidersRaw()[provider].models[0]).not.toHaveProperty('contextWindow');
         expect(manager.availableModels.find(m => m.id === id && m.provider === provider)?.contextWindow).toBe(edited);
