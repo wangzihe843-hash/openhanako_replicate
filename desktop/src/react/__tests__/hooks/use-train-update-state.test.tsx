@@ -5,7 +5,7 @@
 import React from 'react';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useTrainUpdateState } from '../../hooks/use-train-update-state';
+import { useTrainUpdateState, type UseTrainUpdateStateResult } from '../../hooks/use-train-update-state';
 import type { CrashFallbackNotice, PlatformApi, TrainUpdateAvailable, TrainUpdateProgress, TrainUpdateStatus } from '../../types';
 
 let availableListener: ((payload: { version: string; minShellBlocked: boolean }) => void) | null = null;
@@ -63,8 +63,22 @@ function installHana(overrides: Partial<PlatformApi> = {}) {
   } as unknown as PlatformApi;
 }
 
-function Harness() {
+type CommittedStatus = Pick<UseTrainUpdateStateResult, 'onlineUpdatesEnabled' | 'currentVersion' | 'applyNow'>;
+
+function emitProgress(progress: TrainUpdateProgress) {
+  expect(progressListener).toBeTypeOf('function');
+  progressListener!(progress);
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => { resolve = complete; });
+  return { promise, resolve };
+}
+
+function Harness({ onStatusCommit }: { onStatusCommit?: (state: CommittedStatus) => void } = {}) {
   const {
+    onlineUpdatesEnabled,
     currentVersion,
     available: availableUpdate,
     minShellBlocked,
@@ -80,8 +94,13 @@ function Harness() {
     applyNow,
     ackFallbackNotice,
   } = useTrainUpdateState();
+  React.useLayoutEffect(() => {
+    // Deliver a queued bridge event after status commits, before passive effects.
+    onStatusCommit?.({ onlineUpdatesEnabled, currentVersion, applyNow });
+  }, [onlineUpdatesEnabled, currentVersion, applyNow, onStatusCommit]);
   return (
     <div>
+      <div data-testid="onlineUpdatesEnabled">{String(onlineUpdatesEnabled)}</div>
       <div data-testid="currentVersion">{currentVersion || 'none'}</div>
       <div data-testid="available">{availableUpdate?.version ?? 'none'}</div>
       <div data-testid="minShellBlocked">{String(minShellBlocked)}</div>
@@ -106,6 +125,124 @@ describe('useTrainUpdateState', () => {
     vi.restoreAllMocks();
     availableListener = null;
     progressListener = null;
+  });
+
+  it('accepts progress at the hydrate commit before passive effects resubscribe', async () => {
+    let hydrate!: (status: TrainUpdateStatus) => void;
+    const subscriptions: Array<(p: TrainUpdateProgress) => void> = [];
+    installHana({
+      trainUpdateStatus: vi.fn(() => new Promise<TrainUpdateStatus>((resolve) => { hydrate = resolve; })),
+      onTrainUpdateProgress: vi.fn((cb) => {
+        subscriptions.push(cb);
+        progressListener = cb;
+        return () => { progressListener = null; };
+      }),
+    });
+    const trace: Array<{ enabled: boolean; currentVersion: string; subscriptionCount: number; listenerPresent: boolean; firstSubscriptionActive: boolean }> = [];
+    render(<Harness onStatusCommit={(state) => {
+      if (!state.onlineUpdatesEnabled) return;
+      trace.push({ enabled: state.onlineUpdatesEnabled, currentVersion: state.currentVersion, subscriptionCount: subscriptions.length, listenerPresent: typeof progressListener === 'function', firstSubscriptionActive: progressListener === subscriptions[0] });
+      emitProgress({ phase: 'downloading', kind: 'server', receivedBytes: 50, totalBytes: 200 });
+    }} />);
+    await act(async () => { hydrate(baseStatus()); });
+    expect(trace).toEqual([{ enabled: true, currentVersion: '0.388.0', subscriptionCount: 1, listenerPresent: true, firstSubscriptionActive: true }]);
+    expect(subscriptions).toHaveLength(1);
+    expect(screen.getByTestId('phase').textContent).toBe('downloading');
+    expect(screen.getByTestId('progress').textContent).toBe('50/200');
+  });
+
+  it('retains the first progress event when apply starts at the hydrate commit', async () => {
+    let hydrate!: (status: TrainUpdateStatus) => void;
+    let finishApply!: (result: { ok: boolean; error?: string }) => void;
+    const trainUpdateApply = vi.fn(() => {
+      emitProgress({ phase: 'activating', kind: 'renderer', receivedBytes: 200, totalBytes: 200 });
+      return new Promise<{ ok: boolean; error?: string }>((resolve) => { finishApply = resolve; });
+    });
+    installHana({ trainUpdateStatus: vi.fn(() => new Promise<TrainUpdateStatus>((resolve) => { hydrate = resolve; })), trainUpdateApply });
+    render(<Harness onStatusCommit={(state) => {
+      if (state.onlineUpdatesEnabled) void state.applyNow();
+    }} />);
+    await act(async () => { hydrate(baseStatus()); });
+    expect(trainUpdateApply).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('phase').textContent).toBe('applying');
+    expect(screen.getByTestId('progress').textContent).toBe('200/200');
+    await act(async () => { finishApply({ ok: false, error: 'fixture failure' }); });
+    expect(screen.getByTestId('phase').textContent).toBe('idle');
+    expect(screen.getByTestId('progress').textContent).toBe('none');
+  });
+
+  it('rejects progress at the disabled status commit before passive effects resubscribe', async () => {
+    const trainUpdateStatus = vi.fn().mockResolvedValueOnce(baseStatus()).mockResolvedValue(baseStatus({ onlineUpdatesEnabled: false }));
+    installHana({ trainUpdateStatus });
+    let wasEnabled = false;
+    render(<Harness onStatusCommit={(state) => {
+      if (state.onlineUpdatesEnabled) { wasEnabled = true; return; }
+      if (!wasEnabled) return;
+      emitProgress({ phase: 'activating', kind: 'renderer', receivedBytes: 200, totalBytes: 200 });
+    }} />);
+    await act(async () => {});
+    await act(async () => { screen.getByText('check').click(); });
+    expect(screen.getByTestId('phase').textContent).toBe('idle');
+    expect(screen.getByTestId('progress').textContent).toBe('none');
+  });
+
+  it('clears in-flight progress on disable and rejects subsequent events on the same subscription', async () => {
+    const application = deferred<{ ok: boolean }>();
+    const hydrate = deferred<TrainUpdateStatus>();
+    const trainUpdateStatus = vi.fn().mockReturnValueOnce(hydrate.promise).mockResolvedValue(baseStatus({ onlineUpdatesEnabled: false }));
+    installHana({ trainUpdateStatus, trainUpdateApply: vi.fn(() => application.promise) });
+    render(<Harness />);
+    await act(async () => { hydrate.resolve(baseStatus()); });
+    const listener = progressListener;
+    act(() => {
+      screen.getByText('apply').click();
+      emitProgress({ phase: 'downloading', kind: 'server', receivedBytes: 50, totalBytes: 200 });
+    });
+    expect(screen.getByTestId('progress').textContent).toBe('50/200');
+    await act(async () => { screen.getByText('check').click(); });
+    expect(screen.getByTestId('onlineUpdatesEnabled').textContent).toBe('false');
+    expect(screen.getByTestId('phase').textContent).toBe('idle');
+    expect(screen.getByTestId('progress').textContent).toBe('none');
+    expect(progressListener).toBe(listener);
+    expect(window.hana.onTrainUpdateProgress).toHaveBeenCalledTimes(1);
+    act(() => { emitProgress({ phase: 'activating', kind: 'renderer', receivedBytes: 200, totalBytes: 200 }); });
+    expect(screen.getByTestId('phase').textContent).toBe('idle');
+    expect(screen.getByTestId('progress').textContent).toBe('none');
+    await act(async () => { application.resolve({ ok: true }); });
+    expect(screen.getByTestId('phase').textContent).toBe('idle');
+  });
+
+  it('retires StrictMode subscriptions and ignores late callbacks and hydration after unmount', async () => {
+    const firstHydrate = deferred<TrainUpdateStatus>();
+    const currentHydrate = deferred<TrainUpdateStatus>();
+    const subscriptions: Array<{ listener: (p: TrainUpdateProgress) => void; unsubscribe: ReturnType<typeof vi.fn> }> = [];
+    installHana({
+      trainUpdateStatus: vi.fn().mockReturnValueOnce(firstHydrate.promise).mockReturnValueOnce(currentHydrate.promise),
+      onTrainUpdateProgress: vi.fn((listener) => {
+        const unsubscribe = vi.fn();
+        subscriptions.push({ listener, unsubscribe });
+        return unsubscribe;
+      }),
+    });
+    const mounted = render(<React.StrictMode><Harness /></React.StrictMode>);
+    expect(subscriptions).toHaveLength(2);
+    expect(subscriptions[0].unsubscribe).toHaveBeenCalledTimes(1);
+    await act(async () => { currentHydrate.resolve(baseStatus()); });
+    const readPhase = vi.fn(() => 'activating' as const);
+    const staleEvent: TrainUpdateProgress = { get phase() { return readPhase(); }, kind: 'renderer', receivedBytes: 200, totalBytes: 200 };
+    act(() => { subscriptions[0].listener(staleEvent); });
+    expect(readPhase).not.toHaveBeenCalled();
+    expect(screen.getByTestId('phase').textContent).toBe('idle');
+    act(() => { subscriptions[1].listener({ phase: 'downloading', kind: 'server', receivedBytes: 50, totalBytes: 200 }); });
+    expect(screen.getByTestId('progress').textContent).toBe('50/200');
+    mounted.unmount();
+    expect(subscriptions[1].unsubscribe).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      subscriptions[1].listener(staleEvent);
+      firstHydrate.resolve(baseStatus({ currentVersion: 'stale' }));
+    });
+    expect(readPhase).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('phase')).toBeNull();
   });
 
   it('hydrates currentVersion and a null available from the cached status on mount', async () => {
@@ -242,12 +379,17 @@ describe('useTrainUpdateState', () => {
   });
 
   it('onTrainUpdateProgress drives phase (downloading vs applying) and byte progress while apply is in flight', async () => {
-    installHana();
+    const hydrate = deferred<TrainUpdateStatus>();
+    const application = deferred<{ ok: boolean; error?: string }>();
+    const trainUpdateApply = vi.fn(() => application.promise);
+    installHana({ trainUpdateStatus: vi.fn(() => hydrate.promise), trainUpdateApply });
     render(<Harness />);
-    await waitFor(() => expect(screen.getByTestId('currentVersion').textContent).toBe('0.388.0'));
+    await act(async () => { hydrate.resolve(baseStatus()); });
+    act(() => { screen.getByText('apply').click(); });
+    expect(trainUpdateApply).toHaveBeenCalledTimes(1);
 
     act(() => {
-      progressListener?.({ phase: 'downloading', kind: 'server', receivedBytes: 50, totalBytes: 200 });
+      emitProgress({ phase: 'downloading', kind: 'server', receivedBytes: 50, totalBytes: 200 });
     });
     expect(screen.getByTestId('phase').textContent).toBe('downloading');
     expect(screen.getByTestId('progress').textContent).toBe('50/200');
@@ -258,16 +400,19 @@ describe('useTrainUpdateState', () => {
     // hasn't picked up the overall-bytes fix would still send), so
     // progress falls back to the per-artifact receivedBytes/totalBytes.
     act(() => {
-      progressListener?.({ phase: 'verifying', kind: 'server', receivedBytes: 200, totalBytes: 200 });
+      emitProgress({ phase: 'verifying', kind: 'server', receivedBytes: 200, totalBytes: 200 });
     });
     expect(screen.getByTestId('phase').textContent).toBe('downloading');
     expect(screen.getByTestId('progress').textContent).toBe('200/200');
 
     act(() => {
-      progressListener?.({ phase: 'activating', kind: 'renderer', receivedBytes: 200, totalBytes: 200 });
+      emitProgress({ phase: 'activating', kind: 'renderer', receivedBytes: 200, totalBytes: 200 });
     });
     expect(screen.getByTestId('phase').textContent).toBe('applying');
     expect(screen.getByTestId('progress').textContent).toBe('200/200');
+    await act(async () => { application.resolve({ ok: false, error: 'fixture failure' }); });
+    expect(screen.getByTestId('phase').textContent).toBe('idle');
+    expect(screen.getByTestId('progress').textContent).toBe('none');
   });
 
   it('onTrainUpdateProgress uses cumulative overall bytes across both artifacts so the bar never resets to 0 at the server/renderer boundary', async () => {
@@ -279,7 +424,7 @@ describe('useTrainUpdateState', () => {
     // against the combined total (300 = 100 server + 200 renderer), not
     // the per-artifact total.
     act(() => {
-      progressListener?.({
+      emitProgress({
         phase: 'downloading', kind: 'server', receivedBytes: 50, totalBytes: 100,
         overallReceivedBytes: 50, overallTotalBytes: 300,
       });
@@ -292,7 +437,7 @@ describe('useTrainUpdateState', () => {
     // (100/300), not drop back toward 0 the way the old per-artifact
     // receivedBytes (0) would.
     act(() => {
-      progressListener?.({
+      emitProgress({
         phase: 'downloading', kind: 'renderer', receivedBytes: 0, totalBytes: 200,
         overallReceivedBytes: 100, overallTotalBytes: 300,
       });
@@ -303,7 +448,7 @@ describe('useTrainUpdateState', () => {
     // Renderer partway through: overall keeps climbing past the server's
     // own size, still one continuous sweep.
     act(() => {
-      progressListener?.({
+      emitProgress({
         phase: 'downloading', kind: 'renderer', receivedBytes: 80, totalBytes: 200,
         overallReceivedBytes: 180, overallTotalBytes: 300,
       });
@@ -313,7 +458,7 @@ describe('useTrainUpdateState', () => {
     // Renderer activating: reaches the full combined total, and only
     // "activating" flips the phase to applying.
     act(() => {
-      progressListener?.({
+      emitProgress({
         phase: 'activating', kind: 'renderer', receivedBytes: 200, totalBytes: 200,
         overallReceivedBytes: 300, overallTotalBytes: 300,
       });

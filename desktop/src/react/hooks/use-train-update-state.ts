@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CrashFallbackNotice, TrainUpdateAvailable, TrainUpdateStatus } from '../types';
 
 /**
@@ -120,6 +120,17 @@ export function useTrainUpdateState(): UseTrainUpdateStateResult {
   const [snapshot, setSnapshot] = useState<StatusSnapshot>(IDLE_SNAPSHOT);
   const [phase, setPhase] = useState<TrainUpdatePhase>('idle');
   const [progress, setProgress] = useState<TrainUpdateProgressState | null>(null);
+  const updatesEnabled = useRef(false);
+
+  // IPC can arrive after a status commit but before passive effects run. Keep
+  // one subscription and publish the committed policy before that event window.
+  useLayoutEffect(() => {
+    updatesEnabled.current = snapshot.onlineUpdatesEnabled;
+    if (!snapshot.onlineUpdatesEnabled) {
+      setPhase('idle');
+      setProgress(null);
+    }
+  }, [snapshot.onlineUpdatesEnabled]);
 
   // 挂载时只读一次已缓存的状态——不触发检查、更不触发下载。
   useEffect(() => {
@@ -147,8 +158,9 @@ export function useTrainUpdateState(): UseTrainUpdateStateResult {
 
   // apply-now 下载/验证/激活阶段的进度推送，只发给发起这次调用的窗口。
   useEffect(() => {
+    let alive = true;
     const unsubscribe = window.hana?.onTrainUpdateProgress?.((p) => {
-      if (!snapshot.onlineUpdatesEnabled) return;
+      if (!alive || !updatesEnabled.current) return;
       // downloading 与 verifying 都算"下载中"（进度条停在已到达的累计位置，
       // 不因为验签间隙而闪成"应用中"）；只有 activating 才是真的 applying。
       setPhase(p.phase === 'activating' ? 'applying' : 'downloading');
@@ -163,8 +175,11 @@ export function useTrainUpdateState(): UseTrainUpdateStateResult {
       const totalBytes = p.overallTotalBytes ?? p.totalBytes;
       setProgress({ receivedBytes, totalBytes });
     });
-    return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
-  }, [snapshot.onlineUpdatesEnabled]);
+    return () => {
+      alive = false;
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, []);
 
   // 崩溃回退运行时触发（renderer 崩溃重试路径）的实时广播——冷启动路径
   // 走上面 queryStatus() 挂载时拉到的 status.fallbackNotice，这里只覆盖
