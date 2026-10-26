@@ -33,10 +33,17 @@ import { t } from "../i18n.ts";
 import { stripToolProtocolTagsFromProse } from "../tool-protocol-sanitizer.ts";
 import { sanitizeBridgeVisibleText } from "../../shared/bridge-visible-text.ts";
 import { createVisibleTextAccumulator } from "./visible-text-accumulator.ts";
+import { formatLogArgs } from "../log-redactor.ts";
 
 const log = createModuleLogger("bridge");
 const blockChunkerLog = createModuleLogger("block-chunker");
 const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+
+// Status is a display-only string snapshot; never alter the source error or
+// adapter credentials used for request construction and retry classification.
+function statusError(error) {
+  return error ? formatLogArgs([error]) : null;
+}
 
 function normalizeIdempotencyKey(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -951,7 +958,7 @@ export class BridgeManager {
   }
 
   _setPlatformConfigError(platform, agentId, err) {
-    const message = err?.message || String(err);
+    const message = statusError(err);
     const key = this._getPlatformKey(platform, agentId);
     this.stopPlatform(platform, agentId);
     this._platforms.set(key, {
@@ -986,8 +993,8 @@ export class BridgeManager {
         onQqDmGuild: (userId, guildId) => { if (isCurrent()) this._persistQqDmGuild(userId, guildId, agentId); },
         onStatus: (status, error) => {
           if (!isCurrent()) return;
-          entry.status = status; entry.error = error || null;
-          this._emitStatus(platform, status, error, agentId);
+          entry.status = status; entry.error = statusError(error);
+          this._emitStatus(platform, status, entry.error, agentId);
         },
       };
       const adapter = spec.create(credentials, onMessage, hooks, agentId);
@@ -1004,8 +1011,9 @@ export class BridgeManager {
     } catch (err) {
       log.error(`${platform} 启动失败: ${err.message}`);
       debugLog()?.error("bridge", `${platform} start failed: ${err.message}`);
-      this._platforms.set(key, { adapter: null, status: "error", error: err.message, agentId: agentId || null, platform });
-      this._emitStatus(platform, "error", err.message, agentId);
+      const error = statusError(err);
+      this._platforms.set(key, { adapter: null, status: "error", error, agentId: agentId || null, platform });
+      this._emitStatus(platform, "error", error, agentId);
     }
   }
 
@@ -1075,7 +1083,7 @@ export class BridgeManager {
     for (const [, entry] of this._platforms) {
       if (agentId && entry.agentId !== agentId) continue;
       const name = entry.platform || "unknown";
-      result[name] = { status: entry.status, error: entry.error || null };
+      result[name] = { status: entry.status, error: statusError(entry.error) };
     }
     return result;
   }
@@ -3153,7 +3161,7 @@ export class BridgeManager {
   /** 广播状态到前端（通过 Hub EventBus） */
   _emitStatus(platform, status, error, agentId) {
     this._hub.eventBus.emit(
-      { type: "bridge_status", platform, status, error: error || null, agentId: agentId || null },
+      { type: "bridge_status", platform, status, error: statusError(error), agentId: agentId || null },
       null,
     );
   }

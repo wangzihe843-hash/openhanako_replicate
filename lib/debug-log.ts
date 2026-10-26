@@ -11,7 +11,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { redactLogLabel, redactLogText } from "./log-redactor.ts";
+import { formatLogArgs, redactLogLabel, redactLogText } from "./log-redactor.ts";
 
 class DebugLog {
   declare _dedup: any;
@@ -120,7 +120,7 @@ class DebugLog {
   /** 对消息做隐私清洗后写入（含去重判断） */
   _write(level, module, msg) {
     const cleanModule = redactLogLabel(module || "unknown");
-    const cleaned = redactLogText(String(msg), this._redactOptions);
+    const cleaned = formatLogArgs([msg], this._redactOptions);
 
     // 去重：与上一条完全相同则只计数
     const d = this._dedup;
@@ -235,20 +235,25 @@ export function debugLog() {
  * // file:    [HH:MM:SS.mmm] [ERROR] [bridge] connection failed
  */
 export function createModuleLogger(module) {
+  const cleanModule = redactLogLabel(module || "unknown");
+  const cleanMessage = (msg) => formatLogArgs([msg], { homeDir: os.homedir() });
   const info = (msg) => {
-    console.log(`[${module}] ${msg}`);
-    _instance?.log(module, msg);
+    const cleaned = cleanMessage(msg);
+    console.log(`[${cleanModule}] ${cleaned}`);
+    _instance?.log(cleanModule, cleaned);
   };
   return {
     log: info,
     info,
     warn(msg) {
-      console.warn(`[${module}] ${msg}`);
-      _instance?.warn(module, msg);
+      const cleaned = cleanMessage(msg);
+      console.warn(`[${cleanModule}] ${cleaned}`);
+      _instance?.warn(cleanModule, cleaned);
     },
     error(msg) {
-      console.error(`[${module}] ${msg}`);
-      _instance?.error(module, msg);
+      const cleaned = cleanMessage(msg);
+      console.error(`[${cleanModule}] ${cleaned}`);
+      _instance?.error(cleanModule, cleaned);
     },
   };
 }

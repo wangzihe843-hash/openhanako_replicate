@@ -6892,11 +6892,16 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/bridge/bridge-manager.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "server/index.ts",
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by lib/debug-log.ts (import-statement); lib/nonfatal-error.ts (import-statement); lib/tools/browser-action-log.ts (import-statement); +3 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by lib/debug-log.ts (import-statement); lib/nonfatal-error.ts (import-statement); lib/tools/browser-action-log.ts (import-statement); +4 more importer(s)."
     },
     {
       "path": "lib/loop/alarm-service.ts",

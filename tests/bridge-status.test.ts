@@ -28,8 +28,80 @@ vi.mock("../lib/debug-log.js", () => ({
 }));
 
 import { BridgeManager } from "../lib/bridge/bridge-manager.ts";
+import { Hono } from "hono";
+import { createBridgeRoute } from "../server/routes/bridge.ts";
 
 describe("BridgeManager platform status", () => {
+  it("sanitizes startup/config errors and defensive status reads while retaining error identity", () => {
+    createTelegramAdapter.mockReset();
+    const cause = Object.assign(new TypeError("ticket=fixtureCause X-Auth-Token=SYN_HEADER_CAUSE"), { code: "ECONNRESET" });
+    const error = Object.assign(new Error("appSecret=fixtureStart", { cause }), { code: 0, httpStatus: 503, stage: "connect" });
+    createTelegramAdapter.mockImplementation(() => { throw error; });
+    const engine = { hanakoHome: os.tmpdir(), agent: null, getAgent: () => null };
+    const hub = { eventBus: { emit: vi.fn() } };
+    const bm = new BridgeManager({ engine, hub });
+    bm.startPlatform("telegram", { token: "fixtureInput" }, "hana");
+    bm._setPlatformConfigError("qq", "hana", error);
+    const state = bm.getStatus("hana");
+    for (const platform of ["telegram", "qq"]) {
+      expect(state[platform].error).not.toMatch(/fixtureStart|fixtureCause|SYN_HEADER_CAUSE/);
+      expect(state[platform].error).toContain("ECONNRESET");
+      expect(state[platform].error).toContain('"code":0');
+      expect(state[platform].error).toContain('"httpStatus":503');
+    }
+    const entry = bm._platforms.get("qq:hana");
+    entry.error = "aes_key=fixtureLate";
+    expect(bm.getStatus("hana").qq.error).toBe("aes_key=[redacted]");
+    expect(entry.error).toBe("aes_key=fixtureLate");
+    bm._emitStatus("qq", "error", error, "hana");
+    expect(JSON.stringify(hub.eventBus.emit.mock.calls)).not.toMatch(/fixtureStart|fixtureCause|fixtureLate|SYN_HEADER_CAUSE/);
+    expect(bm.getStatus("other")).toEqual({});
+    expect(error.cause).toBe(cause);
+    expect(cause.code).toBe("ECONNRESET");
+    expect(error.code).toBe(0);
+    expect(error.message).toBe("appSecret=fixtureStart");
+    bm.stopAll();
+    createTelegramAdapter.mockReset();
+  });
+
+  it("redacts adapter errors in storage, events and the status route without changing credentials", async () => {
+    createWechatAdapter.mockReset();
+    createWechatAdapter.mockReturnValue({ stop: vi.fn() });
+    const agent = { id: "hana", config: { bridge: { wechat: { enabled: true } } } };
+    const engine = { hanakoHome: os.tmpdir(), agent: null, currentAgentId: "hana", getAgent: () => agent, getBridgeIndex: () => ({}) };
+    const hub = { eventBus: { emit: vi.fn() } };
+    const bm = new BridgeManager({ engine, hub });
+    const credentials = { botToken: "fixtureInputToken", hanaHome: os.tmpdir() };
+    bm.startPlatform("wechat", credentials, "hana");
+    const { onStatus, botToken } = createWechatAdapter.mock.calls[0][0];
+    expect(botToken).toBe(credentials.botToken);
+    const raw = 'HTTP 401 context_token=fixtureStatusSecret log_id=trace-123 retry_after=3 ' +
+      JSON.stringify({ detail: '{"aes_key":"fixtureNestedStatus"}' }) +
+      ' X-Api-Key: SYN_HEADER_STATUS; X-Access-Token=SYN_HEADER_ACCESS';
+    onStatus("error", raw);
+    const app = new Hono();
+    app.route("/api", createBridgeRoute(engine, bm));
+    const response = await app.request("/api/bridge/status?agentId=hana");
+    expect(response.status).toBe(200);
+    for (const output of [bm._platforms.get("wechat:hana"), bm.getStatus("hana"), hub.eventBus.emit.mock.calls, await response.json()]) {
+      const text = JSON.stringify(output);
+      expect(text).not.toMatch(/fixtureStatusSecret|fixtureNestedStatus|SYN_HEADER_/);
+      expect(text).toContain("HTTP 401");
+      expect(text).toContain("trace-123");
+    }
+    expect(raw).toContain("fixtureStatusSecret");
+    expect(credentials.botToken).toBe("fixtureInputToken");
+    const structured = { ["context_\u0000token"]: "fixtureStructuredStatus", code: 503,
+      headers: { "x-acs-dingtalk-access-token": "SYN_HEADER_STRUCTURED" } };
+    onStatus("error", structured);
+    expect(bm._platforms.get("wechat:hana").error).not.toMatch(/fixtureStructuredStatus|SYN_HEADER_STRUCTURED/);
+    expect(bm.getStatus("hana").wechat.error).toContain('"code":503');
+    expect(structured["context_\u0000token"]).toBe("fixtureStructuredStatus");
+    onStatus("connected", null);
+    expect(bm.getStatus("hana").wechat.error).toBeNull();
+    bm.stopAll();
+  });
+
   it("starts wechat in connecting state until the adapter reports readiness", () => {
     createTelegramAdapter.mockReset();
     createFeishuAdapter.mockReset();
