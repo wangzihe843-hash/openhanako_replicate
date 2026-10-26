@@ -318,10 +318,12 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
    * 进诊断消息）；只有幂等/可安全重复的调用允许 idempotent: true（发送类
    * 调用重试会重复发消息，QQ 侧没有客户端可控的去重保障）。
    */
-  async function apiRequest(method: any, path: any, body?: any, opts?: { stage: string; idempotent?: boolean }) {
+  async function apiRequest(method: string, path: string, body?: unknown, opts?: { stage: string; idempotent?: boolean; signal?: AbortSignal }) {
     const stage = opts?.stage;
     if (!stage) throw new Error(`QQ apiRequest [${path}] 缺少显式 stage 标识`);
+    opts?.signal?.throwIfAborted();
     const token = await getToken();
+    opts?.signal?.throwIfAborted();
     const res = await http.request({
       stage,
       url: `${API_BASE}${path}`,
@@ -332,8 +334,15 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       },
       body: body ? JSON.stringify(body) : undefined,
       idempotent: opts?.idempotent === true,
+      signal: opts?.signal,
     });
-    const text = await res.text().catch(() => "");
+    const text = await res.text().catch(() => {
+      // An unreadable upload confirmation is unknown, not an empty success.
+      if (stage.startsWith("upload_")) throw new QQApiError("QQ upload response body failed", { status: res.status, path });
+      opts?.signal?.throwIfAborted();
+      return "";
+    });
+    opts?.signal?.throwIfAborted();
     if (!res.ok) {
       let bizCode;
       let message = text;
@@ -740,11 +749,14 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       if (metadata.isGroup === true && fileType === QQ_FILE_TYPE.FILE) {
         throw new Error("QQ 群聊暂不开放文件类型发送，请改用单聊或发送图片/视频/语音");
       }
-      const uploadResult = await uploadQQLocalFile({ apiRequest, outboundHttp: http, chatId, filePath, fileType, metadata });
+      // Bind upload and send to one scope, including legacy calls without isGroup.
+      // An unknown response must not cause another upload/message in a new scope.
+      const localMetadata = { ...metadata, isGroup: metadata.isGroup === true };
+      const uploadResult = await uploadQQLocalFile({ apiRequest, outboundHttp: http, chatId, filePath, fileType, metadata: localMetadata });
       if (!uploadResult?.file_info) {
         throw new Error("QQ 本地文件上传成功但未返回 file_info");
       }
-      await sendRichMediaMessage(chatId, uploadResult.file_info, metadata);
+      await sendRichMediaMessage(chatId, uploadResult.file_info, localMetadata);
     },
 
     /** QQ 本地文件入口必须保留文件归属和 realpath 校验，不接受裸 buffer。 */

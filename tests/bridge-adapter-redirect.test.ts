@@ -54,7 +54,7 @@ describe("actual QQ and DingTalk adapters reject redirects", () => {
     const data = req.path.endsWith("getAppAccessToken") || req.path.includes("oauth2") ? { access_token: "SYNTHETIC_AUTH_TOKEN", accessToken: "SYNTHETIC_AUTH_TOKEN", expires_in: 7200, expireIn: 7200 }
       : req.path === "/gateway" ? { url: "wss://never-network.invalid" }
         : req.path.endsWith("/open") ? { endpoint: "wss://never-network.invalid", ticket: "SYNTHETIC_TICKET" }
-          : req.path.endsWith("/upload_prepare") ? { upload_id: "upload", block_size: 100, parts: [{ index: 1, presigned_url: loop.source + "/put" }] }
+          : req.path.endsWith("/upload_prepare") ? { upload_id: "upload", block_size: "100", parts: [{ index: 0, block_size: "20", presigned_url: loop.source + "/put" }] }
             : { file_info: "SYNTHETIC_FILE_INFO" };
     response.end(JSON.stringify(data));
   }

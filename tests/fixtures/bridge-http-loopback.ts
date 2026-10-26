@@ -11,6 +11,7 @@ export type CapturedBridgeRequest = {
   path: string;
   headers: http.IncomingHttpHeaders;
   body: string;
+  bodyBytes: Buffer;
   remoteAddress: string;
 };
 
@@ -22,9 +23,10 @@ export async function bridgeHttpLoopback() {
   let reply = (_request: CapturedBridgeRequest, response: http.ServerResponse) => { response.end("{}"); };
   function handler(target: CapturedBridgeRequest[], source = false) {
     return async (req: http.IncomingMessage, res: http.ServerResponse) => {
-      let body = "";
-      for await (const chunk of req) body += chunk;
-      const request = { method: req.method!, path: req.url!, headers: req.headers, body, remoteAddress: req.socket.remoteAddress! };
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      const bodyBytes = Buffer.concat(chunks);
+      const request = { method: req.method!, path: req.url!, headers: req.headers, body: bodyBytes.toString(), bodyBytes, remoteAddress: req.socket.remoteAddress! };
       target.push(request);
       if (source) reply(request, res);
       else { res.setHeader("Content-Type", "application/json"); res.end("{}"); }

@@ -83,12 +83,12 @@ describe("createQQAdapter media delivery", () => {
       if (href.includes("/upload_prepare")) {
         return jsonResponse({
           upload_id: "upload-1",
-          block_size: 5,
+          block_size: "5",
           parts: [
-            { index: 1, presigned_url: "https://cos.example.com/part-1" },
-            { index: 2, presigned_url: "https://cos.example.com/part-2" },
+            { index: 0, block_size: "5", presigned_url: "https://cos.example.com/part-0" },
+            { index: 1, block_size: "5", presigned_url: "https://cos.example.com/part-1" },
           ],
-          concurrency: 1,
+          upload_config: { concurrency: 1, retry_timeout: 300, retry_delay: 1 },
         });
       }
       if (href.includes("/upload_part_finish")) {
@@ -166,7 +166,7 @@ describe("createQQAdapter media delivery", () => {
     expect(JSON.parse(prepareCall[1].body)).toMatchObject({
       file_type: 4,
       file_name: "note.txt",
-      file_size: 10,
+      file_size: "10",
       md5: md5Hex("helloworld"),
       sha1: sha1Hex("helloworld"),
       md5_10m: md5Hex("helloworld"),
@@ -181,14 +181,14 @@ describe("createQQAdapter media delivery", () => {
     expect(partFinishCalls).toHaveLength(2);
     expect(JSON.parse(partFinishCalls[0][1].body)).toMatchObject({
       upload_id: "upload-1",
-      part_index: 1,
-      block_size: 5,
+      part_index: 0,
+      block_size: "5",
       md5: md5Hex("hello"),
     });
     expect(JSON.parse(partFinishCalls[1][1].body)).toMatchObject({
       upload_id: "upload-1",
-      part_index: 2,
-      block_size: 5,
+      part_index: 1,
+      block_size: "5",
       md5: md5Hex("world"),
     });
 
@@ -198,6 +198,7 @@ describe("createQQAdapter media delivery", () => {
       && JSON.parse(init.body).upload_id === "upload-1"
     );
     expect(completeCall).toBeTruthy();
+    expect(JSON.parse(completeCall[1].body)).toEqual({ upload_id: "upload-1", file_name: "note.txt", file_type: 4, srv_send_msg: false });
 
     const messageCall = (fetch as any).mock.calls.find(([url]: any) => String(url).includes("/v2/users/user-openid/messages"));
     expect(JSON.parse(messageCall[1].body)).toMatchObject({
@@ -410,6 +411,41 @@ describe("createQQAdapter media delivery", () => {
     });
     adapter.stop();
   });
+
+  it.each(["prepare-business", "finish-business", "finish-body", "merge-unknown", "merge-invalid", "merge-body", "message-unknown"])(
+    "never repeats a local upload or media message after %s, even without explicit scope",
+    async failure => {
+      const filePath = makeTempFile("image.png", "helloworld");
+      const mockedFetch = vi.mocked(fetch);
+      const original = mockedFetch.getMockImplementation()!;
+      mockedFetch.mockImplementation(async (url, init) => {
+        const endpoint = new URL(String(url)).pathname;
+        if ((failure === "prepare-business" && endpoint.endsWith("/upload_prepare"))
+          || (failure === "finish-business" && endpoint.endsWith("/upload_part_finish"))) {
+          return Response.json({ code: 850031, message: "synthetic rejected file" });
+        }
+        if (failure === "merge-invalid" && endpoint.endsWith("/files")) return Response.json({ file_info: 123 });
+        if ((failure === "finish-body" && endpoint.endsWith("/upload_part_finish"))
+          || (failure === "merge-body" && endpoint.endsWith("/files"))) {
+          const response = new Response("");
+          vi.spyOn(response, "text").mockRejectedValue(new TypeError("synthetic truncated response"));
+          return response;
+        }
+        if ((failure === "merge-unknown" && endpoint.endsWith("/files"))
+          || (failure === "message-unknown" && endpoint.endsWith("/messages"))) throw new TypeError("synthetic unknown outcome");
+        return original(url, init);
+      });
+      const adapter = createQQAdapter({ appID: "synthetic-id", appSecret: "synthetic-secret", agentId: "hana", onMessage: vi.fn(), onStatus: vi.fn(), dmGuildMap: undefined, onDmGuildDiscovered: undefined });
+      try {
+        await expect(adapter.sendMediaFile("synthetic-target", filePath, { kind: "image" })).rejects.toThrow();
+        const urls = mockedFetch.mock.calls.map(([url]) => String(url));
+        expect(urls.some(url => url.includes("/groups/"))).toBe(false);
+        expect(urls.filter(url => url.endsWith("/upload_prepare"))).toHaveLength(1);
+        expect(urls.filter(url => url.endsWith("/files"))).toHaveLength(failure.startsWith("prepare") || failure.startsWith("finish") ? 0 : 1);
+        expect(urls.filter(url => url.endsWith("/messages"))).toHaveLength(failure === "message-unknown" ? 1 : 0);
+      } finally { adapter.stop(); }
+    },
+  );
 
   it("sends QQ rich media replies with passive reply context", async () => {
     const adapter = createQQAdapter({

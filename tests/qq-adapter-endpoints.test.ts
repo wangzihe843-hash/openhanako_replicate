@@ -51,10 +51,10 @@ describe("QQ official endpoint and credential contracts", () => {
       }
       if (pathname === "/gateway") return Response.json({ url: GATEWAY_URL });
       if (pathname.endsWith("/upload_prepare")) {
-        // Preserve the existing upload fixture/protocol here; zero-based parts are U11.
         return Response.json({
-          upload_id: "synthetic-upload", block_size: 4,
-          parts: [{ index: 1, presigned_url: STORAGE_URL }], concurrency: 1,
+          upload_id: "synthetic-upload", block_size: "4",
+          parts: [{ index: 0, block_size: "4", presigned_url: STORAGE_URL }],
+          upload_config: { concurrency: 1, retry_timeout: 300, retry_delay: 1 },
         });
       }
       if (pathname.endsWith("/files")) return Response.json({ file_info: "synthetic-file-info" });
