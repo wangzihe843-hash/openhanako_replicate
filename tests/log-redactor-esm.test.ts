@@ -21,6 +21,164 @@ describe("ESM log redaction", () => {
   });
 });
 
+const ciPathTail = "work/openhanako_replicate/openhanako_replicate/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11";
+describe.each([["TS", esm], ["CJS", cjs]] as const)("%s path redaction idempotence", (_name, api) => {
+  it.each([
+    "/Users/runner/" + ciPathTail,
+    "file:///Users/runner/" + ciPathTail,
+    "/home/runner/" + ciPathTail,
+    "file:///home/runner/" + ciPathTail,
+    "C:/Users/runner/" + ciPathTail,
+    "file:///C:/Users/runner/" + ciPathTail,
+    "C:\\Users\\runner\\" + ciPathTail.replaceAll("/", "\\"),
+    "D:/a/" + ciPathTail,
+    "file:///D:/a/" + ciPathTail,
+    "file:///Users/[user]/" + ciPathTail,
+  ])("keeps redacted path boundaries stable: %s", input => {
+    const once = api.redactLogText(input);
+    expect(api.redactLogText(once)).toBe(once);
+    expect(api.redactLogText(api.redactLogText(once))).toBe(once);
+    expect(once).not.toMatch(/(?:Users|home)[/\\]runner[/\\]/);
+    expect(once).toContain(input.includes("\\") ? "@vitest\\runner\\dist\\chunk-artifact.js:302:11" : "@vitest/runner/dist/chunk-artifact.js:302:11");
+    expect(once).not.toContain("[user][token]");
+  });
+
+  it.each([
+    ["/Users/runner/" + ciPathTail, { homeDir: "/Users/runner" }, "~/"],
+    ["file:///Users/runner/" + ciPathTail, { homeDir: "/Users/runner" }, "file://~/"],
+    ["/build/private-root/" + ciPathTail, { extraPaths: ["/build/private-root"] }, "[path]/"],
+  ] as const)("keeps configured path replacement delimiters: %s", (input, options, prefix) => {
+    const config = { ...options, ...("extraPaths" in options ? { extraPaths: [...options.extraPaths] } : {}) };
+    const once = api.redactLogText(input, config);
+    expect(once).toContain(prefix);
+    expect(once).toContain("@vitest/runner/dist/chunk-artifact.js:302:11");
+    expect(api.redactLogText(once, config)).toBe(once);
+  });
+
+  it("does not reinterpret canonical markers or trust a marker prefix as a username", () => {
+    const canonical = "file:///Users/[user]/[token]/@vitest/runner/dist/chunk-artifact.js:302:11";
+    expect(api.redactLogText(canonical)).toBe(canonical);
+    const raw = "/Users/[user]synthetic-person/private.txt";
+    expect(api.redactLogText(raw)).not.toContain("synthetic-person");
+    const legacy = "file:///Users/[user][token]@vitest/runner/dist/chunk-artifact.js:302:11";
+    const once = api.redactLogText(legacy);
+    expect(api.redactLogText(once)).toBe(once);
+  });
+
+  it("does not turn repeated path separators into a new token on the next pass", () => {
+    for (const root of ["file:///Users/runner/", "/home/runner/", "file:///C:/Users/runner/"]) {
+      for (const count of [2, 39, 40, 80]) {
+        for (const body of ["", "openhanako_replicate/".repeat(3), "A".repeat(45)]) {
+          const input = root + "/".repeat(count) + body + "@vitest/runner/dist/chunk-artifact.js:302:11";
+          const once = api.redactLogText(input);
+          expect(api.redactLogText(once), input).toBe(once);
+          expect(once).toContain("@vitest/runner/dist/chunk-artifact.js:302:11");
+        }
+      }
+    }
+  });
+
+  it("still hides unlabelled random/base64 values and complete named credentials", () => {
+    const token = "aB7_".repeat(16);
+    for (const value of [token, `/${token}`, `${token}/`, `//${token}//`, "/".repeat(80)]) {
+      const once = api.redactLogText(`opaque ${value}`);
+      expect(once).not.toContain(value);
+      expect(once).toContain("[token]");
+      expect(api.redactLogText(once)).toBe(once);
+      expect(api.redactLogText(`access_token=${value}`)).toBe("access_token=[redacted]");
+    }
+  });
+
+  it("keeps synthetic CI stacks and nested signed URLs stable through Error causes and JSON", () => {
+    const media = "https://novac2c.cdn.weixin.qq.com/media?opaque=z7";
+    const wrapped = "https://diagnostic.example.com/error?detail=" + encodeURIComponent(media);
+    const cause = new Error(wrapped);
+    cause.stack = `Error: ${wrapped}\n    at file:///Users/runner/${ciPathTail}`;
+    const error = new AggregateError([cause], "upload failed", { cause });
+    error.stack = `Error: ${wrapped}\n    at file:///C:/Users/runner/${ciPathTail}`;
+    const source = cause.stack;
+    for (const input of [error, JSON.stringify({ stack: cause.stack }), JSON.stringify({ detail: JSON.stringify({ stack: cause.stack }) })]) {
+      const once = api.redactLogText(input);
+      expect(once).not.toContain("z7");
+      expect(once).toContain("chunk-artifact.js:302:11");
+      expect(api.redactLogText(once)).toBe(once);
+    }
+    expect(cause.stack).toBe(source);
+    expect(cause.message).toBe(wrapped);
+  });
+});
+
+// Preserve natural V8 stacks as well as deterministic cross-platform paths.
+// A second serialization pass must not consume a JSON escape as URL content.
+describe.each([["TS", esm], ["CJS", cjs]] as const)("%s serialized diagnostic idempotence", (_name, api) => {
+  const signed = "https://novac2c.cdn.weixin.qq.com/media?opaque=short-SYNTHETIC-Z9";
+  const wrapped = "https://diagnostic.example.invalid/error?detail=" + encodeURIComponent(signed);
+  it.each([
+    signed, wrapped, encodeURIComponent(signed), encodeURIComponent(encodeURIComponent(wrapped)),
+    "https://novac2c.cdn.weixin.qq.com/[redacted]",
+    "https://example.invalid/media?sig=short-SYNTHETIC-Z9&version=3",
+    "https://api.telegram.org/file/bot123:short-SYNTHETIC-Z9/file.png",
+  ])("keeps natural Error causes stable without rewriting their stacks: %s", message => {
+    const cause = new Error(message);
+    const error = new AggregateError([cause], "upload failed", { cause });
+    const original = cause.stack;
+    const once = api.redactLogText(error);
+    expect(once).not.toContain("short-SYNTHETIC-Z9");
+    expect(api.redactLogText(once)).toBe(once);
+    expect(api.redactLogText(api.redactLogText(once))).toBe(once);
+    const cleaned = JSON.parse(once);
+    expect(cleaned.cause.stack).toContain("\n");
+    expect(cleaned.cause.stack).toContain("log-redactor-esm.test.ts:");
+    expect(cleaned.errors[0].stack).toBe(cleaned.cause.stack);
+    expect(cause.stack).toBe(original);
+    expect(cause.message).toBe(message);
+  });
+
+  it("preserves JSON escape boundaries with media URLs and long stack paths together", () => {
+    for (const suffix of ["\n", "\r\n", "\t", '\\continued', '"quoted"']) {
+      for (const url of [signed, wrapped]) {
+        for (const stackPath of ["file:///Users/runner/" + ciPathTail, "C:\\Users\\runner\\" + ciPathTail.replaceAll("/", "\\")]) {
+          const detail = { stack: `Error: ${url}${suffix} at ${stackPath}`, httpStatus: 503, log_id: "local-123" };
+          for (const input of [JSON.stringify(detail), JSON.stringify({ detail: JSON.stringify(detail) }), `HTTP 503 ${JSON.stringify(detail)} retry_after=3`]) {
+            const once = api.redactLogText(input);
+            expect(once).not.toContain("short-SYNTHETIC-Z9");
+            expect(once).toContain("chunk-artifact.js:302:11");
+            expect(once).toContain("local-123");
+            expect(api.redactLogText(once)).toBe(once);
+            expect(api.redactLogText(api.redactLogText(once))).toBe(once);
+          }
+        }
+      }
+    }
+  });
+
+  it("keeps credential assignment context around escaped strings and encoded keys", () => {
+    for (const key of ["token", "upload_full_url", "X-Api-Key", "context_token", "appSecret", "aes_key"]) {
+      const plain = JSON.stringify({ [key]: "short-Z9\ncontinued", safe: "ordinary\nline", status: 503 });
+      const encodedKey = plain.replace(key, key.replace(/./g, char => "\\u" + char.charCodeAt(0).toString(16).padStart(4, "0")));
+      for (const input of [plain, encodedKey, `HTTP 503 ${plain}`, JSON.stringify({ detail: plain })]) {
+        const once = api.redactLogText(input);
+        expect(once).not.toMatch(/short-Z9|continued/);
+        expect(once).toContain("503");
+        expect(once).toContain("ordinary");
+        expect(api.redactLogText(once)).toBe(once);
+      }
+    }
+  });
+
+  it("does not mistake caller supplied marker text for a protected literal", () => {
+    const markerText = Array.from({ length: 32 }, (_, index) => `\uE000${index}\uE001`).join(" ");
+    for (const fake of [markerText, markerText.replaceAll("\uE000", "\uE000\u0000")]) {
+      const input = JSON.stringify({ fake, stack: `Error: ${signed}\n at /tmp/fixture.js:12:3`, token: "short-Z9\ncontinued" });
+      const once = api.redactLogText(input);
+      expect(JSON.parse(once).fake).toBe(markerText);
+      expect(JSON.parse(once).stack).toBe("Error: https://novac2c.cdn.weixin.qq.com/[redacted]\n at /tmp/fixture.js:12:3");
+      expect(JSON.parse(once).token).toBe("[redacted]");
+      expect(api.redactLogText(once)).toBe(once);
+    }
+  });
+});
+
 // All credentials below are short, non-working synthetic sentinels. Checking
 // both runtime exports prevents a server-only fix from missing Electron main.
 describe.each([["TS", esm], ["CJS", cjs]] as const)("%s diagnostic boundaries", (_name, api) => {

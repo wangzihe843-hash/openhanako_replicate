@@ -12,7 +12,9 @@ const CREDENTIAL_KEY_PATTERN = "api[_-]?key|secret[_-]?key|secret|access[_-]?tok
 // are ordinary diagnostics, not credential headers.
 const MEDIA_URL_KEY_PATTERN = "(?:upload[_-]?)?full[_-]?url";
 const MEDIA_URL_ASSIGN_PREFIX_RE = new RegExp(`^["']?(?:${MEDIA_URL_KEY_PATTERN})["']?\\s*[:=]`, "i");
-const CHANNEL_KEY_PATTERN = "app[_-]?secret|app[_-]?key|context[_-]?token|aes[_-]?key|encrypt(?:ed)?[_-]?query[_-]?param|upload[_-]?param|download[_-]?param|(?:typing[_-]?)?ticket|verify[_-]?code|private[_-]?key|credential(?:s)?|filekey|" + MEDIA_URL_KEY_PATTERN;
+// Signed URL authentication values need explicit key classification; encoded
+// signatures may not match the fallback long-random-value heuristic.
+const CHANNEL_KEY_PATTERN = "app[_-]?secret|app[_-]?key|context[_-]?token|aes[_-]?key|encrypt(?:ed)?[_-]?query[_-]?param|upload[_-]?param|download[_-]?param|(?:typing[_-]?)?ticket|verify[_-]?code|private[_-]?key|credential(?:s)?|filekey|x-amz-signature|" + MEDIA_URL_KEY_PATTERN;
 const SECRET_KEY_PATTERN = `${CREDENTIAL_KEY_PATTERN}|${CHANNEL_KEY_PATTERN}`;
 const CREDENTIAL_HEADER_KEY_RE = new RegExp("^[!#$%&'*+.^_`|~0-9A-Za-z-]+-(?:" + CREDENTIAL_KEY_PATTERN + ")$", "i");
 const SECRET_ASSIGN_RE = new RegExp(`((?:(?<!\\w)["']?(?:${CREDENTIAL_KEY_PATTERN})|(?<![\\w-])["']?(?:${CHANNEL_KEY_PATTERN}))["']?\\s*[:=]\\s*)("(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|\\[redacted\\]|[^\\s,;"'\\]}&#]+)`, "gi");
@@ -56,6 +58,23 @@ function redactText(text, options, encodingDepth) {
   text = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
   // eslint-disable-next-line no-control-regex
   text = text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+  // Escaped JSON string values were already sanitized above. Protect their
+  // serialized form from the outer text rules: a URL must not consume \n or
+  // another JSON escape and change a previously redacted Error.stack.
+  // Keep keys visible so surrounding credential assignments still mask values.
+  // Reserve input markers after control normalization; only markers created by
+  // this call can be restored. No recursion or decoding depth is added.
+  const literals = new Map();
+  const reserved = new Set(text.match(/\uE000\d+\uE001/g) || []);
+  let literalId = 0;
+  text = text.replace(/"(?:\\.|[^"\\])*"(\s*:)?/g, (literal, keySuffix) => {
+    if (keySuffix || !literal.includes("\\")) return literal;
+    try { JSON.parse(literal); } catch { return literal; }
+    let marker;
+    do { marker = `\uE000${literalId++}\uE001`; } while (reserved.has(marker));
+    literals.set(marker, literal);
+    return `"${marker}"`;
+  });
   text = redactKnownPaths(text, options);
 
   text = text.replace(/data:([^;,]+);base64,[A-Za-z0-9+/=]+/gi, "data:$1;base64,[redacted]");
@@ -77,12 +96,21 @@ function redactText(text, options, encodingDepth) {
   text = text.replace(CN_ID_CARD_RE, (match, offset) => isCorrelationId(text, offset) ? match : "[id_card]");
   text = text.replace(SSN_RE, (match, offset) => isCorrelationId(text, offset) ? match : "[ssn]");
   text = text.replace(EMAIL_RE, "[email]");
-  text = text.replace(LONG_RANDOM_RE, (match, prefix, _token, offset) => {
+  text = text.replace(LONG_RANDOM_RE, (match, prefix, token, offset) => {
     // Known correlation IDs locate a request; do not mistake them for tokens.
-    return isCorrelationId(text, offset + prefix.length) ? match : `${prefix}[token]`;
+    if (isCorrelationId(text, offset + prefix.length)) return match;
+    // A long slash-separated path can also match this opaque-token heuristic.
+    // Preserve its delimiters so [user]/[token]/@scope stays a path: removing
+    // the slashes makes the next pass treat both markers as one username.
+    // The token body is still hidden; no path or marker prefix bypasses masking.
+    // Cap runs below the token threshold so replacement separators cannot
+    // become another opaque token on a later pass (including all-slash input).
+    const leading = token.match(/^\/{1,3}/)?.[0] || "";
+    const trailing = token.match(/\/{1,3}$/)?.[0] || "";
+    return `${prefix}${leading}[token]${trailing}`;
   });
 
-  return text;
+  return text.replace(/"(\uE000\d+\uE001)"/g, (literal, marker) => literals.get(marker) ?? literal);
 }
 
 // Inspect nested URL data, not just URLSearchParams values: an unescaped & or
