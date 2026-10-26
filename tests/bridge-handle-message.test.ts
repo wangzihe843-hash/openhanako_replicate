@@ -1416,6 +1416,112 @@ describe("BridgeManager._handleMessage", () => {
       expect(bm._processing.has("fs_dm_owner123@hana")).toBe(false);
     });
 
+    it.each(["start", "update", "finish"])("does not retry the same Feishu oversized %s body as a fallback", async (stage) => {
+      const { bm } = createMocks();
+      const tooLarge = Object.assign(new Error("synthetic oversized envelope"), { code: "FEISHU_MESSAGE_TOO_LARGE" });
+      const oversized = "中".repeat(15_000);
+      const adapter = {
+        startStreamReply: vi.fn().mockResolvedValue({ messageId: "om_stream_001" }),
+        updateStreamReply: vi.fn().mockResolvedValue(undefined),
+        finishStreamReply: vi.fn().mockResolvedValue(undefined),
+        sendReply: vi.fn().mockResolvedValue(undefined),
+      };
+      if (stage === "start") adapter.startStreamReply.mockRejectedValue(tooLarge);
+      else if (stage === "update") adapter.updateStreamReply.mockRejectedValue(tooLarge);
+      else adapter.finishStreamReply.mockRejectedValue(tooLarge);
+      const delivery = bm._createEditMessageStreamDelivery({
+        adapter, chatId: "oc_chat", platform: "feishu", context: {}, capability: { minIntervalMs: 0, maxChars: 0 },
+      });
+      if (stage === "update") await delivery.startReceipt("working");
+      if (stage !== "finish") {
+        delivery.onDelta(oversized, oversized);
+        // Already queued snapshots must stop once the earlier size check fails.
+        delivery.onDelta(`${oversized}more`, `${oversized}more`);
+      } else {
+        await delivery.startReceipt("working");
+      }
+
+      await expect(delivery.finish(oversized)).rejects.toBe(tooLarge);
+
+      expect(adapter.sendReply).not.toHaveBeenCalled();
+      expect(adapter.startStreamReply).toHaveBeenCalledTimes(1);
+      expect(adapter.updateStreamReply).toHaveBeenCalledTimes(stage === "update" ? 1 : 0);
+      expect(adapter.finishStreamReply).toHaveBeenCalledTimes(stage === "finish" ? 1 : 0);
+    });
+
+    it.each(["start", "update"])("accepts a different short final after an oversized Feishu %s snapshot", async (stage) => {
+      const { bm } = createMocks();
+      const tooLarge = Object.assign(new Error("synthetic oversized envelope"), { code: "FEISHU_MESSAGE_TOO_LARGE" });
+      const oversized = "中".repeat(15_000);
+      const adapter = {
+        startStreamReply: vi.fn().mockResolvedValue({ messageId: "om_stream_001" }),
+        updateStreamReply: vi.fn().mockRejectedValue(tooLarge),
+        finishStreamReply: vi.fn().mockResolvedValue(undefined),
+        sendReply: vi.fn().mockResolvedValue(undefined),
+      };
+      const delivery = bm._createEditMessageStreamDelivery({
+        adapter, chatId: "oc_chat", platform: "feishu", context: {}, capability: { minIntervalMs: 0, maxChars: 0 },
+      });
+      if (stage === "start") adapter.startStreamReply.mockRejectedValueOnce(tooLarge);
+      else await delivery.startReceipt("working");
+      delivery.onDelta(oversized, oversized);
+
+      await expect(delivery.finish("short final")).resolves.toEqual([]);
+
+      expect(adapter.sendReply).not.toHaveBeenCalled();
+      if (stage === "start") expect(adapter.startStreamReply).toHaveBeenLastCalledWith("oc_chat", "short final", {});
+      else expect(adapter.finishStreamReply).toHaveBeenCalledExactlyOnceWith("oc_chat", { messageId: "om_stream_001" }, "short final", {});
+    });
+
+    it("keeps ordinary fallback behavior for the same error code on another platform", async () => {
+      const { bm } = createMocks();
+      const error = Object.assign(new Error("other platform error"), { code: "FEISHU_MESSAGE_TOO_LARGE" });
+      const adapter = {
+        startStreamReply: vi.fn().mockRejectedValue(error),
+        updateStreamReply: vi.fn(), finishStreamReply: vi.fn(), sendReply: vi.fn().mockResolvedValue(undefined),
+      };
+      const delivery = bm._createEditMessageStreamDelivery({
+        adapter, chatId: "chat", platform: "telegram", context: {}, capability: { minIntervalMs: 0, maxChars: 0 },
+      });
+
+      await delivery.finish("body");
+
+      expect(adapter.sendReply).toHaveBeenCalledExactlyOnceWith("chat", "body");
+    });
+
+    it.each(["edit_message", "batch"])("shows one short failure notice for an oversized ordinary Feishu %s reply without recording delivery", async (mode) => {
+      const { bm, hub, engine } = createMocks();
+      engine.getBridgeReceiptEnabled.mockReturnValue(false);
+      const tooLarge = Object.assign(new Error("synthetic oversized envelope"), { code: "FEISHU_MESSAGE_TOO_LARGE" });
+      const oversized = "中".repeat(15_000);
+      const feishuAdapter = {
+        streamingCapabilities: mode === "edit_message" ? { mode, scopes: ["dm"], minIntervalMs: 0, maxChars: 0 } : undefined,
+        startStreamReply: vi.fn().mockRejectedValue(tooLarge),
+        updateStreamReply: vi.fn(), finishStreamReply: vi.fn(),
+        sendReply: vi.fn(async (_chat, text) => { if (text === oversized) throw tooLarge; }),
+        stop: vi.fn(),
+      };
+      bm._platforms.set("feishu:hana", { adapter: feishuAdapter, status: "connected", agentId: "hana", platform: "feishu" });
+      const push = vi.spyOn(bm, "_pushMessage");
+      hub.send.mockImplementation(async (_text, opts) => {
+        opts.onDelta?.(oversized, oversized);
+        return bridgeReply(oversized);
+      });
+
+      bm._handleMessage("feishu", {
+        sessionKey: "fs_dm_owner123@hana", text: "hi", userId: "owner123", chatId: "oc_chat", agentId: "hana",
+      });
+      await vi.advanceTimersByTimeAsync(2100);
+      await vi.waitFor(() => expect(bm._processing.has("fs_dm_owner123@hana")).toBe(false));
+
+      const notices = feishuAdapter.sendReply.mock.calls.filter(([, text]) => text !== oversized);
+      expect(notices).toHaveLength(1);
+      expect(notices[0][1]).not.toContain("synthetic");
+      expect(notices[0][1].length).toBeLessThan(100);
+      expect(feishuAdapter.sendReply.mock.calls.filter(([, text]) => text === oversized)).toHaveLength(mode === "batch" ? 1 : 0);
+      expect(push.mock.calls.some(([entry]) => entry.direction === "out")).toBe(false);
+    });
+
     it("logs Feishu edit-message update failures and falls back to a normal message", async () => {
       const { bm, hub, engine } = createMocks();
       engine.getBridgeReceiptEnabled.mockReturnValue(false);

@@ -47,6 +47,10 @@ function cleanBridgeMetadataString(value) {
   return text || null;
 }
 
+function isFeishuMessageTooLargeError(platform, err) {
+  return platform === "feishu" && err?.code === "FEISHU_MESSAGE_TOO_LARGE";
+}
+
 function canonicalCredentialValue(cfg, canonicalKey, legacyKey) {
   if (!cfg || typeof cfg !== "object") return "";
   if (Object.prototype.hasOwnProperty.call(cfg, canonicalKey)) {
@@ -1750,6 +1754,7 @@ export class BridgeManager {
     let failed = false;
     let chain = Promise.resolve();
     let createdWithoutMessageId = false;
+    let sizeFailure: { text: string; err: unknown } | null = null;
 
     const rememberState = (state) => {
       streamState = state || null;
@@ -1770,6 +1775,8 @@ export class BridgeManager {
       lastUpdateTs = now;
       lastSentText = next;
       chain = chain.then(async () => {
+        // These snapshots may have been queued before an earlier size rejection.
+        if (sizeFailure) return;
         const stage = !streamState ? "start" : "update";
         try {
           if (!streamState) {
@@ -1779,6 +1786,7 @@ export class BridgeManager {
           }
         } catch (err) {
           failed = true;
+          if (isFeishuMessageTooLargeError(platform, err)) sizeFailure = { text: next, err };
           this._recordStreamDeliveryFailure({ platform, mode, chatId, stage, err });
         }
       });
@@ -1796,6 +1804,7 @@ export class BridgeManager {
         try {
           await startMessage(next);
         } catch (err) {
+          if (isFeishuMessageTooLargeError(platform, err)) sizeFailure = { text: next, err };
           this._recordStreamDeliveryFailure({
             platform,
             mode,
@@ -1834,7 +1843,10 @@ export class BridgeManager {
           return mediaUrls;
         }
         const finalText = this._truncateStreamText(textOnly, maxChars);
-        if (!failed) {
+        if (sizeFailure?.text === finalText) throw sizeFailure.err;
+        // A different final can be shorter or render differently; let the adapter
+        // validate it once instead of reusing a rejected snapshot or dropping it.
+        if (!failed || sizeFailure) {
           try {
             if (!streamState) {
               await startMessage(finalText);
@@ -1845,6 +1857,7 @@ export class BridgeManager {
           } catch (err) {
             failed = true;
             this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: !streamState ? "finish_start" : "finish", err });
+            if (isFeishuMessageTooLargeError(platform, err)) throw err;
           }
         }
         await this._sendStreamFallbackReply({ adapter, chatId, text: textOnly, context, platform, mode, stage: "finish" });
@@ -2169,6 +2182,11 @@ export class BridgeManager {
       if (!isAbortLikeError(err)) {
         log.error(`${platform} 消息处理失败: ${err.message}`);
         debugLog()?.error("bridge", `${platform} message handling failed: ${err.message}`);
+      }
+      if (binding.isCurrent() && isFeishuMessageTooLargeError(platform, err)) {
+        try { await this._sendAdapterReply(binding.adapter, chatId, t("bridge.replyFailed"), replyContext); } catch {
+          // The existing short failure notice is best effort.
+        }
       }
     } finally {
       try { await receiptDelivery?.stop?.(); } catch {}

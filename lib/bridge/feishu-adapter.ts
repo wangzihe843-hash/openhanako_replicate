@@ -55,7 +55,9 @@ export const FEISHU_STREAMING_CAPABILITIES = createStreamingCapabilities({
   mode: "edit_message",
   scopes: ["dm"],
   minIntervalMs: 500,
-  maxChars: 150_000,
+  // Ordinary messages are rejected by the final JSON byte budget below.
+  // Preserve the whole snapshot so the manager cannot silently truncate it.
+  maxChars: 0,
   source: "https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message/update",
 });
 
@@ -77,7 +79,34 @@ const FEISHU_WS_INITIAL_MAX_CHECKS = 20;
 const FEISHU_WS_HEALTH_INTERVAL_MS = 30_000;
 const FEISHU_WS_DISCONNECTED_ERROR = "WebSocket disconnected";
 const FEISHU_STREAM_CARD_TRANSITION_TEXT = "已切换为表格卡片。";
+// Local conservative budget for the documented 30 KB post/card request body.
+const FEISHU_MESSAGE_MAX_BYTES = 30_000;
 export const DEFAULT_FEISHU_REGION = "feishu_cn";
+
+type FeishuMessageOperation = "create" | "update" | "patch";
+
+class FeishuMessageTooLargeError extends Error {
+  readonly code = "FEISHU_MESSAGE_TOO_LARGE";
+  readonly maxBytes = FEISHU_MESSAGE_MAX_BYTES;
+  readonly operation: FeishuMessageOperation;
+  readonly actualBytes: number;
+
+  constructor(operation: FeishuMessageOperation, actualBytes: number) {
+    super(`飞书消息超出请求体上限：${actualBytes} UTF-8 bytes > ${FEISHU_MESSAGE_MAX_BYTES} bytes (${operation})`);
+    this.name = "FeishuMessageTooLargeError";
+    this.operation = operation;
+    this.actualBytes = actualBytes;
+  }
+}
+
+function assertFeishuMessageBody(operation: FeishuMessageOperation, data: object) {
+  // content is itself JSON encoded; include its second escaping pass and the
+  // actual SDK body envelope, but not path/query/headers outside the JSON body.
+  const actualBytes = Buffer.byteLength(JSON.stringify(data), "utf8");
+  if (actualBytes > FEISHU_MESSAGE_MAX_BYTES) {
+    throw new FeishuMessageTooLargeError(operation, actualBytes);
+  }
+}
 
 const FEISHU_DOMAIN_BY_REGION = Object.freeze({
   feishu_cn: {
@@ -702,8 +731,10 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
   }
 
   async function createOutboundMessage(chatId: string, rendered: FeishuOutboundMessage) {
+    const payload = feishuOutboundCreatePayload(chatId, rendered);
+    assertFeishuMessageBody("create", payload.data);
     return callFeishu("消息发送", () => (
-      client.im.message.create(feishuOutboundCreatePayload(chatId, rendered))
+      client.im.message.create(payload)
     ));
   }
 
@@ -757,19 +788,24 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
   }
 
   async function updateOutboundMessage(messageId: string, rendered: FeishuOutboundMessage) {
+    if (rendered.kind === "interactive") {
+      const payload = { path: { message_id: messageId }, data: { content: rendered.content } };
+      assertFeishuMessageBody("patch", payload.data);
+      return callFeishu("消息更新", () => client.im.message.patch(payload));
+    }
+    const payload = feishuOutboundUpdatePayload(messageId, rendered);
+    assertFeishuMessageBody("update", payload.data);
     return callFeishu("消息更新", () => (
-      rendered.kind === "interactive"
-        ? client.im.message.patch({
-          path: { message_id: messageId },
-          data: { content: rendered.content },
-        })
-        : client.im.message.update(feishuOutboundUpdatePayload(messageId, rendered))
+      client.im.message.update(payload)
     ));
   }
 
   async function transitionStreamToInteractiveCard(chatId: string, state: FeishuStreamState, rendered: FeishuOutboundMessage) {
     const previousMessageId = state.messageId;
     if (!previousMessageId) throw new Error("Feishu stream card transition requires messageId");
+    // Do not overwrite the delivered post with a transition notice if the new
+    // card will be rejected before its create request can be sent.
+    assertFeishuMessageBody("create", feishuOutboundCreatePayload(chatId, rendered).data);
     await updateOutboundMessage(previousMessageId, {
       kind: "post",
       msgType: "post",
@@ -858,9 +894,9 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
         elementId: FEISHU_CARDKIT_STREAM_ELEMENT_ID,
         sequence: 1,
       };
-      await callFeishu("CardKit 卡片发送", () => client.im.message.create(
-        feishuCardInstanceMessagePayload(chatId, cardId),
-      ));
+      const messagePayload = feishuCardInstanceMessagePayload(chatId, cardId);
+      assertFeishuMessageBody("create", messagePayload.data);
+      await callFeishu("CardKit 卡片发送", () => client.im.message.create(messagePayload));
       await callFeishu("CardKit 流式设置", () => setCardKitStreamingMode(state, true));
       return state;
     },

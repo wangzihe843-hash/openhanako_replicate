@@ -964,7 +964,7 @@ describe("createFeishuAdapter", () => {
     expect(adapter.streamingCapabilities).toMatchObject({
       mode: "edit_message",
       scopes: ["dm"],
-      maxChars: 150_000,
+      maxChars: 0,
       renderer: "post",
       receiptMode: "fold_into_stream",
     });
