@@ -19,12 +19,69 @@ import { createMediaCapabilities } from "./media-capabilities.ts";
 import { BridgeHttpRedirectError, createBridgeOutboundHttp } from "./outbound-http.ts";
 import { QQApiError, QQ_FILE_TYPE, QQ_UPLOAD_SIZE_LIMITS, uploadQQLocalFile } from "./qq-local-upload.ts";
 import { createModuleLogger } from "../debug-log.ts";
+import { redactSecretsFromText } from "../secret-fingerprint.ts";
 
 const log = createModuleLogger("qq");
 
 const API_BASE = "https://api.bot.qq.com";
 const TOKEN_URL = "https://api.bot.qq.com/app/getAppAccessToken";
 const MAX_MSG_SIZE = 100_000;
+const HANDSHAKE_TIMEOUT_MS = 30_000;
+const MAX_RECONNECT_ATTEMPTS = 10;
+const RATE_LIMIT_DELAY_MS = 60_000;
+// Follow the per-code table (the prose below it is less specific):
+// https://bot.q.qq.com/wiki/develop/api-v2/dev-prepare/error-trace/websocket.html
+const TERMINAL_CLOSE_REASONS: Record<number, string> = {
+  4001: "无效 opcode，请检查协议实现",
+  4002: "无效 payload，请检查协议实现",
+  4010: "无效 shard，请检查分片配置",
+  4011: "分片容量不足，请检查分片配置",
+  4012: "无效 version，请检查协议版本",
+  4013: "无效 intent，请检查事件订阅配置",
+  4014: "intent 无权限，请检查事件订阅权限",
+  4914: "机器人已下架，请检查连接环境；仅允许沙箱",
+  4915: "机器人已封禁，请申请解封后再连接",
+};
+
+function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const onAbort = () => { cleanup(); reject(signal.reason); };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    promise.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+  });
+}
+
+async function readResponseText(response: Response, signal: AbortSignal): Promise<string> {
+  signal.throwIfAborted();
+  if (!response.body?.getReader) return withAbort(response.text(), signal);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await withAbort(reader.read(), signal);
+      signal.throwIfAborted();
+      if (done) return text + decoder.decode();
+      text += decoder.decode(value, { stream: true });
+    }
+  } catch (error) {
+    // Do not let a stalled transport's cleanup delay cancellation.
+    void reader.cancel().catch(() => {});
+    throw error;
+  } finally { reader.releaseLock(); }
+}
+
+function waitForSend(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const timer = setTimeout(() => { cleanup(); resolve(); }, ms);
+    const onAbort = () => { clearTimeout(timer); cleanup(); reject(signal.reason); };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+}
 const QQ_PLACEHOLDER_NAMES = new Set(["user"]);
 export const QQ_MEDIA_CAPABILITIES = createMediaCapabilities({
   platform: "qq",
@@ -110,6 +167,12 @@ function qqTargetType(metadata: Record<string, any> = {}) {
   if (metadata.isGroup === true || ctx.isGroup === true || metadata.targetScope === "group" || ctx.targetScope === "group") return "group";
   if (metadata.isGroup === false || ctx.isGroup === false || metadata.targetScope === "dm" || ctx.targetScope === "dm") return "user";
   return null;
+}
+
+function canTryNextTarget(error: unknown) {
+  // Only an explicit request/target rejection can authorize a scope probe.
+  // Lost responses, server errors, redirects and cancellation are never retries.
+  return error instanceof QQApiError && [400, 404].includes(error.status);
 }
 
 function cleanQQString(value) {
@@ -241,8 +304,28 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
   let stopped = false;
   let reconnectAttempts = 0;
   let heartbeatAckReceived = true;
-  let lastConnectedAt = 0;
+  const lifetime = new AbortController();
+  let connection = new AbortController();
+  let generation = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+  let disposeSocket: (() => void) | null = null;
+  let tokenFlight: { signal: AbortSignal; promise: Promise<string> } | null = null;
   let tokenRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  // In-memory replay suppression only; no durable delivery/exactly-once claim.
+  const recentEvents = new Map<string, number>();
+
+  function requestSignal(caller?: AbortSignal) {
+    lifetime.signal.throwIfAborted();
+    const signal = caller && caller !== connection.signal
+      ? AbortSignal.any([connection.signal, lifetime.signal, caller]) : connection.signal;
+    signal.throwIfAborted();
+    return signal;
+  }
+
+  function safeError(error: unknown) {
+    return redactSecretsFromText((error as Error)?.message || String(error), [appSecret, accessToken, sessionId, ws?.url]);
+  }
 
   const userGuildMap = new Map(Object.entries(dmGuildMap || {}));
   const passiveReplySeq = new Map();
@@ -280,7 +363,15 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
 
   // ── Token 管理 ──
 
-  async function refreshToken() {
+  function refreshToken(signal: AbortSignal): Promise<string> {
+    signal.throwIfAborted();
+    if (tokenFlight?.signal === signal) return tokenFlight.promise;
+    const flight = { signal, promise: fetchToken(signal).finally(() => { if (tokenFlight === flight) tokenFlight = null; }) };
+    tokenFlight = flight;
+    return flight.promise;
+  }
+
+  async function fetchToken(signal: AbortSignal) {
     // token 获取无副作用，允许有限重试（代理/网络抖动时自愈）
     const res = await http.request({
       stage: "token",
@@ -289,11 +380,13 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ appId: appID, clientSecret: appSecret }),
       idempotent: true,
+      signal,
     }).catch((err) => {
       if (err instanceof BridgeHttpRedirectError) clearInterval(tokenRefreshTimer);
       throw err;
     });
-    const data = await res.json();
+    const data = JSON.parse(await readResponseText(res, signal));
+    signal.throwIfAborted();
     if (!data.access_token) {
       throw new Error(`Failed to get access_token: ${JSON.stringify(data)}`);
     }
@@ -303,10 +396,11 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
     return accessToken;
   }
 
-  async function getToken() {
+  async function getToken(signal: AbortSignal) {
+    signal.throwIfAborted();
     // 提前 5 分钟刷新
     if (!accessToken || Date.now() > tokenExpiresAt - 5 * 60 * 1000) {
-      return refreshToken();
+      return refreshToken(signal);
     }
     return accessToken;
   }
@@ -321,9 +415,9 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
   async function apiRequest(method: string, path: string, body?: unknown, opts?: { stage: string; idempotent?: boolean; signal?: AbortSignal }) {
     const stage = opts?.stage;
     if (!stage) throw new Error(`QQ apiRequest [${path}] 缺少显式 stage 标识`);
-    opts?.signal?.throwIfAborted();
-    const token = await getToken();
-    opts?.signal?.throwIfAborted();
+    const signal = requestSignal(opts?.signal);
+    const token = await getToken(signal);
+    signal.throwIfAborted();
     const res = await http.request({
       stage,
       url: `${API_BASE}${path}`,
@@ -334,15 +428,13 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       },
       body: body ? JSON.stringify(body) : undefined,
       idempotent: opts?.idempotent === true,
-      signal: opts?.signal,
+      signal,
     });
-    const text = await res.text().catch(() => {
-      // An unreadable upload confirmation is unknown, not an empty success.
-      if (stage.startsWith("upload_")) throw new QQApiError("QQ upload response body failed", { status: res.status, path });
-      opts?.signal?.throwIfAborted();
-      return "";
+    const text = await readResponseText(res, signal).catch(() => {
+      signal.throwIfAborted();
+      throw new QQApiError(`QQ ${stage} response body failed`, { path });
     });
-    opts?.signal?.throwIfAborted();
+    signal.throwIfAborted();
     if (!res.ok) {
       let bizCode;
       let message = text;
@@ -370,96 +462,192 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
 
   // ── WebSocket ──
 
+  function clearHandshake() {
+    clearTimeout(handshakeTimer);
+    handshakeTimer = null;
+  }
+
+  function retireConnection() {
+    generation++;
+    clearHandshake();
+    stopHeartbeat();
+    connection.abort(new DOMException("QQ connection closed", "AbortError"));
+    disposeSocket?.();
+  }
+
+  function stop() {
+    if (stopped) return;
+    stopped = true;
+    lifetime.abort();
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    clearInterval(tokenRefreshTimer);
+    retireConnection();
+    onStatus?.("disconnected");
+  }
+
+  function failPermanently(message: string) {
+    stop();
+    onStatus?.("error", message);
+  }
+
+  function reconnect(reason: string, code?: number) {
+    if (stopped) return;
+    // 4004 is specified in the fixed official SDK (429a0f1), not the docs table.
+    if (code === 4004) { accessToken = null; tokenExpiresAt = 0; }
+    if (code === 4006 || code === 4007 || (code >= 4900 && code <= 4913)) {
+      sessionId = null;
+      lastSeq = null;
+    }
+    retireConnection();
+    if (TERMINAL_CLOSE_REASONS[code]) {
+      failPermanently(`QQ WebSocket ${code}: ${TERMINAL_CLOSE_REASONS[code]}`);
+      return;
+    }
+    scheduleReconnect(reason, code === 4008 ? RATE_LIMIT_DELAY_MS : undefined);
+  }
+
   async function connect() {
     if (stopped) return;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+    if (connection.signal.aborted) connection = new AbortController();
+    const signal = requestSignal();
+    const currentGeneration = ++generation;
+    const isCurrent = () => !stopped && !signal.aborted && currentGeneration === generation;
     try {
-      const token = await getToken();
-      const { url } = await apiRequest("GET", "/gateway", undefined, { stage: "gateway", idempotent: true });
+      const token = await getToken(signal);
+      if (!isCurrent()) return;
+      const { url } = await apiRequest("GET", "/gateway", undefined, { stage: "gateway", idempotent: true, signal });
+      if (!isCurrent()) return;
 
-      ws = new WebSocket(url, webSocketOptionsForUrl(url));
-
-      ws.on("open", () => {
-        debugLog()?.log("bridge", "[qq] WebSocket 已连接");
-        lastConnectedAt = Date.now();
-        reconnectAttempts = 0;
-      });
-
-      ws.on("message", (raw) => {
+      const socket = new WebSocket(url, { ...webSocketOptionsForUrl(url), handshakeTimeout: HANDSHAKE_TIMEOUT_MS });
+      ws = socket;
+      const isCurrentSocket = () => isCurrent() && ws === socket;
+      const cleanup = () => {
+        socket.removeListener?.("open", onOpen);
+        socket.removeListener?.("message", onMessageReceived);
+        socket.removeListener?.("close", onClose);
+        socket.removeListener?.("error", onError);
+      };
+      const dispose = () => {
+        if (ws === socket) ws = null;
+        if (disposeSocket === dispose) disposeSocket = null;
+        socket.removeListener?.("open", onOpen);
+        socket.removeListener?.("message", onMessageReceived);
+        // A terminated Upgrade can emit error asynchronously before close.
+        // Keep only guarded handlers until then; never leave an unhandled error.
+        if (socket.readyState === WebSocket.CLOSED) { cleanup(); return; }
+        try {
+          if (socket.terminate) socket.terminate();
+          else socket.close();
+        } catch { /* Old callbacks are still inert. */ }
+      };
+      disposeSocket = dispose;
+      let helloReceived = false;
+      const onOpen = () => {
+        if (isCurrentSocket()) debugLog()?.log("bridge", "[qq] WebSocket 已连接，等待鉴权");
+      };
+      const onMessageReceived = (raw) => {
+        if (!isCurrentSocket() || socket.readyState !== WebSocket.OPEN) return;
         let payload;
-        try { payload = JSON.parse(raw); } catch { return; }
-        handlePayload(payload, token);
-      });
-
-      ws.on("close", (code) => {
-        debugLog()?.log("bridge", `[qq] WebSocket 断开 (code: ${code})`);
-        stopHeartbeat();
-        if (!stopped) scheduleReconnect();
-      });
-
-      ws.on("error", (err) => {
-        log.error(`WebSocket error: ${err.message}`);
-        debugLog()?.error("bridge", `[qq] WebSocket error: ${err.message}`);
-        onStatus?.("error", err.message);
-      });
-    } catch (err) {
-      log.error(`连接失败: ${err.message}`);
-      onStatus?.("error", err.message);
-      if (err instanceof BridgeHttpRedirectError) clearInterval(tokenRefreshTimer);
-      if (!stopped && !(err instanceof BridgeHttpRedirectError)) scheduleReconnect();
+        try { payload = JSON.parse(String(raw)); } catch { return; }
+        if (!payload || typeof payload !== "object") return;
+        if (payload.op === OP.HELLO) {
+          if (helloReceived) return;
+          helloReceived = true;
+        }
+        try { handlePayload(payload, token, socket, isCurrentSocket); }
+        catch (error) { onError(error); }
+      };
+      const onClose = (code: number) => {
+        cleanup();
+        if (!isCurrentSocket()) return;
+        // Remote close reasons can contain credentials/URLs: use a local summary.
+        reconnect(`QQ WebSocket closed (${code})`, code);
+      };
+      const onError = (error: unknown) => {
+        if (!isCurrentSocket()) return;
+        const message = safeError(error);
+        log.error(`WebSocket error: ${message}`);
+        reconnect(`QQ WebSocket error: ${message}`);
+      };
+      socket.on("open", onOpen);
+      socket.on("message", onMessageReceived);
+      socket.on("close", onClose);
+      socket.on("error", onError);
+      // Covers Upgrade, missing Hello and an unanswered Identify/Resume.
+      handshakeTimer = setTimeout(() => {
+        if (isCurrentSocket()) reconnect("QQ WebSocket handshake timed out");
+      }, HANDSHAKE_TIMEOUT_MS);
+    } catch (error) {
+      if (!isCurrent()) return;
+      const message = safeError(error);
+      log.error(`连接失败: ${message}`);
+      if (error instanceof BridgeHttpRedirectError) failPermanently(message);
+      else reconnect(message);
     }
   }
 
-  function handlePayload(payload, token) {
+  function handlePayload(payload, token, socket, isCurrentSocket: () => boolean) {
     const { op, d, s, t } = payload;
-    if (s) lastSeq = s;
+    const validSeq = Number.isSafeInteger(s) && s >= 0;
+    if (op === OP.DISPATCH && validSeq) {
+      lastSeq = t === "READY" || lastSeq === null ? s : Math.max(lastSeq, s);
+    }
 
     switch (op) {
       case OP.HELLO:
-        startHeartbeat(d.heartbeat_interval);
-        // 鉴权
-        if (sessionId) {
-          // Resume
+        if (!Number.isSafeInteger(d?.heartbeat_interval) || d.heartbeat_interval <= 0) {
+          failPermanently("QQ WebSocket Hello: invalid heartbeat interval");
+          return;
+        }
+        startHeartbeat(d.heartbeat_interval, socket, isCurrentSocket);
+        if (sessionId && lastSeq !== null) {
           wsSend({ op: OP.RESUME, d: { token: `QQBot ${token}`, session_id: sessionId, seq: lastSeq } });
         } else {
-          // Identify
-          wsSend({
-            op: OP.IDENTIFY,
-            d: {
-              token: `QQBot ${token}`,
-              intents: INTENTS.PUBLIC_GUILD_MESSAGES | INTENTS.GROUP_AND_C2C,
-              shard: [0, 1],
-            },
-          });
+          wsSend({ op: OP.IDENTIFY, d: {
+            token: `QQBot ${token}`,
+            intents: INTENTS.PUBLIC_GUILD_MESSAGES | INTENTS.GROUP_AND_C2C,
+            shard: [0, 1],
+          } });
         }
         break;
-
       case OP.DISPATCH:
-        if (t === "READY") {
-          sessionId = d.session_id;
-          debugLog()?.log("bridge", `[qq] 鉴权成功，session: ${sessionId}`);
-          onStatus?.("connected");
-        } else if (t === "RESUMED") {
-          debugLog()?.log("bridge", "[qq] 会话已恢复");
+        if (t === "READY" || t === "RESUMED") {
+          if (t === "READY") {
+            if (typeof d?.session_id !== "string" || !d.session_id || !validSeq) {
+              failPermanently("QQ WebSocket READY: invalid session or sequence");
+              return;
+            }
+            sessionId = d.session_id;
+          } else if (!sessionId) return;
+          clearHandshake();
+          reconnectAttempts = 0;
+          debugLog()?.log("bridge", `[qq] ${t === "READY" ? "鉴权成功" : "会话已恢复"}`);
           onStatus?.("connected");
         } else {
+          const id = typeof d?.id === "string" ? `${t}:${d.id}` : null;
+          if (id) {
+            const now = Date.now();
+            for (const [key, at] of recentEvents) if (now - at > 10 * 60 * 1000) recentEvents.delete(key);
+            if (recentEvents.has(id)) return;
+            recentEvents.set(id, now);
+            if (recentEvents.size > 1024) recentEvents.delete(recentEvents.keys().next().value);
+          }
           handleEvent(t, d);
         }
         break;
-
       case OP.HEARTBEAT_ACK:
         heartbeatAckReceived = true;
         break;
-
       case OP.RECONNECT:
-        debugLog()?.log("bridge", "[qq] 收到重连指令");
-        ws?.close();
+        reconnect("QQ gateway requested reconnect");
         break;
-
       case OP.INVALID_SESSION:
-        debugLog()?.log("bridge", "[qq] 会话失效，重新鉴权");
-        sessionId = null;
-        lastSeq = null;
-        ws?.close();
+        // The fixed official SDK documents d=true as resumable; false resets.
+        if (d !== true) { sessionId = null; lastSeq = null; }
+        reconnect("QQ gateway invalid session");
         break;
     }
   }
@@ -597,13 +785,13 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
     }
   }
 
-  function startHeartbeat(interval) {
+  function startHeartbeat(interval: number, socket, isCurrentSocket: () => boolean) {
     stopHeartbeat();
     heartbeatAckReceived = true;
     heartbeatTimer = setInterval(() => {
+      if (!isCurrentSocket() || socket.readyState !== WebSocket.OPEN) return;
       if (!heartbeatAckReceived) {
-        debugLog()?.log("bridge", "[qq] 心跳超时（未收到 ACK），强制重连");
-        ws?.close();
+        reconnect("QQ heartbeat ACK timed out");
         return;
       }
       heartbeatAckReceived = false;
@@ -612,23 +800,22 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
   }
 
   function stopHeartbeat() {
-    if (heartbeatTimer) {
-      clearInterval(heartbeatTimer);
-      heartbeatTimer = null;
-    }
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
   }
 
-  function scheduleReconnect() {
-    if (stopped) return;
-    // 如果上次连接保活超过 5 分钟，说明不是启动阶段频繁失败，重置计数
-    if (lastConnectedAt && Date.now() - lastConnectedAt > 5 * 60 * 1000) {
-      reconnectAttempts = 0;
+  function scheduleReconnect(reason: string, minimumDelay = 0) {
+    if (stopped || reconnectTimer) return;
+    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      failPermanently(`QQ WebSocket reconnect exhausted (${MAX_RECONNECT_ATTEMPTS}); 请检查配置或网络后重新启用`);
+      return;
     }
     const delays = [1000, 2000, 5000, 10000, 30000, 60000];
-    const delay = delays[Math.min(reconnectAttempts, delays.length - 1)];
+    const delay = Math.max(minimumDelay, delays[Math.min(reconnectAttempts, delays.length - 1)]);
     reconnectAttempts++;
     debugLog()?.log("bridge", `[qq] ${delay / 1000}s 后重连（第 ${reconnectAttempts} 次）`);
-    setTimeout(() => connect(), delay);
+    reconnectTimer = setTimeout(() => { reconnectTimer = null; void connect(); }, delay);
+    onStatus?.("connecting", reason);
   }
 
   // ── 启动 ──
@@ -638,30 +825,33 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
   let tokenRefreshFailures = 0;
   tokenRefreshTimer = setInterval(async () => {
     try {
-      await refreshToken();
+      await refreshToken(requestSignal());
       tokenRefreshFailures = 0;
     } catch (err) {
+      if (stopped || connection.signal.aborted || err?.name === "AbortError") return;
       tokenRefreshFailures++;
-      log.error(`token 刷新失败（连续第 ${tokenRefreshFailures} 次）: ${err.message}`);
-      debugLog()?.error("bridge", `[qq] token 刷新失败: ${err.message}`);
+      log.error(`token 刷新失败（连续第 ${tokenRefreshFailures} 次）: ${safeError(err)}`);
+      debugLog()?.error("bridge", `[qq] token 刷新失败: ${safeError(err)}`);
       if (err instanceof BridgeHttpRedirectError) {
-        onStatus?.("error", err.message);
+        failPermanently(safeError(err));
       } else if (tokenRefreshFailures >= 3) {
         onStatus?.("error", `Token 连续 ${tokenRefreshFailures} 次刷新失败`);
       }
     }
   }, 60 * 60 * 1000); // 每小时刷新
 
-  async function sendRichMediaMessage(chatId: any, fileInfo: any, metadata: Record<string, any> = {}) {
+  async function sendRichMediaMessage(chatId: string, fileInfo: unknown, metadata: Record<string, unknown>, signal: AbortSignal) {
+    signal.throwIfAborted();
     const msgBody = { msg_type: 7, media: { file_info: fileInfo }, content: " " };
     attachPassiveReplyFields(msgBody, metadata.replyContext || metadata);
     const messageEndpoints = qqMediaEndpoints(chatId, metadata, "messages");
     for (const endpoint of messageEndpoints) {
       try {
-        await apiRequest("POST", endpoint, msgBody, { stage: "send_media_message" });
+        await apiRequest("POST", endpoint, msgBody, { stage: "send_media_message", signal });
         return;
       } catch (err) {
-        if (err instanceof BridgeHttpRedirectError) throw err;
+        signal.throwIfAborted();
+        if (!canTryNextTarget(err)) throw err;
         if (endpoint === messageEndpoints.at(-1)) {
           debugLog()?.error("bridge", `[qq] 富媒体消息发送失败: ${err.message}`);
           throw err;
@@ -676,10 +866,12 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
     mediaCapabilities: QQ_MEDIA_CAPABILITIES,
 
     async sendReply(chatId, text, replyContext = null) {
+      const signal = requestSignal();
       const context = normalizeQQReplyContext(replyContext);
       const messageEndpoints = qqMessageEndpoints(chatId, context);
       const MAX = 2000;
       for (let i = 0; i < text.length; i += MAX) {
+        signal.throwIfAborted();
         const chunk = text.slice(i, i + MAX);
         let lastError = null;
         const errors = [];
@@ -688,11 +880,12 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
           attachPassiveReplyFields(body, context);
           try {
             // 发送有副作用：网络层绝不自动重试，避免重复发消息
-            await apiRequest("POST", endpoint.path, body, { stage: "send_reply" });
+            await apiRequest("POST", endpoint.path, body, { stage: "send_reply", signal });
             lastError = null;
             break;
           } catch (err) {
-            if (err instanceof BridgeHttpRedirectError) throw err;
+            signal.throwIfAborted();
+            if (!canTryNextTarget(err)) throw err;
             lastError = err;
             errors.push(`${endpoint.label}=${err.message}`);
           }
@@ -705,18 +898,21 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
     },
 
     async sendBlockReply(chatId, text, replyContext = null) {
+      const signal = requestSignal();
       const now = Date.now();
       const elapsed = now - lastBlockTs;
       const delay = 800 + Math.random() * 1200;
       if (lastBlockTs && elapsed < delay) {
-        await new Promise((r) => setTimeout(r, delay - elapsed));
+        await waitForSend(delay - elapsed, signal);
       }
+      signal.throwIfAborted();
       await this.sendReply(chatId, text, replyContext);
       lastBlockTs = Date.now();
     },
 
     /** 发送媒体（两步上传：先上传获取 file_info，再发送富媒体消息） */
     async sendMedia(chatId: any, url: any, metadata: Record<string, any> = {}) {
+      const signal = requestSignal(metadata.signal);
       const fileType = qqFileTypeForMedia(url, metadata);
       if (metadata.isGroup === true && fileType === 4) {
         throw new Error("QQ 群聊暂不开放文件类型发送，请改用单聊或发送图片/视频/语音");
@@ -728,11 +924,12 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       const uploadEndpoints = qqMediaEndpoints(chatId, metadata, "files");
       for (const endpoint of uploadEndpoints) {
         try {
-          const res = await apiRequest("POST", endpoint, uploadBody, { stage: "media_upload" });
+          const res = await apiRequest("POST", endpoint, uploadBody, { stage: "media_upload", signal });
           fileInfo = res.file_info;
           break;
         } catch (err) {
-          if (err instanceof BridgeHttpRedirectError) throw err;
+          signal.throwIfAborted();
+          if (!canTryNextTarget(err)) throw err;
           if (endpoint === uploadEndpoints.at(-1)) {
             debugLog()?.error("bridge", `[qq] 媒体上传失败: ${err.message}`);
             throw err;
@@ -740,11 +937,12 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
         }
       }
       // Step 2: 发送富媒体消息
-      await sendRichMediaMessage(chatId, fileInfo, metadata);
+      await sendRichMediaMessage(chatId, fileInfo, metadata, signal);
     },
 
     /** 发送已归属的本地 SessionFile：本机直接分片上传到 QQ，再发送 file_info。 */
     async sendMediaFile(chatId: any, filePath: any, metadata: Record<string, any> = {}) {
+      const signal = requestSignal(metadata.signal);
       const fileType = qqFileTypeForMedia(metadata.filename || filePath, metadata);
       if (metadata.isGroup === true && fileType === QQ_FILE_TYPE.FILE) {
         throw new Error("QQ 群聊暂不开放文件类型发送，请改用单聊或发送图片/视频/语音");
@@ -752,11 +950,12 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       // Bind upload and send to one scope, including legacy calls without isGroup.
       // An unknown response must not cause another upload/message in a new scope.
       const localMetadata = { ...metadata, isGroup: metadata.isGroup === true };
-      const uploadResult = await uploadQQLocalFile({ apiRequest, outboundHttp: http, chatId, filePath, fileType, metadata: localMetadata });
+      const uploadResult = await uploadQQLocalFile({ apiRequest, outboundHttp: http, chatId, filePath, fileType, metadata: localMetadata, signal });
+      signal.throwIfAborted();
       if (!uploadResult?.file_info) {
         throw new Error("QQ 本地文件上传成功但未返回 file_info");
       }
-      await sendRichMediaMessage(chatId, uploadResult.file_info, localMetadata);
+      await sendRichMediaMessage(chatId, uploadResult.file_info, localMetadata, signal);
     },
 
     /** QQ 本地文件入口必须保留文件归属和 realpath 校验，不接受裸 buffer。 */
@@ -765,15 +964,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       throw new Error(`QQ 发送本地文件需要已注册的 staged file${label}`);
     },
 
-    stop() {
-      stopped = true;
-      stopHeartbeat();
-      clearInterval(tokenRefreshTimer);
-      if (ws) {
-        try { ws.close(); } catch {}
-        ws = null;
-      }
-    },
+    stop,
 
     async getMe() {
       return apiRequest("GET", "/users/@me", undefined, { stage: "get_me", idempotent: true });

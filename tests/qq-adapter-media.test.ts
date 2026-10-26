@@ -5,13 +5,21 @@ import os from "os";
 import path from "path";
 import type { BridgeOutboundRequestOptions } from "../lib/bridge/outbound-http.ts";
 
-vi.mock("ws", () => {
-  class MockWebSocket {
+vi.mock("ws", async () => {
+  const { EventEmitter } = await import("node:events");
+  class MockWebSocket extends EventEmitter {
     static OPEN = 1;
-    readyState = 0;
-    on() {}
-    send() {}
-    close() {}
+    static CLOSED = 3;
+    readyState = 1;
+    constructor() {
+      super();
+      queueMicrotask(() => {
+        this.emit("message", JSON.stringify({ op: 10, d: { heartbeat_interval: 30_000 } }));
+        this.emit("message", JSON.stringify({ op: 0, t: "READY", s: 1, d: { session_id: "synthetic-session" } }));
+      });
+    }
+    send(value: string) { if (JSON.parse(value).op === 1) this.emit("message", JSON.stringify({ op: 11 })); }
+    close() { this.readyState = 3; this.emit("close", 1000); }
   }
   return { default: MockWebSocket };
 });
@@ -427,9 +435,9 @@ describe("createQQAdapter media delivery", () => {
         if (failure === "merge-invalid" && endpoint.endsWith("/files")) return Response.json({ file_info: 123 });
         if ((failure === "finish-body" && endpoint.endsWith("/upload_part_finish"))
           || (failure === "merge-body" && endpoint.endsWith("/files"))) {
-          const response = new Response("");
-          vi.spyOn(response, "text").mockRejectedValue(new TypeError("synthetic truncated response"));
-          return response;
+          return new Response(new ReadableStream({ start(controller) {
+            controller.error(new TypeError("synthetic truncated response"));
+          } }));
         }
         if ((failure === "merge-unknown" && endpoint.endsWith("/files"))
           || (failure === "message-unknown" && endpoint.endsWith("/messages"))) throw new TypeError("synthetic unknown outcome");

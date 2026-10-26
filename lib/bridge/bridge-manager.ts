@@ -169,6 +169,7 @@ const ADAPTER_REGISTRY = {
         : null;
     },
     ownerSessionKey: (userId, agentId) => `qq_dm_${userId}@${agentId}`,
+    connectsAsync: true,
   },
   wechat: {
     create: (creds, onMessage, hooks, agentId) => createWechatAdapter({
