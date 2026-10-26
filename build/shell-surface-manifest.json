@@ -10,7 +10,7 @@
   "shellNativeDependencies": [
     {
       "name": "ws",
-      "declaredVersion": "^8.18.0",
+      "declaredVersion": "8.22.0",
       "reason": "vite.config.main.js keeps \"ws\" external from main.bundle.cjs (comment: \"CJS native addon (bufferutil/utf-8-validate) breaks when bundled\") — the module is required at runtime from node_modules, not inlined. package.json build.files re-includes \"node_modules/ws/**\" after the blanket \"!**/node_modules/**\" exclusion so it lands in the asar."
     }
   ],
@@ -149,7 +149,7 @@
     {
       "builderEntry": "node_modules/ws/**",
       "kind": "vendoredNativeDep",
-      "producedBy": "npm install (ws@^8.18.0, see shellNativeDependencies above)",
+      "producedBy": "npm install (ws@8.22.0, see shellNativeDependencies above)",
       "sourcePaths": ["node_modules/ws"]
     }
   ],
