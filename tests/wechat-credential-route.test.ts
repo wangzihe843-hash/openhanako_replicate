@@ -115,12 +115,12 @@ describe("WeChat credential test over controlled HTTPS loopback", () => {
     const failure = new Error("context_token=SYN_REJECTION_SECRET log_id=local-rejection");
     vi.stubGlobal("fetch", vi.fn(async () => {
       if (stage === "fetch") throw failure;
-      return { text: async () => { throw failure; } } as unknown as Response;
+      return new Response(new ReadableStream({ start(controller) { controller.error(failure); } }));
     }));
     const { response } = requestCredentialTest();
     const result = await (await response).json();
     expect(result.ok).toBe(false);
     expect(result.error).not.toContain("SYN_REJECTION_SECRET");
-    expect(result.error).toContain("local-rejection");
+    expect(result.error).toContain(stage === "fetch" ? "local-rejection" : "body_read_failed");
   });
 });

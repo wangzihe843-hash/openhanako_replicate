@@ -1,4 +1,5 @@
 import { redactLogText } from "../../shared/log-redactor.ts";
+import { readWechatBody, WECHAT_API_MAX_BYTES } from "./wechat-media.ts";
 
 /** Numeric business codes are kept separate from diagnostic text. */
 export class WechatApiError extends Error {
@@ -25,6 +26,7 @@ interface WechatApiResponse extends Record<string, unknown> {
   get_updates_buf?: string;
   typing_ticket?: string;
   upload_param?: string;
+  upload_full_url?: string;
 }
 
 export function assertWechatApiResponse(endpoint: string, json: unknown): asserts json is WechatApiResponse {
@@ -51,8 +53,8 @@ export function assertWechatApiResponse(endpoint: string, json: unknown): assert
   }
 }
 
-export async function readWechatApiResponse(endpoint: string, response: Response) {
-  const text = await response.text();
+export async function readWechatApiResponse(endpoint: string, response: Response, signal?: AbortSignal) {
+  const text = (await readWechatBody(response, WECHAT_API_MAX_BYTES, signal)).toString("utf8");
   if (!response.ok) throw new Error(redactLogText(`${endpoint} HTTP ${response.status}: ${text}`));
   let json: unknown;
   try { json = JSON.parse(text); } catch { throw new Error(`${endpoint} invalid JSON response`); }

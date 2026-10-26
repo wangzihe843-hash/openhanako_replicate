@@ -259,6 +259,7 @@
     "lib/bridge/wechat-api.ts",
     "lib/bridge/wechat-ilink-media-crypto.ts",
     "lib/bridge/wechat-login.ts",
+    "lib/bridge/wechat-media.ts",
     "lib/browser/browser-manager.ts",
     "lib/browser/browser-transport.ts",
     "lib/channels/channel-mentions.ts",

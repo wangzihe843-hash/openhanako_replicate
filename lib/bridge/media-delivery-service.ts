@@ -1,4 +1,5 @@
 import path from "path";
+import { redactLogText } from "../../shared/log-redactor.ts";
 import { debugLog } from "../debug-log.ts";
 import { extOfName, inferFileKind } from "../file-metadata.ts";
 import { downloadMedia, detectMime, resolveAllowedLocalPath } from "./media-utils.ts";
@@ -47,7 +48,7 @@ export class MediaDeliveryService {
     if (err instanceof BridgeHttpRedirectError) return;
     if (!adapter?.sendReply) return;
     try {
-      const message = `[文件发送失败] ${err.message || err}`;
+      const message = `[文件发送失败] ${redactLogText(err?.message || err)}`;
       const context = normalizeReplyContext(replyContext);
       if (context) {
         await adapter.sendReply(chatId, message, context);

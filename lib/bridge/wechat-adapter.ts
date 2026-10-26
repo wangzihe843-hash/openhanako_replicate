@@ -1,8 +1,28 @@
-/**
+/*!
  * wechat-adapter.js — 微信 iLink Bridge Adapter
  *
  * 基于腾讯 iLink 协议（ilinkai.weixin.qq.com）实现。
  * 参考 @tencent-weixin/openclaw-weixin v1.0.2 源码（MIT 协议）。
+ * Media URL field compatibility: Tencent v2.4.10, commit
+ * c6643f6f0ac03574eb126f2d69569ea4267cc3c6 (docs/protocol_zh_CN.md).
+ *
+ * Copyright (C) 2026 Tencent. All rights reserved.
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
 import crypto from "node:crypto";
@@ -20,11 +40,14 @@ import {
 import { createModuleLogger } from "../debug-log.ts";
 import { redactLogText } from "../../shared/log-redactor.ts";
 import { readWechatApiResponse, WechatApiError } from "./wechat-api.ts";
+import {
+  awaitWechatAbort, cancelWechatBody, fetchWechatMedia, selectWechatMediaUrl,
+  WECHAT_MEDIA_MAX_BYTES, WechatTransferError, withWechatDeadline,
+} from "./wechat-media.ts";
 
 const log = createModuleLogger("wechat");
 
 const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
-const CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
 
 export const WECHAT_ILINK_MEDIA_CAPABILITIES = createMediaCapabilities({
   platform: "wechat",
@@ -99,32 +122,27 @@ function buildHeaders(token) {
  */
 async function apiPost(baseUrl, endpoint, body, token, timeoutMs, parentSignal) {
   const url = new URL(endpoint, baseUrl.endsWith("/") ? baseUrl : baseUrl + "/");
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs || 15_000);
-
-  // 如果有父 signal，联动 abort
-  const onParentAbort = () => controller.abort();
-  if (parentSignal?.aborted) controller.abort();
-  parentSignal?.addEventListener("abort", onParentAbort, { once: true });
-
-  try {
-    const res = await fetch(url.toString(), {
-      method: "POST",
-      headers: buildHeaders(token),
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    return await readWechatApiResponse(endpoint, res);
-  } catch (err) {
-    clearTimeout(timer);
-    if (err instanceof WechatApiError) throw err;
-    const safeError = new Error(redactLogText(err?.message || String(err)));
-    if (err?.name === "AbortError") safeError.name = "AbortError";
-    throw safeError;
-  } finally {
-    parentSignal?.removeEventListener("abort", onParentAbort);
-  }
+  return withWechatDeadline(parentSignal, timeoutMs || 15_000, async signal => {
+    let res: Response | undefined;
+    try {
+      const request = fetch(url.toString(), {
+        method: "POST", headers: buildHeaders(token), body: JSON.stringify(body),
+        signal, redirect: "manual",
+      });
+      void request.then(late => { if (signal.aborted) cancelWechatBody(late.body); }, () => {});
+      res = await awaitWechatAbort(request, signal);
+      signal.throwIfAborted();
+      if (res.status >= 300 && res.status < 400) throw new WechatTransferError("api_redirect_rejected");
+      return await readWechatApiResponse(endpoint, res, signal);
+    } catch (err) {
+      if (err instanceof WechatApiError || err instanceof WechatTransferError) throw err;
+      const safeError = new Error(redactLogText(err?.message || String(err)));
+      if (err?.name === "AbortError") safeError.name = "AbortError";
+      throw safeError;
+    } finally {
+      if (res && !res.bodyUsed && !res.body?.locked) cancelWechatBody(res.body);
+    }
+  });
 }
 
 // ── Cursor 持久化 ──
@@ -198,16 +216,6 @@ function saveContextCache(filePath, cache, now = Date.now()) {
   } catch { /* ignore */ }
 }
 
-// ── CDN URL ──
-
-function buildCdnDownloadUrl(encryptedQueryParam) {
-  return `${CDN_BASE_URL}/download?encrypted_query_param=${encodeURIComponent(encryptedQueryParam)}`;
-}
-
-function buildCdnUploadUrl(uploadParam, filekey) {
-  return `${CDN_BASE_URL}/upload?encrypted_query_param=${encodeURIComponent(uploadParam)}&filekey=${encodeURIComponent(filekey)}`;
-}
-
 // ── 消息文本提取 ──
 
 function extractText(itemList) {
@@ -261,6 +269,9 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
   let getUpdatesBuf = syncBufPath ? loadSyncBuf(syncBufPath) : "";
   const contextCache = loadContextCache(contextCachePath); // chatId → { token, ts }
   const typingTicketCache = new Map(); // chatId → { contextToken, ticket }
+  // Bridge prefetch and attachment resolution can overlap. Share only in-flight
+  // work within this adapter; never retain signed references or completed bytes.
+  const mediaDownloads = new Map<string, Promise<Buffer>>();
 
   /** apiPost 带上当前 abortController.signal，stop() 时自动中断所有请求 */
   function assertActive(myGen = generation) {
@@ -273,6 +284,7 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
     for (const [timer, resolve] of timers) { clearTimeout(timer); resolve(false); }
     timers.clear();
     typingTicketCache.clear();
+    mediaDownloads.clear();
   }
 
   async function api(endpoint, body, timeoutMs?, myGen = generation) {
@@ -336,15 +348,37 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
     onStatus?.(status, normalizedError);
   }
 
-  async function downloadEncryptedMedia(platformRef) {
-    const { encrypt_query_param, aes_key } = JSON.parse(platformRef);
-    const cdnUrl = buildCdnDownloadUrl(encrypt_query_param);
-    const res = await fetch(cdnUrl);
-    if (!res.ok) throw new Error(`CDN download failed: ${res.status}`);
-    const encrypted = Buffer.from(await res.arrayBuffer());
-    if (!aes_key) return encrypted;
-    const key = decodeIlinkMediaAesKey(aes_key);
-    return decryptAesEcb(encrypted, key);
+  function downloadEncryptedMedia(platformRef: string) {
+    assertActive();
+    const pending = mediaDownloads.get(platformRef);
+    if (pending) return pending;
+    const request = readEncryptedMedia(platformRef);
+    mediaDownloads.set(platformRef, request);
+    void request.finally(() => {
+      if (mediaDownloads.get(platformRef) === request) mediaDownloads.delete(platformRef);
+    }).catch(() => {});
+    return request;
+  }
+
+  async function readEncryptedMedia(platformRef) {
+    const myGen = generation;
+    assertActive(myGen);
+    let ref;
+    try { ref = JSON.parse(platformRef); } catch { throw new WechatTransferError("invalid_media_ref"); }
+    if (!ref || typeof ref !== "object" || Array.isArray(ref)) throw new WechatTransferError("invalid_media_ref");
+    const cdnUrl = selectWechatMediaUrl(ref.full_url, ref.encrypt_query_param);
+    let key: Buffer | undefined;
+    try { if (ref.aes_key) key = decodeIlinkMediaAesKey(ref.aes_key); }
+    catch { throw new WechatTransferError("invalid_aes_key"); }
+    const { buffer } = await fetchWechatMedia(cdnUrl, {
+      signal: abortController.signal, maxBytes: WECHAT_MEDIA_MAX_BYTES + (key ? 16 : 0),
+    });
+    assertActive(myGen);
+    let plaintext: Buffer;
+    try { plaintext = key ? decryptAesEcb(buffer, key) : buffer; }
+    catch { throw new WechatTransferError("decrypt_failed"); }
+    if (plaintext.length > WECHAT_MEDIA_MAX_BYTES) throw new WechatTransferError("body_too_large");
+    return plaintext;
   }
 
   // ── 发送消息 ──
@@ -400,6 +434,7 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
   async function uploadMedia(buffer, toUserId, mediaType, myGen) {
     assertActive(myGen);
     const rawsize = buffer.length;
+    if (rawsize > WECHAT_MEDIA_MAX_BYTES) throw new WechatTransferError("body_too_large");
     const rawfilemd5 = crypto.createHash("md5").update(buffer).digest("hex");
     const filesize = aesEcbPaddedSize(rawsize);
     const filekey = crypto.randomBytes(16).toString("hex");
@@ -414,17 +449,12 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
     }, undefined, myGen);
 
     assertActive(myGen);
-    if (!uploadResp.upload_param) throw new Error("getUploadUrl 未返回 upload_param");
-
+    const cdnUrl = selectWechatMediaUrl(uploadResp.upload_full_url, uploadResp.upload_param, filekey);
     const ciphertext = encryptAesEcb(buffer, rawKey);
-    const cdnUrl = buildCdnUploadUrl(uploadResp.upload_param, filekey);
-    const cdnRes = await fetch(cdnUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/octet-stream" },
-      body: new Uint8Array(ciphertext),
+    const cdnRes = await fetchWechatMedia(cdnUrl, {
+      signal: abortController.signal, body: new Uint8Array(ciphertext), maxBytes: 64 * 1024,
     });
     assertActive(myGen);
-    if (!cdnRes.ok) throw new Error(`CDN upload failed: ${cdnRes.status}`);
     const downloadParam = cdnRes.headers.get("x-encrypted-param");
     if (!downloadParam) throw new Error("CDN 未返回 x-encrypted-param");
 
@@ -496,22 +526,24 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
     const attachments = [];
 
     for (const item of msg.item_list || []) {
-      if (item.type === MessageItemType.IMAGE && item.image_item?.media?.encrypt_query_param) {
+      if (item.type === MessageItemType.IMAGE && (item.image_item?.media?.full_url || item.image_item?.media?.encrypt_query_param)) {
         const aesKey = item.image_item.aeskey
           ? encodeIlinkMediaAesKey(item.image_item.aeskey)
           : item.image_item.media.aes_key;
         attachments.push({
           type: "image",
           platformRef: JSON.stringify({
+            full_url: item.image_item.media.full_url,
             encrypt_query_param: item.image_item.media.encrypt_query_param,
             aes_key: aesKey,
           }),
           mimeType: "image/jpeg",
         });
-      } else if (item.type === MessageItemType.FILE && item.file_item?.media?.encrypt_query_param) {
+      } else if (item.type === MessageItemType.FILE && (item.file_item?.media?.full_url || item.file_item?.media?.encrypt_query_param)) {
         attachments.push({
           type: "file",
           platformRef: JSON.stringify({
+            full_url: item.file_item.media.full_url,
             encrypt_query_param: item.file_item.media.encrypt_query_param,
             aes_key: item.file_item.media.aes_key,
           }),
@@ -519,10 +551,11 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
           size: Number.isFinite(Number(item.file_item.len)) ? Number(item.file_item.len) : undefined,
           mimeType: "application/octet-stream",
         });
-      } else if (item.type === MessageItemType.VIDEO && item.video_item?.media?.encrypt_query_param) {
+      } else if (item.type === MessageItemType.VIDEO && (item.video_item?.media?.full_url || item.video_item?.media?.encrypt_query_param)) {
         attachments.push({
           type: "video",
           platformRef: JSON.stringify({
+            full_url: item.video_item.media.full_url,
             encrypt_query_param: item.video_item.media.encrypt_query_param,
             aes_key: item.video_item.media.aes_key,
           }),
@@ -537,13 +570,14 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
       for (const item of msg.item_list || []) {
         if (item.type === MessageItemType.TEXT && item.ref_msg?.message_item) {
           const ref = item.ref_msg.message_item;
-          if (ref.type === MessageItemType.IMAGE && ref.image_item?.media?.encrypt_query_param) {
+          if (ref.type === MessageItemType.IMAGE && (ref.image_item?.media?.full_url || ref.image_item?.media?.encrypt_query_param)) {
             const aesKey = ref.image_item.aeskey
               ? encodeIlinkMediaAesKey(ref.image_item.aeskey)
               : ref.image_item.media.aes_key;
             attachments.push({
               type: "image",
               platformRef: JSON.stringify({
+                full_url: ref.image_item.media.full_url,
                 encrypt_query_param: ref.image_item.media.encrypt_query_param,
                 aes_key: aesKey,
               }),
@@ -660,12 +694,9 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
       const ctx = getContextToken(chatId);
       if (!ctx) throw new Error("微信: 需要对方最近发过消息才能回复");
       // 下载远程文件
-      const res = await fetch(url);
+      const { buffer, headers } = await fetchWechatMedia(url, { signal: abortController.signal, cdn: false });
       assertActive(myGen);
-      if (!res.ok) throw new Error(`下载媒体失败: ${res.status}`);
-      const buffer = Buffer.from(await res.arrayBuffer());
-      assertActive(myGen);
-      const contentType = res.headers.get("content-type") || "";
+      const contentType = headers.get("content-type") || "";
       const isImage = contentType.startsWith("image/") || /\.(jpe?g|png|gif|webp|bmp)$/i.test(url);
       const uploaded = await uploadMedia(buffer, chatId, isImage ? UploadMediaType.IMAGE : UploadMediaType.FILE, myGen);
       if (isImage) {

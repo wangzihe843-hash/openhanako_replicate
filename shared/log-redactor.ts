@@ -11,12 +11,14 @@ const REDACTED = "[redacted]";
 const CREDENTIAL_KEY_PATTERN = "api[_-]?key|secret[_-]?key|secret|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|password|passwd|client[_-]?secret|bot[_-]?token|server[_-]?token";
 // New channel keys remain whole names: support-ticket and email-verify-code
 // are ordinary diagnostics, not credential headers.
-const CHANNEL_KEY_PATTERN = "app[_-]?secret|app[_-]?key|context[_-]?token|aes[_-]?key|encrypt(?:ed)?[_-]?query[_-]?param|upload[_-]?param|download[_-]?param|(?:typing[_-]?)?ticket|verify[_-]?code|private[_-]?key|credential(?:s)?|filekey";
+const MEDIA_URL_KEY_PATTERN = "(?:upload[_-]?)?full[_-]?url";
+const MEDIA_URL_ASSIGN_PREFIX_RE = new RegExp(`^["']?(?:${MEDIA_URL_KEY_PATTERN})["']?\\s*[:=]`, "i");
+const CHANNEL_KEY_PATTERN = "app[_-]?secret|app[_-]?key|context[_-]?token|aes[_-]?key|encrypt(?:ed)?[_-]?query[_-]?param|upload[_-]?param|download[_-]?param|(?:typing[_-]?)?ticket|verify[_-]?code|private[_-]?key|credential(?:s)?|filekey|" + MEDIA_URL_KEY_PATTERN;
 const SECRET_KEY_PATTERN = `${CREDENTIAL_KEY_PATTERN}|${CHANNEL_KEY_PATTERN}`;
 const CREDENTIAL_HEADER_KEY_RE = new RegExp("^[!#$%&'*+.^_`|~0-9A-Za-z-]+-(?:" + CREDENTIAL_KEY_PATTERN + ")$", "i");
 const SECRET_ASSIGN_RE = new RegExp(`((?:(?<!\\w)["']?(?:${CREDENTIAL_KEY_PATTERN})|(?<![\\w-])["']?(?:${CHANNEL_KEY_PATTERN}))["']?\\s*[:=]\\s*)("(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|\\[redacted\\]|[^\\s,;"'\\]}&#]+)`, "gi");
 const SENSITIVE_OBJECT_KEY_RE = new RegExp(`^(?:${SECRET_KEY_PATTERN}|authorization|cookie|set-cookie|session[_-]?key|session[_-]?id|user[_-]?id|chat[_-]?id|sender[_-]?name|avatar[_-]?url|owner)$`, "i");
-const URL_SECRET_KEY_RE = new RegExp(`^(?:${SECRET_KEY_PATTERN}|auth|authorization|key|code)$`, "i");
+const URL_SECRET_KEY_RE = new RegExp(`^(?:${SECRET_KEY_PATTERN}|auth|authorization|key|code|sig|signature|sign|opaque)$`, "i");
 const URL_QUERY_RE = /([?&])([^=&#\s"'<>]+)=([^&#\s"'<>]*)/g;
 const TELEGRAM_PATH_RE = /(\bhttps?:\/\/api\.telegram\.org(?::\d+)?\/(?:file\/)?bot)(?!\[redacted\])[^/\s?&#"'<>]+/gi;
 const API_KEY_VALUE_RE = /\b(sk-[a-zA-Z0-9_-]{20,}|AKIA[A-Z0-9]{16}|gsk_[a-zA-Z0-9_-]{20,}|ghp_[a-zA-Z0-9]{36}|glpat-[a-zA-Z0-9_-]{20,}|xox[abpors]-[a-zA-Z0-9-]+)\b/g;
@@ -58,18 +60,14 @@ function redactText(text: string, options: RedactOptions, encodingDepth: number)
   text = redactKnownPaths(text, options);
 
   text = text.replace(/data:([^;,]+);base64,[A-Za-z0-9+/=]+/gi, "data:$1;base64,[redacted]");
-  // Errors sometimes contain an encodeURIComponent(URL) copy. Decode only that
-  // representation, once, in this output copy; never decode request inputs.
-  text = text.replace(/https?%3a%2f%2f[^\s"'<>]+/gi, (url) => {
-    try { return decodeURIComponent(url); } catch { return url; }
-  });
+  text = redactAssignments(text, true);
+  const urlBudget = { nodes: 128, bytes: 64 * 1024 };
+  text = text.replace(/\bhttps?(?::\/\/|%(?:25)*3a%(?:25)*2f%(?:25)*2f)[^\s"'<>]+/gi,
+    (url) => redactDiagnosticUrl(url, urlBudget));
   text = text.replace(/(https?:\/\/)([^:@\s/?#]+):([^@\s/?#]+)@/gi, "$1[credentials]@");
   text = text.replace(TELEGRAM_PATH_RE, "$1[redacted]");
-  text = text.replace(URL_QUERY_RE, (match, separator, key) => {
-    let decoded = key;
-    try { decoded = decodeURIComponent(key); } catch { /* keep malformed keys */ }
-    return (URL_SECRET_KEY_RE.test(decoded) || CREDENTIAL_HEADER_KEY_RE.test(decoded)) ? `${separator}${key}=[redacted]` : match;
-  });
+  text = text.replace(URL_QUERY_RE, (match, separator, key) =>
+    isSecretQueryKey(key) ? `${separator}${key}=[redacted]` : match);
   text = text.replace(/\b(Authorization\s*[:=]\s*(?:Bearer|Basic)\s+)[^\s,;]+/gi, "$1[redacted]");
   text = text.replace(/\b(Bearer\s+)[A-Za-z0-9\-._~+/]+=*/gi, "$1[redacted]");
   text = text.replace(/\b(Cookie|Set-Cookie)\s*[:=]\s*[^\r\n]+/gi, "$1=[redacted]");
@@ -86,6 +84,71 @@ function redactText(text: string, options: RedactOptions, encodingDepth: number)
   });
 
   return text;
+}
+
+type UrlBudget = { nodes: number; bytes: number };
+
+// Inspect nested URL data, not just URLSearchParams values: an unescaped & or
+// # can make an inner credential look like an outer parameter or fragment.
+// A wrapper of a credential URL is itself sensitive; keep only its origin.
+// The output copy is inspected with shared depth/work/byte limits. No decoded
+// inspection value is returned or used for network access.
+function spendUrlBudget(value: string, budget: UrlBudget, depth: number): boolean {
+  budget.nodes--;
+  budget.bytes -= value.length;
+  return depth <= 8 && value.length <= 16_384 && budget.nodes >= 0 && budget.bytes >= 0;
+}
+
+function isSecretQueryKey(key: string): boolean {
+  for (let depth = 0; depth < 4 && key.includes("%"); depth++) {
+    try { key = decodeURIComponent(key); } catch { return true; }
+  }
+  return key.includes("%") || URL_SECRET_KEY_RE.test(key) || CREDENTIAL_HEADER_KEY_RE.test(key);
+}
+
+function nestedUrlIsSensitive(value: string, budget: UrlBudget, depth: number): boolean {
+  for (let layer = 0; layer <= 4; layer++) {
+    if (!spendUrlBudget(value, budget, depth)) return true;
+    for (const match of value.matchAll(/https?:\/\/[^\s"'<>]+/gi)) {
+      if (urlContainsCredentials(match[0], budget, depth + 1)) return true;
+    }
+    // Percent-encoded ordinary keys/values are handled by the generic rules.
+    // Only decode data that can contain a URL scheme/separator; this avoids
+    // dropping unrelated version/diagnostic fields for a malformed key alone.
+    if (!value.includes("%") || !/(?:https?:|:\/\/|%(?:25)*(?:3a|2f))/i.test(value)) return false;
+    if (layer === 4) return true;
+    try { value = decodeURIComponent(value); } catch { return true; }
+  }
+  return true;
+}
+
+function urlContainsCredentials(value: string, budget: UrlBudget, depth: number): boolean {
+  if (!spendUrlBudget(value, budget, depth)) return true;
+  let url: URL;
+  try { url = new URL(value); } catch { return true; }
+  if (url.username || url.password || url.hostname === "novac2c.cdn.weixin.qq.com"
+    || (url.hostname === "api.telegram.org" && /^\/(?:file\/)?bot[^/]+/i.test(url.pathname))) return true;
+  for (const key of url.searchParams.keys()) {
+    if (--budget.nodes < 0 || isSecretQueryKey(key)) return true;
+  }
+  return nestedUrlIsSensitive(url.pathname + url.search + url.hash, budget, depth);
+}
+
+function redactDiagnosticUrl(value: string, budget: UrlBudget): string {
+  if (!spendUrlBudget(value, budget, 0)) return REDACTED;
+  // Decode only an encoded outer scheme; leave ordinary nested links unchanged.
+  // Stop once raw so encoded query delimiters cannot escape into output text.
+  for (let layer = 0; !/^https?:\/\//i.test(value); layer++) {
+    if (layer === 4) return REDACTED;
+    try { value = decodeURIComponent(value); } catch { return REDACTED; }
+  }
+  let url: URL;
+  try { url = new URL(value); } catch { return REDACTED; }
+  if (url.hostname === "novac2c.cdn.weixin.qq.com"
+    || nestedUrlIsSensitive(url.pathname + url.search + url.hash, budget, 0)) {
+    return `${url.protocol}//${url.host}/[redacted]`;
+  }
+  return value;
 }
 
 // Consume only an explicitly sensitive bracketed value. Do not JSON.parse or
@@ -114,14 +177,20 @@ function credentialContainerEnd(text: string, start: number): number {
   return text.length;
 }
 
-function redactAssignments(text: string): string {
+function redactAssignments(text: string, mediaOnly = false): string {
   const parts: string[] = [];
   let cursor = 0;
   SECRET_ASSIGN_RE.lastIndex = 0;
   for (let match = SECRET_ASSIGN_RE.exec(text); match; match = SECRET_ASSIGN_RE.exec(text)) {
     const [, prefix, secret] = match;
+    if (mediaOnly && !MEDIA_URL_ASSIGN_PREFIX_RE.test(prefix)) continue;
     let end = SECRET_ASSIGN_RE.lastIndex;
     let quote = secret[0] === '"' || secret[0] === "'" ? secret[0] : "";
+    // A full URL field is one credential, including unknown query parameters.
+    // Generic token assignments intentionally stop at & to preserve diagnostics.
+    if (MEDIA_URL_ASSIGN_PREFIX_RE.test(prefix) && !quote && /^https?(?::|%)/i.test(secret)) {
+      end = match.index + prefix.length + (text.slice(match.index + prefix.length).match(/^[^\s,;"'\]}]+/)?.[0].length || secret.length);
+    }
     if ((secret[0] === "[" || secret[0] === "{") && secret !== REDACTED) {
       end = credentialContainerEnd(text, match.index + prefix.length);
       quote = '"';

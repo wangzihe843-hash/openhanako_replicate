@@ -15,17 +15,11 @@ import {
 import { createWechatAdapter } from "../lib/bridge/wechat-adapter.ts";
 
 function jsonResponse(body) {
-  return {
-    ok: true,
-    text: async () => JSON.stringify(body),
-  };
+  return new Response(JSON.stringify(body));
 }
 
 function cdnUploadResponse(downloadParam = "download-param") {
-  return {
-    ok: true,
-    headers: new Headers({ "x-encrypted-param": downloadParam }),
-  };
+  return new Response(null, { headers: { "x-encrypted-param": downloadParam } });
 }
 
 describe("createWechatAdapter", () => {

@@ -132,22 +132,16 @@ describe("WeChat terminal session state", () => {
     expect(fs.readdirSync(cacheDirectory).map(name => [name, fs.readFileSync(path.join(cacheDirectory, name), "utf8")])).toEqual(before);
   });
 
-  it.each(["expired", "stopped"])("preserves historical CDN attachment reads after %s without using bot credentials", async terminal => {
-    const fixture = setup((endpoint, options) => {
-      if (!endpoint.includes("/c2c/download")) return undefined;
-      expect(options.headers).toBeUndefined();
-      return new Response(new Uint8Array([1, 2, 3]));
-    });
+  it.each(["expired", "stopped"])("does not start CDN attachment reads after %s", async terminal => {
+    const fixture = setup();
     await flush();
     if (terminal === "stopped") fixture.adapter.stop();
     else { fixture.pendingPoll.resolve(json({ ret: -14 })); await flush(); }
     const calls = fixture.fetchMock.mock.calls.length;
     const ref = JSON.stringify({ encrypt_query_param: "SYNTHETIC_HISTORY" });
-    expect(await fixture.adapter.downloadFileByRef(ref)).toEqual(Buffer.from([1, 2, 3]));
-    expect(await fixture.adapter.downloadImage(ref)).toEqual(Buffer.from([1, 2, 3]));
-    const added = fixture.fetchMock.mock.calls.slice(calls);
-    expect(added).toHaveLength(2);
-    for (const [url] of added) expect(String(url)).toContain("/c2c/download?");
+    await expect(fixture.adapter.downloadFileByRef(ref)).rejects.toThrow();
+    await expect(fixture.adapter.downloadImage(ref)).rejects.toThrow();
+    expect(fixture.fetchMock).toHaveBeenCalledTimes(calls);
   });
 
   it.each([
@@ -323,16 +317,23 @@ describe("WeChat pending outbound stages", () => {
           if (stage === "typing ticket" && endpoint === "getconfig") return pending.promise;
           if (stage === "upload URL" && endpoint === "getuploadurl") return pending.promise;
           if (stage === "CDN upload" && endpoint.includes("/c2c/upload")) return pending.promise;
-          if (stage === "remote source" && endpoint === "https://synthetic.invalid/image.png") return pending.promise;
-          if (stage === "remote body" && endpoint === "https://synthetic.invalid/image.png") {
-            return { ok: true, headers: new Headers({ "content-type": "image/png" }), arrayBuffer: () => pendingBody.promise } as Response;
+          if (stage === "remote source" && endpoint === "https://source.example.com/image.png") return pending.promise;
+          if (stage === "remote body" && endpoint === "https://source.example.com/image.png") {
+            let cancelled = false;
+            return new Response(new ReadableStream({
+              async pull(controller) {
+                const bytes = await pendingBody.promise;
+                if (!cancelled) { controller.enqueue(new Uint8Array(bytes)); controller.close(); }
+              },
+              cancel() { cancelled = true; },
+            }), { headers: { "content-type": "image/png" } });
           }
           return undefined;
         });
         await flush();
         const action = stage === "text chunk" ? fixture.adapter.sendReply(USER, "x".repeat(4_001))
           : stage === "typing ticket" ? fixture.adapter.sendTypingIndicator(USER)
-            : stage.startsWith("remote") ? fixture.adapter.sendMedia(USER, "https://synthetic.invalid/image.png")
+            : stage.startsWith("remote") ? fixture.adapter.sendMedia(USER, "https://source.example.com/image.png")
               : fixture.adapter.sendMediaBuffer(USER, Buffer.from("media"), { mime: "image/png", filename: "image.png" });
         // Attach rejection handling before invalidating concurrent work.
         const result = action.catch(error => error);
