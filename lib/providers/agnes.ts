@@ -67,7 +67,9 @@ export const agnesPlugin = {
         models: [
           {
             id: "agnes-video-v2.0",
-            displayName: "Agnes Video V2.0",
+            // Retain this sole option/default so existing selections cannot
+            // silently fall through to another provider. Official submits fail locally.
+            displayName: "Agnes Video V2.0 (Retired on official API)",
             protocolId: "agnes-videos",
             inputs: ["text", "image"],
             outputs: ["video"],

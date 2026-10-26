@@ -511,7 +511,7 @@ describe("agnes adapters", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it("submits Agnes video tasks and queries completed videos from the recommended video_id endpoint", async () => {
+  it("preserves compatible Agnes video submissions and completed queries", async () => {
     const { agnesVideoAdapter } = await import("../core/media-adapters/agnes.ts");
 
     mockFetch
@@ -537,7 +537,7 @@ describe("agnes adapters", () => {
         arrayBuffer: async () => Buffer.from("video-bytes"),
       });
 
-    const ctx = makeBusCtx("agnes-key", "https://apihub.agnes-ai.com/v1", "agnes");
+    const ctx = makeBusCtx("agnes-key", "https://compatible.example/v1", "agnes");
     const submitResult = await agnesVideoAdapter.submit({
       prompt: "slow camera move over a notebook",
       modelId: "agnes-video-v2.0",
@@ -553,7 +553,7 @@ describe("agnes adapters", () => {
       providerTaskId: "video_123",
     });
     const createBody = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(mockFetch.mock.calls[0][0]).toBe("https://apihub.agnes-ai.com/v1/videos");
+    expect(mockFetch.mock.calls[0][0]).toBe("https://compatible.example/v1/videos");
     expect(createBody).toMatchObject({
       model: "agnes-video-v2.0",
       prompt: "slow camera move over a notebook",
@@ -565,7 +565,7 @@ describe("agnes adapters", () => {
 
     const queryResult = await agnesVideoAdapter.query("video_123", ctx);
 
-    expect(mockFetch.mock.calls[1][0]).toBe("https://apihub.agnes-ai.com/agnesapi?video_id=video_123");
+    expect(mockFetch.mock.calls[1][0]).toBe("https://compatible.example/agnesapi?video_id=video_123");
     expect(mockFetch.mock.calls[2][0]).toBe("https://storage.example.com/agnes.mp4");
     expect(queryResult).toMatchObject({
       status: "success",
@@ -573,7 +573,7 @@ describe("agnes adapters", () => {
     });
   });
 
-  it("uses the Agnes documented 720p 3:2 video defaults", async () => {
+  it("preserves compatible Agnes 720p 3:2 video defaults", async () => {
     const { agnesVideoAdapter } = await import("../core/media-adapters/agnes.ts");
 
     mockFetch.mockResolvedValueOnce({
@@ -585,7 +585,7 @@ describe("agnes adapters", () => {
       }),
     });
 
-    const ctx = makeBusCtx("agnes-key", "https://apihub.agnes-ai.com/v1", "agnes");
+    const ctx = makeBusCtx("agnes-key", "https://compatible.example/v1", "agnes");
     await agnesVideoAdapter.submit({
       prompt: "slow camera move over a notebook",
       modelId: "agnes-video-v2.0",
@@ -604,10 +604,10 @@ describe("agnes adapters", () => {
     });
   });
 
-  it("rejects unsupported Agnes video resolution and ratio before calling the API", async () => {
+  it("rejects unsupported compatible Agnes video parameters before calling the API", async () => {
     const { agnesVideoAdapter } = await import("../core/media-adapters/agnes.ts");
 
-    const ctx = makeBusCtx("agnes-key", "https://apihub.agnes-ai.com/v1", "agnes");
+    const ctx = makeBusCtx("agnes-key", "https://compatible.example/v1", "agnes");
     await expect(agnesVideoAdapter.submit({
       prompt: "slow camera move over a notebook",
       modelId: "agnes-video-v2.0",

@@ -48,6 +48,25 @@ function agnesRootBase(baseUrl) {
   return stripV1(normalizeBaseUrl(baseUrl, DEFAULT_BASE_URL));
 }
 
+function assertVideoModelAvailable(endpoint, modelId) {
+  if (modelId !== DEFAULT_VIDEO_MODEL) return;
+  let url;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return;
+  }
+  // The official retirement notice does not establish compatibility-host status.
+  // Keep the selected target and historical query path; never substitute a model.
+  if (url.origin === "https://apihub.agnes-ai.com" && url.pathname === "/v1/videos") {
+    throw new Error(
+      "Agnes Video V2.0 (agnes-video-v2.0) is retired on the official Agnes API. "
+      + "New video submissions are unavailable. Your selection is unchanged; "
+      + "choose a supported video model explicitly to submit a new video.",
+    );
+  }
+}
+
 async function getCredentials(ctx, params: any = {}) {
   const providerId = params.credentialProviderId || params.providerId || "agnes";
   const creds = await ctx.bus.request("provider:credentials", { providerId });
@@ -310,6 +329,8 @@ export const agnesVideoAdapter = {
     const allDefaults = ctx.videoConfig?.get?.("providerDefaults") ?? ctx.config?.get?.("providerDefaults") ?? {};
     const providerDefaults = allDefaults[mediaProviderId] || {};
     const modelId = params.modelId || params.model || providerDefaults.model || DEFAULT_VIDEO_MODEL;
+    const endpoint = `${agnesV1Base(creds.baseUrl)}/videos`;
+    assertVideoModelAvailable(endpoint, modelId);
     const size = resolveVideoSize(params, providerDefaults);
     const { frameRate, numFrames } = resolveVideoFrameCount(params, providerDefaults);
     const images = normalizeImageInput(params.image);
@@ -327,7 +348,7 @@ export const agnesVideoAdapter = {
       body.extra_body = { image: images };
     }
 
-    const res = await fetch(`${agnesV1Base(creds.baseUrl)}/videos`, {
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${creds.apiKey}`,
