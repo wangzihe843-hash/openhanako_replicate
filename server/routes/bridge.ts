@@ -17,6 +17,8 @@ import { t } from "../../lib/i18n.ts";
 import { AgentNotFoundError, resolveAgentStrict } from "../utils/resolve-agent.ts";
 import { telegramBotOptions } from "../../lib/net/outbound-proxy.ts";
 import { createBridgeOutboundHttp } from "../../lib/bridge/outbound-http.ts";
+import { readWechatApiResponse } from "../../lib/bridge/wechat-api.ts";
+import { redactLogText } from "../../shared/log-redactor.ts";
 import {
   DINGTALK_API_BASE_URL,
   assertNoUnsupportedDingTalkRobotFields,
@@ -959,15 +961,12 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
           body: JSON.stringify({ base_info: { channel_version: "1.0.0" } }),
           signal: AbortSignal.timeout(10_000),
         });
-        const data = await res.json();
-        if (data.ret && data.ret !== 0) {
-          return c.json({ ok: false, error: data.errmsg || `errcode ${data.ret}` });
-        }
-        return c.json({ ok: true, info: { msg: "微信 iLink 连接成功" } });
+        await readWechatApiResponse("ilink/bot/getconfig", res);
+        return c.json({ ok: true, info: { msg: "微信 iLink API 鉴权应答成功" } });
       }
       return c.json({ ok: false, error: t("error.platformTestUnsupported") });
     } catch (err) {
-      return c.json({ ok: false, error: err.message });
+      return c.json({ ok: false, error: platform === "wechat" ? redactLogText(err.message) : err.message });
     }
   });
 

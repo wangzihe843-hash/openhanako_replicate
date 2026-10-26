@@ -18,6 +18,8 @@ import {
   encodeIlinkMediaAesKey,
 } from "./wechat-ilink-media-crypto.ts";
 import { createModuleLogger } from "../debug-log.ts";
+import { redactLogText } from "../../shared/log-redactor.ts";
+import { readWechatApiResponse, WechatApiError } from "./wechat-api.ts";
 
 const log = createModuleLogger("wechat");
 
@@ -92,11 +94,6 @@ function buildHeaders(token) {
   };
 }
 
-function isSessionExpiredError(err) {
-  const message = String(err?.message || "");
-  return /(?:ret|errcode)=-14\b/.test(message);
-}
-
 /**
  * @param {AbortSignal} [parentSignal] - 外部 signal（adapter 级别），用于 stop() 中断所有请求
  */
@@ -107,6 +104,7 @@ async function apiPost(baseUrl, endpoint, body, token, timeoutMs, parentSignal) 
 
   // 如果有父 signal，联动 abort
   const onParentAbort = () => controller.abort();
+  if (parentSignal?.aborted) controller.abort();
   parentSignal?.addEventListener("abort", onParentAbort, { once: true });
 
   try {
@@ -117,17 +115,13 @@ async function apiPost(baseUrl, endpoint, body, token, timeoutMs, parentSignal) 
       signal: controller.signal,
     });
     clearTimeout(timer);
-    const text = await res.text();
-    if (!res.ok) throw new Error(`${endpoint} HTTP ${res.status}: ${text}`);
-    const json = JSON.parse(text);
-    // iLink API 业务错误：HTTP 200 但 ret != 0
-    if (json.ret !== undefined && json.ret !== 0) {
-      throw new Error(`${endpoint} ret=${json.ret} errcode=${json.errcode ?? ""} errmsg=${json.errmsg ?? ""}`);
-    }
-    return json;
+    return await readWechatApiResponse(endpoint, res);
   } catch (err) {
     clearTimeout(timer);
-    throw err;
+    if (err instanceof WechatApiError) throw err;
+    const safeError = new Error(redactLogText(err?.message || String(err)));
+    if (err?.name === "AbortError") safeError.name = "AbortError";
+    throw safeError;
   } finally {
     parentSignal?.removeEventListener("abort", onParentAbort);
   }
@@ -256,8 +250,9 @@ function isMediaItem(item) {
 export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, onStatus }) {
   const baseUrl = DEFAULT_BASE_URL;
   let generation = 0;
-  let abortController = new AbortController();
-  const timers = new Set<ReturnType<typeof setTimeout>>();
+  const abortController = new AbortController();
+  let state: "active" | "expired" | "stopped" = "active";
+  const timers = new Map<ReturnType<typeof setTimeout>, (alive: boolean) => void>();
   let lastStatus = null;
   let lastError = null;
 
@@ -268,16 +263,44 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
   const typingTicketCache = new Map(); // chatId → { contextToken, ticket }
 
   /** apiPost 带上当前 abortController.signal，stop() 时自动中断所有请求 */
-  function api(endpoint, body, timeoutMs?) {
-    return apiPost(baseUrl, endpoint, body, botToken, timeoutMs, abortController.signal);
+  function assertActive(myGen = generation) {
+    if (state === "expired") throw new WechatApiError("微信 session expired", -14);
+    if (state !== "active" || myGen !== generation) throw new Error("微信: adapter stopped");
+  }
+
+  function clearPending() {
+    abortController.abort();
+    for (const [timer, resolve] of timers) { clearTimeout(timer); resolve(false); }
+    timers.clear();
+    typingTicketCache.clear();
+  }
+
+  async function api(endpoint, body, timeoutMs?, myGen = generation) {
+    assertActive(myGen);
+    try {
+      const response = await apiPost(baseUrl, endpoint, body, botToken, timeoutMs, abortController.signal);
+      assertActive(myGen);
+      return response;
+    } catch (err) {
+      // A response from a stopped/expired generation cannot change its state.
+      assertActive(myGen);
+      if (err instanceof WechatApiError && err.sessionExpired) {
+        state = "expired";
+        generation++;
+        clearPending();
+        reportStatus("error", "session expired");
+      }
+      throw err;
+    }
   }
 
   // ── 定时器管理 ──
 
   function guardedSleep(ms, myGen) {
+    if (state !== "active" || myGen !== generation) return Promise.resolve(false);
     return new Promise((resolve) => {
       const id = setTimeout(() => { timers.delete(id); resolve(myGen === generation); }, ms);
-      timers.add(id);
+      timers.set(id, resolve);
     });
   }
 
@@ -302,7 +325,7 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
   }
 
   function reportStatus(status, error?) {
-    const normalizedError = error || null;
+    const normalizedError = error ? redactLogText(error) : null;
     if (lastStatus === status && lastError === normalizedError) return;
     lastStatus = status;
     lastError = normalizedError;
@@ -326,7 +349,7 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
 
   // ── 发送消息 ──
 
-  async function sendText(chatId, text, contextToken) {
+  async function sendText(chatId, text, contextToken, myGen) {
     if (!contextToken) throw new Error("微信: 需要对方最近发过消息才能回复");
     await api("ilink/bot/sendmessage", {
       msg: {
@@ -339,10 +362,11 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
         context_token: contextToken,
       },
       base_info: { channel_version: "1.0.0" },
-    });
+    }, undefined, myGen);
   }
 
-  async function getTypingTicket(chatId) {
+  async function getTypingTicket(chatId, myGen) {
+    assertActive(myGen);
     const contextToken = getContextToken(chatId);
     if (!contextToken) throw new Error("微信: 需要对方最近发过消息才能发送正在输入状态");
     const cached = typingTicketCache.get(chatId);
@@ -351,7 +375,8 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
       ilink_user_id: chatId,
       context_token: contextToken,
       base_info: { channel_version: "1.0.0" },
-    }, 10_000);
+    }, 10_000, myGen);
+    assertActive(myGen);
     const ticket = resp?.typing_ticket;
     if (!ticket) throw new Error("微信: getconfig 未返回 typing_ticket");
     typingTicketCache.set(chatId, { contextToken, ticket });
@@ -359,18 +384,21 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
   }
 
   async function sendTypingStatus(chatId, status) {
-    const typingTicket = await getTypingTicket(chatId);
+    const myGen = generation;
+    assertActive(myGen);
+    const typingTicket = await getTypingTicket(chatId, myGen);
     await api("ilink/bot/sendtyping", {
       ilink_user_id: chatId,
       typing_ticket: typingTicket,
       status,
       base_info: { channel_version: "1.0.0" },
-    }, 10_000);
+    }, 10_000, myGen);
   }
 
   // ── CDN 媒体上传 ──
 
-  async function uploadMedia(buffer, toUserId, mediaType) {
+  async function uploadMedia(buffer, toUserId, mediaType, myGen) {
+    assertActive(myGen);
     const rawsize = buffer.length;
     const rawfilemd5 = crypto.createHash("md5").update(buffer).digest("hex");
     const filesize = aesEcbPaddedSize(rawsize);
@@ -383,8 +411,9 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
       no_need_thumb: true,
       aeskey: aesKeyHex,
       base_info: { channel_version: "1.0.0" },
-    });
+    }, undefined, myGen);
 
+    assertActive(myGen);
     if (!uploadResp.upload_param) throw new Error("getUploadUrl 未返回 upload_param");
 
     const ciphertext = encryptAesEcb(buffer, rawKey);
@@ -394,6 +423,7 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
       headers: { "Content-Type": "application/octet-stream" },
       body: new Uint8Array(ciphertext),
     });
+    assertActive(myGen);
     if (!cdnRes.ok) throw new Error(`CDN upload failed: ${cdnRes.status}`);
     const downloadParam = cdnRes.headers.get("x-encrypted-param");
     if (!downloadParam) throw new Error("CDN 未返回 x-encrypted-param");
@@ -401,7 +431,7 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
     return { filekey, downloadParam, aesKeyHex, fileSize: rawsize, fileSizeCiphertext: filesize };
   }
 
-  async function sendImageMessage(chatId, uploaded, contextToken, caption) {
+  async function sendImageMessage(chatId, uploaded, contextToken, caption, myGen) {
     const items = [];
     if (caption) items.push({ type: MessageItemType.TEXT, text_item: { text: caption } });
     items.push({
@@ -424,11 +454,11 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
           item_list: [item], context_token: contextToken,
         },
         base_info: { channel_version: "1.0.0" },
-      });
+      }, undefined, myGen);
     }
   }
 
-  async function sendFileMessage(chatId, uploaded, contextToken, filename) {
+  async function sendFileMessage(chatId, uploaded, contextToken, filename, myGen) {
     await api("ilink/bot/sendmessage", {
       msg: {
         from_user_id: "", to_user_id: chatId,
@@ -449,7 +479,7 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
         context_token: contextToken,
       },
       base_info: { channel_version: "1.0.0" },
-    });
+    }, undefined, myGen);
   }
 
   // ── 入站消息处理 ──
@@ -550,10 +580,13 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
         const resp = await api("ilink/bot/getupdates", {
           get_updates_buf: getUpdatesBuf,
           base_info: { channel_version: "1.0.0" },
-        }, LONG_POLL_TIMEOUT_MS);
+        }, LONG_POLL_TIMEOUT_MS, myGen);
+
+        if (myGen !== generation) return;
 
         consecutiveFailures = 0;
         reportStatus("connected");
+        if (myGen !== generation) return;
 
         if (resp.get_updates_buf) {
           getUpdatesBuf = resp.get_updates_buf;
@@ -561,6 +594,7 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
         }
 
         for (const msg of resp.msgs || []) {
+          if (myGen !== generation) return;
           try { handleInbound(msg); } catch (err) {
             log.error(`handleInbound error: ${err.message}`);
           }
@@ -568,11 +602,6 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
       } catch (err) {
         if (myGen !== generation) return;
         if (err.name === "AbortError") continue; // 长轮询超时，正常
-        if (isSessionExpiredError(err)) {
-          log.log("session expired (errcode -14), 停止轮询");
-          reportStatus("error", "session expired");
-          return; // token 失效不可恢复，等用户重新扫码
-        }
         consecutiveFailures++;
         if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
           reportStatus("error", err.message);
@@ -585,9 +614,11 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
   }
 
   // 启动轮询
+  const pollGeneration = generation;
   pollLoop().catch((err) => {
+    if (pollGeneration !== generation) return;
     log.error(`pollLoop crashed: ${err.message}`);
-    onStatus?.("error", err.message);
+    reportStatus("error", err.message);
   });
 
   // ── 返回 adapter 对象 ──
@@ -598,15 +629,17 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
     receiptCapabilities: WECHAT_ILINK_RECEIPT_CAPABILITIES,
 
     canReply(chatId) {
-      return !!getContextToken(chatId);
+      return state === "active" && !!getContextToken(chatId);
     },
 
     async sendReply(chatId, text) {
+      const myGen = generation;
+      assertActive(myGen);
       const ctx = getContextToken(chatId);
       if (!ctx) throw new Error("微信: 需要对方最近发过消息才能回复");
       // 长文本分段
       for (let i = 0; i < text.length; i += MSG_CHUNK_LIMIT) {
-        await sendText(chatId, text.slice(i, i + MSG_CHUNK_LIMIT), ctx);
+        await sendText(chatId, text.slice(i, i + MSG_CHUNK_LIMIT), ctx, myGen);
       }
     },
 
@@ -622,35 +655,41 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
     // block streaming 模式下后续消息会被丢弃。走 batch 模式一次性发完更稳。
 
     async sendMedia(chatId, url) {
+      const myGen = generation;
+      assertActive(myGen);
       const ctx = getContextToken(chatId);
       if (!ctx) throw new Error("微信: 需要对方最近发过消息才能回复");
       // 下载远程文件
       const res = await fetch(url);
+      assertActive(myGen);
       if (!res.ok) throw new Error(`下载媒体失败: ${res.status}`);
       const buffer = Buffer.from(await res.arrayBuffer());
+      assertActive(myGen);
       const contentType = res.headers.get("content-type") || "";
       const isImage = contentType.startsWith("image/") || /\.(jpe?g|png|gif|webp|bmp)$/i.test(url);
-      const uploaded = await uploadMedia(buffer, chatId, isImage ? UploadMediaType.IMAGE : UploadMediaType.FILE);
+      const uploaded = await uploadMedia(buffer, chatId, isImage ? UploadMediaType.IMAGE : UploadMediaType.FILE, myGen);
       if (isImage) {
-        await sendImageMessage(chatId, uploaded, ctx, "");
+        await sendImageMessage(chatId, uploaded, ctx, "", myGen);
       } else {
         const filename = path.basename(new URL(url).pathname) || "file";
-        await sendFileMessage(chatId, uploaded, ctx, filename);
+        await sendFileMessage(chatId, uploaded, ctx, filename, myGen);
       }
     },
 
     async sendMediaBuffer(chatId, buffer, { mime, filename }) {
+      const myGen = generation;
+      assertActive(myGen);
       const ctx = getContextToken(chatId);
       if (!ctx) throw new Error("微信: 需要对方最近发过消息才能回复");
       const isImage = mime?.startsWith("image/");
       const mediaType = isImage ? UploadMediaType.IMAGE : UploadMediaType.FILE;
       debugLog()?.log("bridge", `[wechat] sendMediaBuffer: mime=${mime}, filename=${filename}, size=${buffer.length}, mediaType=${mediaType}, isImage=${isImage}`);
-      const uploaded = await uploadMedia(buffer, chatId, mediaType);
+      const uploaded = await uploadMedia(buffer, chatId, mediaType, myGen);
       debugLog()?.log("bridge", `[wechat] uploaded: filekey=${uploaded.filekey}, downloadParam=${!!uploaded.downloadParam}`);
       if (isImage) {
-        await sendImageMessage(chatId, uploaded, ctx, "");
+        await sendImageMessage(chatId, uploaded, ctx, "", myGen);
       } else {
-        await sendFileMessage(chatId, uploaded, ctx, filename || "file");
+        await sendFileMessage(chatId, uploaded, ctx, filename || "file", myGen);
       }
       debugLog()?.log("bridge", `[wechat] sendMediaBuffer done: ${filename}`);
     },
@@ -664,23 +703,19 @@ export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, on
     },
 
     stop() {
+      if (state === "stopped") return;
+      state = "stopped";
       generation++;
-      abortController.abort();
-      abortController = new AbortController();
-      for (const t of timers) clearTimeout(t);
-      timers.clear();
+      clearPending();
       reportStatus("disconnected");
     },
 
     async getMe() {
       // 用 getconfig 验证 token（不污染 cursor）
       try {
-        const resp = await api("ilink/bot/getconfig", {
+        await api("ilink/bot/getconfig", {
           base_info: { channel_version: "1.0.0" },
         }, 10_000);
-        if (resp.ret && resp.ret !== 0) {
-          throw new Error(resp.errmsg || `errcode ${resp.ret}`);
-        }
         return { ok: true, platform: "wechat" };
       } catch (err) {
         throw new Error(`微信 token 验证失败: ${err.message}`);

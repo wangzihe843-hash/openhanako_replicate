@@ -4676,6 +4676,23 @@
       "reason": "Reached via esbuild source module graph, imported by lib/bridge/bridge-manager.ts (import-statement)."
     },
     {
+      "path": "lib/bridge/wechat-api.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/bridge.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/bridge/wechat-adapter.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by server/routes/bridge.ts (import-statement); lib/bridge/wechat-adapter.ts (import-statement)."
+    },
+    {
       "path": "lib/bridge/wechat-ilink-media-crypto.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -84247,11 +84264,26 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/bridge/wechat-api.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/secret-fingerprint.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/bridge.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/bridge/wechat-adapter.ts",
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by shared/error-bus.ts (import-statement); lib/log-redactor.ts (import-statement); lib/secret-fingerprint.ts (import-statement)."
+      "reason": "Reached via esbuild source module graph, imported by shared/error-bus.ts (import-statement); lib/log-redactor.ts (import-statement); lib/bridge/wechat-api.ts (import-statement); +3 more importer(s)."
     },
     {
       "path": "shared/memory-provenance.ts",
@@ -86073,9 +86105,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 7097,
+    "totalFiles": 7098,
     "byInputType": {
-      "source-graph": 744,
+      "source-graph": 745,
       "runtime-asset": 11,
       "nft-runtime-trace": 6342
     }
