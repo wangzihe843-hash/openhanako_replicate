@@ -291,6 +291,7 @@ describe("DingTalk bridge adapter", () => {
 
     const adapter = makeAdapter(fetchMock, onMessage);
     await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    FakeWebSocket.instances[0].emit("open");
 
     FakeWebSocket.instances[0].emit("message", streamEnvelope({
       conversationId: "cid-private",
@@ -343,6 +344,7 @@ describe("DingTalk bridge adapter", () => {
 
     const adapter = makeAdapter(fetchMock, onMessage);
     await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    FakeWebSocket.instances[0].emit("open");
 
     FakeWebSocket.instances[0].emit("message", streamEnvelope({
       conversationId: "cid-group",

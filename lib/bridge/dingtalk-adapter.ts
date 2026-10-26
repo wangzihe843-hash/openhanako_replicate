@@ -41,6 +41,8 @@ const MAX_MSG_SIZE = 100_000;
 const MAX_OUTBOUND_TEXT_BYTES = 12_000;
 const TOKEN_EXPIRY_SKEW_MS = 60_000;
 const DEFAULT_RECONNECT_DELAY_MS = 5_000;
+// Local handshake budget; each single-use Stream ticket is valid for 90s.
+const STREAM_HANDSHAKE_TIMEOUT_MS = 30_000;
 
 export const DINGTALK_STREAMING_CAPABILITIES = createStreamingCapabilities({
   platform: "dingtalk",
@@ -282,10 +284,23 @@ export function createDingTalkAdapter({
   let outboundError: string | null = null;
   let stopped = false;
   let reconnectTimer: any = null;
+  const lifetime = new AbortController();
+  const signal = lifetime.signal;
+  let connectionGeneration = 0;
+  let disposeSocket: (() => void) | null = null;
+  let tokenFlight: Promise<string> | null = null;
   const profileCache = new Map<string, any>();
 
   async function getAccessToken() {
+    signal.throwIfAborted();
     if (accessToken && Date.now() < tokenExpiresAt - TOKEN_EXPIRY_SKEW_MS) return accessToken;
+    if (!tokenFlight) {
+      tokenFlight = refreshAccessToken().finally(() => { tokenFlight = null; });
+    }
+    return tokenFlight;
+  }
+
+  async function refreshAccessToken() {
     const result = await requestDingTalkAccessToken(
       contract,
       (request) => http.request({
@@ -293,6 +308,7 @@ export function createDingTalkAdapter({
         url: request.url,
         ...request.init,
         idempotent: true,
+        signal,
       }),
       (request) => {
         debugLog()?.log(
@@ -308,7 +324,9 @@ export function createDingTalkAdapter({
           })}`,
         );
       },
+      signal,
     );
+    signal.throwIfAborted();
     accessToken = result.token;
     tokenExpiresAt = Date.now() + result.expiresIn * 1000;
     return accessToken;
@@ -329,8 +347,9 @@ export function createDingTalkAdapter({
         ua: "hana-bridge-dingtalk/1.0.0",
       }),
       idempotent: true,
+      signal,
     });
-    const data = await readDingTalkResponse(res, { stage: "stream_open" });
+    const data = await readDingTalkResponse(res, { stage: "stream_open", signal });
     validateDingTalkApiResponse("stream_open", res, data, [contract.clientSecret]);
     const endpoint = cleanString(data?.endpoint);
     const ticket = cleanString(data?.ticket);
@@ -338,12 +357,10 @@ export function createDingTalkAdapter({
     return { endpoint, ticket };
   }
 
-  function acknowledge(envelope: Record<string, any>) {
+  function acknowledge(envelope: { headers?: { messageId?: unknown } }, sourceSocket: Pick<WebSocket, "readyState" | "send">) {
     const messageId = envelope?.headers?.messageId;
-    const closedState = WebSocketImpl.CLOSED ?? 3;
-    if (!messageId || !ws) return;
-    if (typeof ws.readyState === "number" && ws.readyState === closedState) return;
-    ws.send(JSON.stringify({
+    if (!messageId || sourceSocket.readyState !== (WebSocketImpl.OPEN ?? 1)) return;
+    sourceSocket.send(JSON.stringify({
       code: 200,
       headers: {
         contentType: "application/json",
@@ -354,7 +371,7 @@ export function createDingTalkAdapter({
     }));
   }
 
-  function handleStreamMessage(raw: unknown, sourceSocket: { readyState: number; send: (payload: string) => void }) {
+  function handleStreamMessage(raw: unknown, sourceSocket: { readyState: number; send: (payload: string) => void; close?: () => void }) {
     const envelope = safeJsonParse(raw);
     if (!envelope || typeof envelope !== "object") return;
     const topic = envelope.headers?.topic;
@@ -375,12 +392,12 @@ export function createDingTalkAdapter({
       return;
     }
     if (type === "SYSTEM" && topic === "disconnect") {
-      try { ws?.close?.(); } catch {}
+      try { sourceSocket.close?.(); } catch { /* The current close/error handler owns recovery. */ }
       return;
     }
     if (type !== "CALLBACK" || topic !== DINGTALK_BOT_CALLBACK_TOPIC) return;
 
-    acknowledge(envelope);
+    acknowledge(envelope, sourceSocket);
     const payload = safeJsonParse(envelope.data);
     if (!payload || typeof payload !== "object") return;
     if (payload.robotCode && contract.robotCode && payload.robotCode !== contract.robotCode) return;
@@ -402,50 +419,87 @@ export function createDingTalkAdapter({
 
   function scheduleReconnect(reason?: string) {
     if (stopped || reconnectTimer) return;
-    onStatus?.("connecting", reason);
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       void connect();
     }, reconnectDelayMs);
     if (typeof reconnectTimer.unref === "function") reconnectTimer.unref();
+    onStatus?.("connecting", reason);
   }
 
   async function connect() {
     if (stopped) return;
     clearReconnectTimer();
+    const generation = ++connectionGeneration;
+    const isCurrent = () => !stopped && generation === connectionGeneration;
     let streamTicket = "";
     let streamUrl = "";
     try {
       const { endpoint, ticket } = await openStreamRegistration();
       streamTicket = ticket;
-      if (stopped) return;
+      if (!isCurrent()) return;
       const url = appendTicket(endpoint, ticket);
       streamUrl = url;
-      ws = new WebSocketImpl(url, webSocketOptionsForUrl(url));
+      ws = new WebSocketImpl(url, { ...webSocketOptionsForUrl(url), handshakeTimeout: STREAM_HANDSHAKE_TIMEOUT_MS });
       const sourceSocket = ws;
-      ws.on("open", () => {
+      const isCurrentSocket = () => isCurrent() && ws === sourceSocket;
+      const cleanup = () => {
+        sourceSocket.removeListener?.("open", onOpen);
+        sourceSocket.removeListener?.("message", onMessageReceived);
+        sourceSocket.removeListener?.("error", onError);
+        sourceSocket.removeListener?.("close", onClose);
+      };
+      const dispose = () => {
+        if (ws === sourceSocket) ws = null;
+        if (disposeSocket === dispose) disposeSocket = null;
+        sourceSocket.removeListener?.("open", onOpen);
+        sourceSocket.removeListener?.("message", onMessageReceived);
+        // Keep guarded error/close handlers until close: terminating a pending
+        // ws handshake emits an asynchronous error before its close event.
+        if (sourceSocket.readyState === (WebSocketImpl.CLOSED ?? 3)) { cleanup(); return; }
+        try {
+          if (sourceSocket.terminate) sourceSocket.terminate();
+          else sourceSocket.close?.();
+        } catch { /* A late event remains guarded even if a transport fails to close. */ }
+      };
+      disposeSocket = dispose;
+      const onOpen = () => {
+        if (!isCurrentSocket()) return;
         streamConnected = true;
         log.log("stream connected");
         if (outboundError) onStatus?.("error", outboundError);
         else onStatus?.("connected");
-      });
-      ws.on("message", (raw: unknown) => handleStreamMessage(raw, sourceSocket));
-      ws.on("error", (err: any) => {
+      };
+      const onMessageReceived = (raw: unknown) => {
+        if (!isCurrentSocket() || sourceSocket.readyState !== (WebSocketImpl.OPEN ?? 1)) return;
+        try { handleStreamMessage(raw, sourceSocket); } catch (err) { onError(err); }
+      };
+      const onError = (err: unknown) => {
+        if (!isCurrentSocket()) return;
         streamConnected = false;
+        dispose();
         const message = redactSecretsFromText(
-          err?.message || String(err),
+          (err as Error)?.message || String(err),
           [contract.clientSecret, streamTicket, streamUrl],
         );
         log.error(`stream error: ${message}`);
         onStatus?.("error", message);
-      });
-      ws.on("close", () => {
+        scheduleReconnect(message);
+      };
+      const onClose = () => {
+        cleanup();
+        if (!isCurrentSocket()) return;
         streamConnected = false;
-        if (stopped) return;
+        dispose();
         log.warn("stream closed, reconnecting");
         scheduleReconnect("stream closed");
-      });
+      };
+      sourceSocket.on("open", onOpen);
+      sourceSocket.on("message", onMessageReceived);
+      sourceSocket.on("error", onError);
+      sourceSocket.on("close", onClose);
     } catch (err: any) {
+      if (!isCurrent()) return;
       streamConnected = false;
       const message = redactSecretsFromText(
         err?.message || String(err),
@@ -460,7 +514,9 @@ export function createDingTalkAdapter({
   async function requestRobotApi(stage: string, url: string, body: Record<string, any>) {
     let token: string | null = null;
     try {
+      signal.throwIfAborted();
       token = await getAccessToken();
+      signal.throwIfAborted();
       const res = await http.request({
         stage,
         url,
@@ -471,14 +527,17 @@ export function createDingTalkAdapter({
         },
         body: JSON.stringify(body),
         idempotent: false,
+        signal,
       });
-      const data = await readDingTalkResponse(res, { stage });
+      const data = await readDingTalkResponse(res, { stage, signal });
+      signal.throwIfAborted();
       validateDingTalkApiResponse(stage, res, data, [contract.clientSecret, token]);
       const shouldRestoreConnected = outboundError !== null && streamConnected;
       outboundError = null;
       if (shouldRestoreConnected) onStatus?.("connected");
       return data;
     } catch (err: any) {
+      signal.throwIfAborted();
       const message = redactSecretsFromText(
         err?.message || String(err),
         [contract.clientSecret, token, accessToken],
@@ -500,11 +559,13 @@ export function createDingTalkAdapter({
     streamingCapabilities: DINGTALK_STREAMING_CAPABILITIES,
 
     async sendReply(chatId: string, text: string, options: Record<string, any> = {}) {
+      signal.throwIfAborted();
       const content = asString(text);
       const scope = dingTalkTargetScope(options);
       const chunks = splitTextByUtf8Bytes(content);
       const results = [];
       for (let i = 0; i < chunks.length; i += 1) {
+        signal.throwIfAborted();
         const msgParam = markdownPayload(chunks[i], i, chunks.length);
         if (scope === "group") {
           results.push(await requestRobotApi("send_group", buildDingTalkUrl(contract.apiBaseUrl, DINGTALK_GROUP_SEND_PATH), {
@@ -526,12 +587,16 @@ export function createDingTalkAdapter({
     },
 
     stop() {
+      if (stopped) return;
       stopped = true;
+      connectionGeneration += 1;
       streamConnected = false;
       clearReconnectTimer();
-      const current = ws;
-      ws = null;
-      try { current?.close?.(); } catch {}
+      lifetime.abort();
+      disposeSocket?.();
+      accessToken = null;
+      tokenExpiresAt = 0;
+      profileCache.clear();
       onStatus?.("disconnected");
     },
   };

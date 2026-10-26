@@ -96,25 +96,34 @@ function withBodyTimeout<T>(
   timeoutMs: number,
   stage: string,
   budgetMs = timeoutMs,
+  signal?: AbortSignal,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => { cleanup(); reject(signal!.reason); };
     const timer = setTimeout(() => {
+      cleanup();
       reject(responseReadError(stage, `body timed out after ${budgetMs}ms`));
     }, timeoutMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
     promise.then(
       (value) => {
-        clearTimeout(timer);
+        cleanup();
         resolve(value);
       },
       (error) => {
-        clearTimeout(timer);
+        cleanup();
         reject(error);
       },
     );
   });
 }
 
-async function readBoundedResponseText(response: Response, timeoutMs: number, maxBytes: number, stage: string) {
+async function readBoundedResponseText(response: Response, timeoutMs: number, maxBytes: number, stage: string, signal?: AbortSignal) {
   const stream = response?.body;
   if (stream && typeof stream.getReader === "function") {
     const reader = stream.getReader();
@@ -123,6 +132,7 @@ async function readBoundedResponseText(response: Response, timeoutMs: number, ma
     const deadline = Date.now() + timeoutMs;
     try {
       while (true) {
+        signal?.throwIfAborted();
         // One deadline for the entire body, including continuously ready chunks.
         const remainingMs = deadline - Date.now();
         if (remainingMs <= 0) throw responseReadError(stage, `body timed out after ${timeoutMs}ms`);
@@ -131,6 +141,7 @@ async function readBoundedResponseText(response: Response, timeoutMs: number, ma
           remainingMs,
           stage,
           timeoutMs,
+          signal,
         );
         if (result?.done) break;
         const chunk = result?.value instanceof Uint8Array
@@ -160,7 +171,7 @@ async function readBoundedResponseText(response: Response, timeoutMs: number, ma
   }
 
   if (typeof response?.text === "function") {
-    const text = await withBodyTimeout(Promise.resolve(response.text()), timeoutMs, stage);
+    const text = await withBodyTimeout(Promise.resolve(response.text()), timeoutMs, stage, timeoutMs, signal);
     if (utf8ByteLength(String(text || "")) > maxBytes) {
       throw responseReadError(stage, `body exceeded ${maxBytes} bytes`);
     }
@@ -175,9 +186,12 @@ export async function readDingTalkResponse(
     timeoutMs = DINGTALK_TOKEN_RESPONSE_BODY_TIMEOUT_MS,
     maxBytes = DINGTALK_TOKEN_RESPONSE_MAX_BYTES,
     stage = "token",
-  }: { timeoutMs?: number; maxBytes?: number; stage?: string } = {},
+    signal,
+  }: { timeoutMs?: number; maxBytes?: number; stage?: string; signal?: AbortSignal } = {},
 ) {
-  const text = await readBoundedResponseText(response, timeoutMs, maxBytes, stage);
+  signal?.throwIfAborted();
+  const text = await readBoundedResponseText(response, timeoutMs, maxBytes, stage, signal);
+  signal?.throwIfAborted();
   if (text !== null) {
     if (!text) return {};
     try {
@@ -189,7 +203,8 @@ export async function readDingTalkResponse(
   // Test transports and a few SDK response shims expose only json(). This is
   // still a single body read, never a retry after another reader consumed it.
   if (typeof response?.json === "function") {
-    const data = await withBodyTimeout(Promise.resolve(response.json()), timeoutMs, stage);
+    const data = await withBodyTimeout(Promise.resolve(response.json()), timeoutMs, stage, timeoutMs, signal);
+    signal?.throwIfAborted();
     const serialized = JSON.stringify(data);
     if (serialized && utf8ByteLength(serialized) > maxBytes) {
       throw responseReadError(stage, `body exceeded ${maxBytes} bytes`);
@@ -276,7 +291,9 @@ export async function requestDingTalkAccessToken(
   input: DingTalkBridgeCredentials | Record<string, any>,
   transport: (request: DingTalkAccessTokenRequest) => Promise<any>,
   onRequestBuilt?: (request: DingTalkAccessTokenRequest, credentials: DingTalkBridgeCredentials) => void,
+  signal?: AbortSignal,
 ): Promise<DingTalkAccessTokenResult> {
+  signal?.throwIfAborted();
   const credentials = normalizeDingTalkBridgeCredentials(input);
   const request = buildDingTalkAccessTokenRequest(credentials);
   onRequestBuilt?.(request, credentials);
@@ -284,6 +301,7 @@ export async function requestDingTalkAccessToken(
   try {
     response = await transport(request);
   } catch (error: any) {
+    signal?.throwIfAborted();
     // 保留目的地拒绝类型，让上层停止重试/失败通知；它不含响应或凭据。
     if (error instanceof BridgeHttpRedirectError) throw error;
     const safeMessage = redactSecretsFromText(error?.message || String(error), [credentials.clientSecret]);
@@ -299,8 +317,9 @@ export async function requestDingTalkAccessToken(
   }
   let data;
   try {
-    data = await readDingTalkResponse(response);
+    data = await readDingTalkResponse(response, { signal });
   } catch (error: any) {
+    signal?.throwIfAborted();
     throw new DingTalkApiError({
       stage: "token",
       code: "response_read_error",
