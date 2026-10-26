@@ -83,8 +83,8 @@ export function buildDingTalkAccessTokenRequest(
   };
 }
 
-function responseReadError(reason: string) {
-  return new Error(`DingTalk token response ${reason}`);
+function responseReadError(stage: string, reason: string) {
+  return new Error(`DingTalk ${stage} response ${reason}`);
 }
 
 function utf8ByteLength(value: string) {
@@ -94,12 +94,12 @@ function utf8ByteLength(value: string) {
 function withBodyTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
-  onTimeout?: () => void,
+  stage: string,
+  budgetMs = timeoutMs,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
-      try { onTimeout?.(); } catch {}
-      reject(responseReadError(`body timed out after ${timeoutMs}ms`));
+      reject(responseReadError(stage, `body timed out after ${budgetMs}ms`));
     }, timeoutMs);
     promise.then(
       (value) => {
@@ -114,7 +114,7 @@ function withBodyTimeout<T>(
   });
 }
 
-async function readBoundedResponseText(response: any, timeoutMs: number, maxBytes: number) {
+async function readBoundedResponseText(response: Response, timeoutMs: number, maxBytes: number, stage: string) {
   const stream = response?.body;
   if (stream && typeof stream.getReader === "function") {
     const reader = stream.getReader();
@@ -123,11 +123,14 @@ async function readBoundedResponseText(response: any, timeoutMs: number, maxByte
     const deadline = Date.now() + timeoutMs;
     try {
       while (true) {
-        const remainingMs = Math.max(1, deadline - Date.now());
+        // One deadline for the entire body, including continuously ready chunks.
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) throw responseReadError(stage, `body timed out after ${timeoutMs}ms`);
         const result = await withBodyTimeout(
           Promise.resolve(reader.read()),
           remainingMs,
-          () => { void reader.cancel?.(); },
+          stage,
+          timeoutMs,
         );
         if (result?.done) break;
         const chunk = result?.value instanceof Uint8Array
@@ -135,11 +138,15 @@ async function readBoundedResponseText(response: any, timeoutMs: number, maxByte
           : new Uint8Array(result?.value || []);
         total += chunk.byteLength;
         if (total > maxBytes) {
-          try { await reader.cancel?.(); } catch {}
-          throw responseReadError(`body exceeded ${maxBytes} bytes`);
+          throw responseReadError(stage, `body exceeded ${maxBytes} bytes`);
         }
-        chunks.push(chunk);
+        if (chunk.byteLength) chunks.push(chunk);
       }
+    } catch (error) {
+      // Cancellation itself may hang or reject. It must not extend the body
+      // budget or hide the original read/abort error.
+      try { void Promise.resolve(reader.cancel?.()).catch(() => {}); } catch { /* Preserve the read error. */ }
+      throw error;
     } finally {
       try { reader.releaseLock?.(); } catch {}
     }
@@ -153,9 +160,9 @@ async function readBoundedResponseText(response: any, timeoutMs: number, maxByte
   }
 
   if (typeof response?.text === "function") {
-    const text = await withBodyTimeout(Promise.resolve(response.text()), timeoutMs);
+    const text = await withBodyTimeout(Promise.resolve(response.text()), timeoutMs, stage);
     if (utf8ByteLength(String(text || "")) > maxBytes) {
-      throw responseReadError(`body exceeded ${maxBytes} bytes`);
+      throw responseReadError(stage, `body exceeded ${maxBytes} bytes`);
     }
     return String(text || "");
   }
@@ -167,9 +174,10 @@ export async function readDingTalkResponse(
   {
     timeoutMs = DINGTALK_TOKEN_RESPONSE_BODY_TIMEOUT_MS,
     maxBytes = DINGTALK_TOKEN_RESPONSE_MAX_BYTES,
-  }: { timeoutMs?: number; maxBytes?: number } = {},
+    stage = "token",
+  }: { timeoutMs?: number; maxBytes?: number; stage?: string } = {},
 ) {
-  const text = await readBoundedResponseText(response, timeoutMs, maxBytes);
+  const text = await readBoundedResponseText(response, timeoutMs, maxBytes, stage);
   if (text !== null) {
     if (!text) return {};
     try {
@@ -181,10 +189,10 @@ export async function readDingTalkResponse(
   // Test transports and a few SDK response shims expose only json(). This is
   // still a single body read, never a retry after another reader consumed it.
   if (typeof response?.json === "function") {
-    const data = await withBodyTimeout(Promise.resolve(response.json()), timeoutMs);
+    const data = await withBodyTimeout(Promise.resolve(response.json()), timeoutMs, stage);
     const serialized = JSON.stringify(data);
     if (serialized && utf8ByteLength(serialized) > maxBytes) {
-      throw responseReadError(`body exceeded ${maxBytes} bytes`);
+      throw responseReadError(stage, `body exceeded ${maxBytes} bytes`);
     }
     return data;
   }

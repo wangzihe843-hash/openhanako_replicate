@@ -26,7 +26,7 @@ import {
   buildDingTalkUrl,
   normalizeDingTalkBridgeCredentials,
 } from "./dingtalk-contract.ts";
-import { requestDingTalkAccessToken } from "./dingtalk-api.ts";
+import { readDingTalkResponse, requestDingTalkAccessToken } from "./dingtalk-api.ts";
 
 const log = createModuleLogger("dingtalk");
 
@@ -75,18 +75,6 @@ function safeJsonParse(value: any) {
     return JSON.parse(text);
   } catch {
     return null;
-  }
-}
-
-async function responseJsonOrText(res: any) {
-  try {
-    return await res.json();
-  } catch {
-    try {
-      return await res.text();
-    } catch {
-      return "";
-    }
   }
 }
 
@@ -342,7 +330,7 @@ export function createDingTalkAdapter({
       }),
       idempotent: true,
     });
-    const data = await responseJsonOrText(res);
+    const data = await readDingTalkResponse(res, { stage: "stream_open" });
     validateDingTalkApiResponse("stream_open", res, data, [contract.clientSecret]);
     const endpoint = cleanString(data?.endpoint);
     const ticket = cleanString(data?.ticket);
@@ -484,7 +472,7 @@ export function createDingTalkAdapter({
         body: JSON.stringify(body),
         idempotent: false,
       });
-      const data = await responseJsonOrText(res);
+      const data = await readDingTalkResponse(res, { stage });
       validateDingTalkApiResponse(stage, res, data, [contract.clientSecret, token]);
       const shouldRestoreConnected = outboundError !== null && streamConnected;
       outboundError = null;

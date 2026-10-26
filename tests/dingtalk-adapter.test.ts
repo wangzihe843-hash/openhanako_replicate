@@ -608,3 +608,112 @@ describe("DingTalk bridge adapter", () => {
     });
   });
 });
+
+
+describe("DingTalk response body budgets", () => {
+  const adapters: ReturnType<typeof makeAdapter>[] = [];
+  afterEach(() => {
+    for (const adapter of adapters.splice(0)) adapter.stop();
+    vi.useRealTimers();
+  });
+
+  function streamedResponse(text: string, status = 200, contentLength?: string) {
+    const bytes = new TextEncoder().encode(text);
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(bytes); controller.close(); },
+      cancel,
+    });
+    const response = new Response(body, {
+      status, headers: contentLength === undefined ? {} : { "Content-Length": contentLength },
+    });
+    return { response, body, cancel };
+  }
+
+  async function fixture(sendResponse: Response) {
+    FakeWebSocket.instances = [];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(streamedResponse(JSON.stringify({ endpoint: "wss://stream.example/connect", ticket: "ticket-1" })).response)
+      .mockResolvedValueOnce(streamedResponse(JSON.stringify({ access_token: "token-1", expires_in: 7200 })).response)
+      .mockResolvedValue(sendResponse);
+    const onStatus = vi.fn();
+    const adapter = makeAdapter(fetchMock, vi.fn(), onStatus);
+    adapters.push(adapter);
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    return { adapter, fetchMock, onStatus };
+  }
+
+  it.each(["dm", "group"])("accepts exactly 64KiB of JSON for %s despite a false Content-Length", async targetScope => {
+    const text = JSON.stringify({ result: "你😀", pad: "" });
+    const data = JSON.parse(text);
+    data.pad = " ".repeat(65_536 - new TextEncoder().encode(text).length);
+    const { response, body } = streamedResponse(JSON.stringify(data), 200, "999999");
+    const { adapter, fetchMock } = await fixture(response);
+    await expect(adapter.sendReply("synthetic-target", "hello", { targetScope })).resolves.toEqual(data);
+    expect(body.locked).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["dm", "group"])("rejects an oversized %s response without resending or reading the next message chunk", async targetScope => {
+    const { response, body } = streamedResponse(" ".repeat(65_537), 200, "1");
+    const { adapter, fetchMock, onStatus } = await fixture(response);
+    await expect(adapter.sendReply("synthetic-target", "你".repeat(5000), { targetScope }))
+      .rejects.toThrow(new RegExp(`DingTalk send_${targetScope} response body exceeded 65536 bytes`));
+    expect(body.locked).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(onStatus).toHaveBeenCalledWith("error", expect.stringContaining(`send_${targetScope}`));
+  });
+
+  it.each(["dm", "group"])("times out a stalled %s body after 10 seconds and cancels its stream", async targetScope => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ cancel });
+    const { adapter, fetchMock } = await fixture(new Response(body));
+    vi.useFakeTimers();
+    const outcome = adapter.sendReply("synthetic-target", "hello", { targetScope }).then(
+      value => ({ value, error: undefined }), error => ({ value: undefined, error }),
+    );
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(cancel).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect((await outcome).error?.message).toMatch(new RegExp(`DingTalk send_${targetScope} response body timed out`));
+    expect(body.locked).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["oversized", "stalled"])("bounds a %s registration body and keeps the existing reconnect delay", async kind => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances = [];
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { if (kind === "oversized") controller.enqueue(new Uint8Array(65_537)); },
+      cancel,
+    });
+    const onStatus = vi.fn();
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(body));
+    const adapter = makeAdapter(fetchMock, vi.fn(), onStatus);
+    adapters.push(adapter);
+    await vi.advanceTimersByTimeAsync(kind === "stalled" ? 10_000 : 0);
+    expect(onStatus).toHaveBeenCalledWith("error", expect.stringMatching(/DingTalk stream_open response body (exceeded|timed out)/));
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(body.locked).toBe(false);
+    adapter.stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["dm", "group"])("keeps non-JSON HTTP errors safe and does not retry %s sends", async targetScope => {
+    const { adapter, fetchMock, onStatus } = await fixture(streamedResponse("<html>token-1 dt-secret arbitrary upstream dump</html>", 503).response);
+    await expect(adapter.sendReply("synthetic-target", "hello", { targetScope }))
+      .rejects.toThrow(new RegExp(`\\[dingtalk:send_${targetScope}\\] request failed \\(code=503\\)`));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(JSON.stringify(onStatus.mock.calls)).not.toMatch(/token-1|dt-secret|arbitrary upstream dump/);
+  });
+
+  it("keeps a successful non-JSON send response as bounded text", async () => {
+    const { adapter } = await fixture(streamedResponse("accepted").response);
+    await expect(adapter.sendReply("synthetic-target", "hello")).resolves.toBe("accepted");
+  });
+});
