@@ -6,8 +6,9 @@ import os from "os";
 import path from "path";
 import zlib from "zlib";
 import { Readable } from "stream";
+import { once } from "node:events";
 import { createRequire } from "module";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 
@@ -213,27 +214,86 @@ function fakeStreamResponse(statusCode: number, headers: Record<string, string>,
   return { statusCode, headers, bodyStream: Readable.from(chunks) };
 }
 
-/**
- * A Readable that emits `chunks` one at a time, each after a real
- * `intervalMs` delay, then ends — used to simulate a slow/trickling
- * network download with actual elapsed time (as opposed to
- * `fakeStreamResponse`'s effectively-instant `Readable.from`), so the
- * stall-window and attempt-deadline guards in `downloadToFile` have real
- * time to observe.
+type ClockedDownload = {
+  destPath: string;
+  bodyStream: Readable;
+  progress: number[];
+  promise: Promise<{ bytesWritten: number }>;
+  isSettled: () => boolean;
+  send: (chunk: Buffer) => Promise<void>;
+  advance: (ms: number) => Promise<void>;
+  expectReleased: () => Promise<void>;
+};
+
+/** Control guard time, but keep stream events and filesystem I/O real.
+ * A real 5ms producer is not guaranteed to run before a real 50ms guard
+ * on a busy worker. Wait for the pipe/read and file-open boundaries, and
+ * acknowledge each received chunk before advancing to the next check.
  */
-function makeTrickleStream(chunks: Buffer[], intervalMs: number): Readable {
-  let i = 0;
-  return new Readable({
-    read() {
-      if (i >= chunks.length) {
-        this.push(null);
-        return;
-      }
-      const chunk = chunks[i];
-      i += 1;
-      setTimeout(() => this.push(chunk), intervalMs);
+async function withDownloadClock(
+  options: { stallWindowMs?: number; stallMinBytes?: number; attemptDeadlineMs?: number },
+  check: (download: ClockedDownload) => Promise<void>,
+) {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+  const destPath = path.join(makeTempDir("hana-ota-dl-clock-"), "archive.tar.gz");
+  let reading!: () => void;
+  const readStarted = new Promise<void>((resolve) => { reading = resolve; });
+  const bodyStream = new Readable({ read() { reading(); } });
+  const createWriteStream = fs.createWriteStream;
+  let output!: fs.WriteStream;
+  let outputClosed!: Promise<void>;
+  const writer = vi.spyOn(fs, "createWriteStream").mockImplementation((...args) => {
+    output = createWriteStream(...args);
+    outputClosed = new Promise<void>((resolve) => { output.once("close", resolve); });
+    return output;
+  });
+  const progress: number[] = [];
+  let acknowledge: (() => void) | undefined;
+  const promise: ClockedDownload["promise"] = downloadToFile("https://mirror.example/archive.tar.gz", destPath, {
+    fetchOnce: async () => ({ statusCode: 200, headers: {}, bodyStream }),
+    stallWindowMs: 50,
+    stallMinBytes: 10,
+    ...options,
+    onProgress: (n: number) => {
+      progress.push(n);
+      acknowledge?.();
+      acknowledge = undefined;
     },
   });
+  let settled = false;
+  // Observe rejection before any clock advance can trigger it.
+  const completion = promise.then(() => { settled = true; }, () => { settled = true; });
+  try {
+    await readStarted;
+    if (output.pending) await once(output, "open");
+    expect(vi.getTimerCount()).toBe(2);
+    await check({
+      destPath, bodyStream, progress, promise,
+      isSettled: () => settled,
+      async send(chunk) {
+        const received = new Promise<void>((resolve) => { acknowledge = resolve; });
+        bodyStream.push(chunk);
+        await Promise.race([
+          received,
+          completion.then(() => { throw new Error("download settled before receiving the chunk"); }),
+        ]);
+      },
+      async advance(ms) { await vi.advanceTimersByTimeAsync(ms); },
+      async expectReleased() {
+        await completion;
+        await outputClosed;
+        expect(bodyStream.destroyed).toBe(true);
+        expect(output.closed).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+      },
+    });
+  } finally {
+    if (!settled) bodyStream.destroy(new Error("test cleanup"));
+    await completion;
+    await outputClosed;
+    writer.mockRestore();
+    vi.useRealTimers();
+  }
 }
 
 describe("artifact-ota: fetchWithRedirects (fake transport)", () => {
@@ -357,55 +417,97 @@ describe("artifact-ota: downloadToFile", () => {
 });
 
 describe("artifact-ota: downloadToFile stall/deadline guards (trickle-attack mitigation)", () => {
-  it("aborts a trickling download that never clears the rolling stall window, and cleans up the partial file", async () => {
-    const root = makeTempDir("hana-ota-dl-stall-");
-    const destPath = path.join(root, "archive.tar.gz");
-    // 5 chunks of 10 bytes each, one every 200ms — far slower than the 50ms
-    // stall window / 1000-byte minimum below, so the rolling-progress guard
-    // must fire long before the stream would ever finish naturally.
-    const chunks = Array.from({ length: 5 }, () => Buffer.alloc(10, 1));
-    const fetchOnce = async () => ({ statusCode: 200, headers: {}, bodyStream: makeTrickleStream(chunks, 200) });
+  it("aborts a silent download at the stall boundary and releases its resources", async () => {
+    await withDownloadClock({}, async (download) => {
+      await download.advance(49);
+      expect(download.isSettled()).toBe(false);
+      await download.advance(1);
+      await expect(download.promise).rejects.toThrow(/stalled/);
+      await download.expectReleased();
+      expect(download.progress).toEqual([]);
+      expect(fs.existsSync(download.destPath)).toBe(false);
+    });
+  });
 
-    await expect(
-      downloadToFile("https://mirror.example/archive.tar.gz", destPath, {
-        fetchOnce,
-        stallWindowMs: 50,
-        stallMinBytes: 1000,
-      }),
-    ).rejects.toThrow(/stalled/);
-    expect(fs.existsSync(destPath)).toBe(false);
+  it("aborts a trickling download that never clears the rolling stall window, and cleans up the partial file", async () => {
+    await withDownloadClock({ stallMinBytes: 1000 }, async (download) => {
+      // Data keeps arriving, but 900 bytes in this window is insufficient.
+      for (let i = 0; i < 9; i += 1) {
+        await download.advance(5);
+        await download.send(Buffer.alloc(100, 1));
+      }
+      await download.advance(4);
+      expect(download.isSettled()).toBe(false);
+      expect(download.progress).toEqual([100, 200, 300, 400, 500, 600, 700, 800, 900]);
+      await download.advance(1);
+      await expect(download.promise).rejects.toThrow(/stalled/);
+      await download.expectReleased();
+      expect(fs.existsSync(download.destPath)).toBe(false);
+    });
   });
 
   it("does not abort a healthy trickling download that clears the stall window every round", async () => {
-    const root = makeTempDir("hana-ota-dl-stall-ok-");
-    const destPath = path.join(root, "archive.tar.gz");
-    const chunks = Array.from({ length: 5 }, () => Buffer.alloc(50, 2));
-    const fetchOnce = async () => ({ statusCode: 200, headers: {}, bodyStream: makeTrickleStream(chunks, 5) });
-
-    const result = await downloadToFile("https://mirror.example/archive.tar.gz", destPath, {
-      fetchOnce,
-      stallWindowMs: 50,
-      stallMinBytes: 10,
+    await withDownloadClock({}, async (download) => {
+      // Cross five complete windows, including exactly the minimum in the
+      // first. The old 5 x 5ms fixture normally finished before one check.
+      const chunks = [10, 11, 50, 50, 129].map((size) => Buffer.alloc(size, 2));
+      for (const chunk of chunks) {
+        await download.advance(5);
+        await download.send(chunk);
+        await download.advance(45);
+        expect(download.isSettled()).toBe(false);
+        expect(vi.getTimerCount()).toBe(2);
+      }
+      expect(download.progress).toEqual([10, 21, 71, 121, 250]);
+      download.bodyStream.push(null);
+      expect((await download.promise).bytesWritten).toBe(250);
+      await download.expectReleased();
+      expect(fs.readFileSync(download.destPath)).toEqual(Buffer.concat(chunks));
     });
-    expect(result.bytesWritten).toBe(250);
-    expect(fs.readFileSync(destPath).length).toBe(250);
+  });
+
+  it("does not let an earlier burst pay for an underfilled later stall window", async () => {
+    await withDownloadClock({}, async (download) => {
+      await download.send(Buffer.alloc(100, 1));
+      await download.advance(50);
+      expect(download.isSettled()).toBe(false);
+      await download.send(Buffer.alloc(9, 1));
+      await download.advance(49);
+      expect(download.isSettled()).toBe(false);
+      await download.advance(1);
+      await expect(download.promise).rejects.toThrow(/stalled/);
+      await download.expectReleased();
+      expect(download.progress).toEqual([100, 109]);
+      expect(fs.existsSync(download.destPath)).toBe(false);
+    });
   });
 
   it("aborts a download that exceeds the hard per-attempt deadline even with otherwise-healthy progress", async () => {
-    const root = makeTempDir("hana-ota-dl-deadline-");
-    const destPath = path.join(root, "archive.tar.gz");
-    const chunks = Array.from({ length: 10 }, () => Buffer.alloc(50, 3));
-    const fetchOnce = async () => ({ statusCode: 200, headers: {}, bodyStream: makeTrickleStream(chunks, 20) });
+    await withDownloadClock({ stallWindowMs: 10, stallMinBytes: 1, attemptDeadlineMs: 40 }, async (download) => {
+      for (let i = 0; i < 7; i += 1) {
+        await download.advance(5);
+        await download.send(Buffer.alloc(50, 3));
+      }
+      await download.advance(4);
+      expect(download.isSettled()).toBe(false);
+      expect(download.progress).toEqual([50, 100, 150, 200, 250, 300, 350]);
+      await download.advance(1);
+      await expect(download.promise).rejects.toThrow(/deadline/);
+      await download.expectReleased();
+      expect(fs.existsSync(download.destPath)).toBe(false);
+    });
+  });
 
-    await expect(
-      downloadToFile("https://mirror.example/archive.tar.gz", destPath, {
-        fetchOnce,
-        stallWindowMs: 1000, // generous — never the guard that fires here
-        stallMinBytes: 1,
-        attemptDeadlineMs: 40, // natural duration is ~200ms; deadline must win
-      }),
-    ).rejects.toThrow(/deadline/);
-    expect(fs.existsSync(destPath)).toBe(false);
+  it("releases both guards, streams and partial file when the transport is cancelled", async () => {
+    await withDownloadClock({}, async (download) => {
+      await download.send(Buffer.alloc(10, 4));
+      download.bodyStream.destroy(new Error("transport cancelled"));
+      await expect(download.promise).rejects.toThrow("transport cancelled");
+      await download.expectReleased();
+      expect(fs.existsSync(download.destPath)).toBe(false);
+      await download.advance(60 * 60 * 1000);
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 });
 
