@@ -118,8 +118,29 @@ function isRetryableStatus(status: number) {
   return status === 429 || status >= 500;
 }
 
-function defaultSleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function isAbortError(error: unknown) {
+  const seen = new Set<unknown>();
+  while (error && typeof error === "object" && !seen.has(error)) {
+    const current = error as { name?: unknown; code?: unknown; cause?: unknown };
+    if (current.name === "AbortError" || current.code === "ABORT_ERR") return true;
+    seen.add(error);
+    error = current.cause;
+  }
+  return false;
+}
+
+function defaultSleep(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    const timer = setTimeout(() => { cleanup(); resolve(); }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      cleanup();
+      reject(signal!.reason);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
 }
 
 export interface BridgeOutboundRequestOptions {
@@ -129,6 +150,8 @@ export interface BridgeOutboundRequestOptions {
   method?: string;
   headers?: Record<string, string>;
   body?: any;
+  /** 调用方取消，覆盖请求、返回的响应体及重试退避；不替代调用方的 body 预算。 */
+  signal?: AbortSignal;
   /** 单次尝试超时；默认 BRIDGE_HTTP_TIMEOUT_MS。 */
   timeoutMs?: number;
   /** 仅幂等/可安全重复的调用允许置 true；发送类调用必须保持 false。 */
@@ -146,7 +169,8 @@ export function createBridgeOutboundHttp({
   platform: string;
   fetchImpl?: typeof undiciFetch;
   resolveDispatcher?: typeof fetchDispatcherForUrl;
-  sleep?: (ms: number) => Promise<unknown>;
+  /** 注入的等待实现也须响应 signal 并清理自身资源。 */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<unknown>;
 }) {
   if (!platform || typeof platform !== "string") {
     throw new Error("createBridgeOutboundHttp requires an explicit platform label");
@@ -158,6 +182,7 @@ export function createBridgeOutboundHttp({
     method = "GET",
     headers,
     body,
+    signal,
     timeoutMs = BRIDGE_HTTP_TIMEOUT_MS,
     idempotent = false,
     maxRetries = BRIDGE_HTTP_MAX_RETRIES,
@@ -172,6 +197,7 @@ export function createBridgeOutboundHttp({
       throw new Error(`[${platform}:${stage}] outbound request URL is not parsable`);
     }
 
+    signal?.throwIfAborted();
     const { dispatcher, proxyUrl } = resolveDispatcher(url) || { dispatcher: null, proxyUrl: "" };
     const proxied = !!proxyUrl;
     const redactedProxy = proxied ? redactUrlCredentials(proxyUrl) : "";
@@ -179,8 +205,13 @@ export function createBridgeOutboundHttp({
     const attempts = idempotent ? Math.max(1, maxRetries + 1) : 1;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      signal?.throwIfAborted();
       let timedOut = false;
       const controller = new AbortController();
+      // Native composition uses weak dependencies, not a retained parent listener.
+      // Keep it attached to the returned Response so abort still reaches its body
+      // after the header deadline is cleared; body budgets remain caller-owned.
+      const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
       const timer = setTimeout(() => {
         timedOut = true;
         controller.abort();
@@ -191,9 +222,10 @@ export function createBridgeOutboundHttp({
           headers,
           body,
           redirect: "manual",
-          signal: controller.signal,
+          signal: requestSignal,
           ...(dispatcher ? { dispatcher } : {}),
         } as any);
+        signal?.throwIfAborted();
         if (isRedirectStatus(res.status)) {
           // 不读取 Location 或响应正文：它们可能回显 secret 或包含签名。
           try { await res.body?.cancel?.(); } catch { /* 释放失败也不能重发 */ }
@@ -206,26 +238,31 @@ export function createBridgeOutboundHttp({
           // 释放连接，丢弃这轮可重试响应的 body（状态语义仍归调用方：
           // 最后一轮的响应原样返回，由调用方解析错误细节）
           try { await res.body?.cancel?.(); } catch { /* body 可能已被消费或不存在 */ }
-          await sleep(BRIDGE_HTTP_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
-          continue;
+        } else {
+          return res;
         }
-        return res;
       } catch (err) {
+        signal?.throwIfAborted();
         if (err instanceof BridgeHttpRedirectError) throw err;
-        if (attempt < attempts) {
-          await sleep(BRIDGE_HTTP_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
-          continue;
+        // An internal deadline remains retryable; a caller/transport abort does not.
+        if (!timedOut && isAbortError(err)) throw err;
+        if (attempt === attempts) {
+          const what = timedOut
+            ? `timed out after ${timeoutMs}ms`
+            : `failed: ${describeCause(err)}`;
+          throw new BridgeHttpError(
+            `[${platform}:${stage}] ${method} ${host} ${what} (${attempt}/${attempts} attempts, ${route})`,
+            { platform, stage, method, host, proxied, proxyUrl: redactedProxy, attempts: attempt, timedOut, cause: err },
+          );
         }
-        const what = timedOut
-          ? `timed out after ${timeoutMs}ms`
-          : `failed: ${describeCause(err)}`;
-        throw new BridgeHttpError(
-          `[${platform}:${stage}] ${method} ${host} ${what} (${attempt}/${attempts} attempts, ${route})`,
-          { platform, stage, method, host, proxied, proxyUrl: redactedProxy, attempts: attempt, timedOut, cause: err },
-        );
       } finally {
         clearTimeout(timer);
       }
+      // Backoff has its own cancellation lifetime, outside the request timeout
+      // and catch block, so its AbortError can never schedule another retry.
+      signal?.throwIfAborted();
+      const delay = BRIDGE_HTTP_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+      await (signal ? sleep(delay, signal) : sleep(delay));
     }
     // 循环要么 return 要么 throw；走到这里说明上面的不变量被破坏了
     throw new Error(`[${platform}:${stage}] outbound retry loop exited without a result`);
