@@ -174,12 +174,13 @@ const ADAPTER_REGISTRY = {
   wechat: {
     create: (creds, onMessage, hooks, agentId) => createWechatAdapter({
       botToken: creds.botToken,
+      baseUrl: creds.baseUrl,
       hanaHome: creds.hanaHome,
       agentId,
       onMessage,
       onStatus: hooks?.onStatus,
     }),
-    getCredentials: (cfg) => cfg?.enabled && cfg?.botToken ? { botToken: cfg.botToken, hanaHome: cfg._hanaHome || "" } : null,
+    getCredentials: (cfg) => cfg?.enabled && cfg?.botToken ? { botToken: cfg.botToken, baseUrl: cfg.baseUrl, hanaHome: cfg._hanaHome || "" } : null,
     ownerSessionKey: (userId, agentId) => `wx_dm_${userId}@${agentId}`,
     connectsAsync: true,
   },

@@ -100,6 +100,7 @@ copyServerBootstrap({ rootDir: ROOT, outDir });
 // ── 3. 复制运行时数据文件 ──
 // 这些文件由 fromRoot() / fs.readFileSync() 在运行时读取，无法打进 bundle
 const LIB_DATA_GLOBS = [
+  "wechat-LICENSE.txt",
   "known-models.json",
   "known-model-fallbacks.json",
   "default-models.json",

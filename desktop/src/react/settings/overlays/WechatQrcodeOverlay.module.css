@@ -80,3 +80,11 @@
   color: var(--text-tertiary);
   font-size: 13px;
 }
+
+.verifyForm {
+  display: flex;
+  gap: var(--space-8);
+  margin-top: var(--space-16);
+}
+.verifyForm input { min-width: 0; width: 100%; }
+.verifyForm button { flex-shrink: 0; }

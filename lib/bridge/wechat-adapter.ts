@@ -39,6 +39,7 @@ import {
 } from "./wechat-ilink-media-crypto.ts";
 import { createModuleLogger } from "../debug-log.ts";
 import { redactLogText } from "../../shared/log-redactor.ts";
+import { normalizeWechatBaseUrl } from "../../shared/wechat-endpoint.ts";
 import { readWechatApiResponse, WechatApiError } from "./wechat-api.ts";
 import {
   awaitWechatAbort, cancelWechatBody, fetchWechatMedia, selectWechatMediaUrl,
@@ -46,8 +47,6 @@ import {
 } from "./wechat-media.ts";
 
 const log = createModuleLogger("wechat");
-
-const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
 
 export const WECHAT_ILINK_MEDIA_CAPABILITIES = createMediaCapabilities({
   platform: "wechat",
@@ -251,12 +250,13 @@ function isMediaItem(item) {
 /**
  * @param {object} opts
  * @param {string} opts.botToken
+ * @param {string} [opts.baseUrl] - verified iLink endpoint; omitted legacy configs keep the default
  * @param {string} [opts.hanaHome] - hanaHome 路径，用于 cursor 持久化
  * @param {(msg: object) => void} opts.onMessage
  * @param {(status: string, error?: string) => void} [opts.onStatus]
  */
-export function createWechatAdapter({ botToken, hanaHome, agentId, onMessage, onStatus }) {
-  const baseUrl = DEFAULT_BASE_URL;
+export function createWechatAdapter({ botToken, baseUrl: configuredBaseUrl = undefined, hanaHome, agentId, onMessage, onStatus }) {
+  const baseUrl = normalizeWechatBaseUrl(configuredBaseUrl);
   let generation = 0;
   const abortController = new AbortController();
   let state: "active" | "expired" | "stopped" = "active";

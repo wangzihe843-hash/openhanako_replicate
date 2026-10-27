@@ -518,7 +518,8 @@ function isBridgeManagementRoute(verb, routePath) {
     || routePath === "/api/bridge/settings"
     || routePath === "/api/bridge/owner"
     || routePath === "/api/bridge/stop"
-    || routePath === "/api/bridge/test";
+    || routePath === "/api/bridge/test"
+    || /^\/api\/bridge\/wechat\/(qrcode|qrcode-status|qrcode-cancel)$/.test(routePath);
 }
 
 function isMcpSettingsReadRoute(verb, routePath) {

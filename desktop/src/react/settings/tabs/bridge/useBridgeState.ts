@@ -36,7 +36,7 @@ export interface DingTalkStatus extends PlatformStatusBase {
   restBaseUrl?: string;
 }
 export interface QQStatus extends PlatformStatusBase { appID?: string; appSecret?: string; hasAppSecret?: boolean }
-export interface WechatStatus extends PlatformStatusBase { token?: string }
+export interface WechatStatus extends PlatformStatusBase { token?: string; hasBotToken?: boolean; baseUrl?: string | null; configError?: string | null }
 
 export interface BridgeStatus {
   agentId?: string | null;

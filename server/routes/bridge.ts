@@ -6,7 +6,7 @@
 
 import fs from "fs";
 import path from "path";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { safeJson } from "../hono-helpers.ts";
 import { debugLog } from "../../lib/debug-log.ts";
 import { parseSessionKey, collectKnownUsers, KNOWN_PLATFORMS, resolveBridgeSessionIdentity } from "../../lib/bridge/session-key.ts";
@@ -17,6 +17,9 @@ import { t } from "../../lib/i18n.ts";
 import { AgentNotFoundError, resolveAgentStrict } from "../utils/resolve-agent.ts";
 import { telegramBotOptions } from "../../lib/net/outbound-proxy.ts";
 import { createBridgeOutboundHttp } from "../../lib/bridge/outbound-http.ts";
+import { normalizeWechatBaseUrl } from "../../shared/wechat-endpoint.ts";
+import type { WechatLoginSessions } from "../../lib/bridge/wechat-login.ts";
+import { denyWechatDestinationChange } from "../http/wechat-destination-guard.ts";
 import { readWechatApiResponse } from "../../lib/bridge/wechat-api.ts";
 import { redactLogText } from "../../shared/log-redactor.ts";
 import {
@@ -37,7 +40,7 @@ import {
   maskSecretValue,
   resolveSecretPatch,
 } from "../../shared/secret-custody.ts";
-import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.ts";
+import { denySecretMutationWithoutScope, denyWithoutScope, readAuthPrincipal } from "../http/capability-guard.ts";
 import { denyDingTalkDestinationChange } from "../http/dingtalk-destination-guard.ts";
 import { recordSecurityAuditEvent } from "../http/security-audit.ts";
 import { normalizeBridgePermissionMode, SESSION_PERMISSION_MODES } from "../../core/session-permission-mode.ts";
@@ -308,6 +311,7 @@ export function buildBridgeStatus(engine: any, manager: any, agent: any) {
       configured: !!bridge.wechat?.botToken,
       token: maskSecretValue(bridge.wechat?.botToken || ""),
       hasBotToken: !!bridge.wechat?.botToken,
+      ...wechatStatusEndpoint(bridge.wechat),
     }),
     permissionMode,
     readOnly,
@@ -318,9 +322,24 @@ export function buildBridgeStatus(engine: any, manager: any, agent: any) {
   };
 }
 
+function wechatStatusEndpoint(config: { baseUrl?: unknown } | undefined) {
+  try { return { baseUrl: normalizeWechatBaseUrl(config?.baseUrl), configError: null }; }
+  catch { return { baseUrl: null, configError: "wechat_base_url_not_trusted" }; }
+}
+
+function wechatLoginOwner(c: Context) {
+  const p = readAuthPrincipal(c);
+  return p ? JSON.stringify([p.principalId, p.credentialId, p.deviceId, p.kind]) : "local";
+}
+
 export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
   const route = new Hono();
   const bridgeRef = normalizeBridgeManagerRef(bridgeManagerRef);
+  let wechatLogins: Promise<WechatLoginSessions> | undefined;
+  const getWechatLogins = () => wechatLogins ??= (async () => {
+    const { WechatLoginSessions } = await import("../../lib/bridge/wechat-login.ts");
+    return new WechatLoginSessions();
+  })();
 
   function resolveBridgeManager() {
     return bridgeRef.get?.() || null;
@@ -433,6 +452,16 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
         if (patch.enabled) normalizeDingTalkBridgeCredentials(patch);
       } catch (err: any) {
         return c.json({ ok: false, error: err?.message || String(err) }, 400);
+      }
+    }
+
+    if (platform === "wechat") {
+      const denied = denyWechatDestinationChange(c, bridgeCfg, patch);
+      if (denied) return denied;
+      try { patch.baseUrl = normalizeWechatBaseUrl(patch.baseUrl); }
+      catch { return c.json({ ok: false, error: "wechat_base_url_not_trusted" }, 400); }
+      if (body.loginSessionId !== undefined && !(await getWechatLogins()).consume(body.loginSessionId, agentId, wechatLoginOwner(c), patch)) {
+        return c.json({ ok: false, error: "login_session_expired" }, 409);
       }
     }
 
@@ -830,6 +859,11 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
         const destinationDenied = denyDingTalkDestinationChange(c, saved, effectiveCredentials);
         if (destinationDenied) return destinationDenied;
       }
+      if (platform === "wechat") {
+        const denied = denyWechatDestinationChange(c, saved, effectiveCredentials);
+        if (denied) return denied;
+        effectiveCredentials.baseUrl = normalizeWechatBaseUrl(effectiveCredentials.baseUrl);
+      }
       if (platform === "telegram") {
         const TelegramBot = (await import("node-telegram-bot-api")).default;
         const bot = new TelegramBot(effectiveCredentials.token, telegramBotOptions());
@@ -950,7 +984,7 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
         // 用 getconfig 验证 token（不污染 cursor）
         const crypto = await import("node:crypto");
         const uin = Buffer.from(String(crypto.randomBytes(4).readUInt32BE(0)), "utf-8").toString("base64");
-        const res = await fetch("https://ilinkai.weixin.qq.com/ilink/bot/getconfig", {
+        const res = await fetch(`${effectiveCredentials.baseUrl}/ilink/bot/getconfig`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -958,6 +992,7 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
             "Authorization": `Bearer ${effectiveCredentials.botToken}`,
             "X-WECHAT-UIN": uin,
           },
+          redirect: "manual",
           body: JSON.stringify({ base_info: { channel_version: "1.0.0" } }),
           signal: AbortSignal.timeout(10_000),
         });
@@ -970,19 +1005,25 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
     }
   });
 
-  /** 获取微信扫码登录二维码 */
-  route.post("/bridge/wechat/qrcode", async (c) => {
-    const { getWechatQrcode } = await import("../../lib/bridge/wechat-login.ts");
-    return c.json(await getWechatQrcode());
-  });
-
-  /** 轮询微信扫码状态 */
-  route.post("/bridge/wechat/qrcode-status", async (c) => {
-    const body = await safeJson(c);
-    const { qrcodeId } = body;
-    const { pollWechatQrcodeStatus } = await import("../../lib/bridge/wechat-login.ts");
-    return c.json(await pollWechatQrcodeStatus(qrcodeId));
-  });
+  // Every QR operation can expose/replace a secret, and always names an agent.
+  for (const action of ["qrcode", "qrcode-status", "qrcode-cancel"] as const) {
+    route.post(`/bridge/wechat/${action}`, withReadAgent(async (c, agent) => {
+      const denied = denyWithoutScope(c, "bridge.manage") || denySecretMutationWithoutScope(c, ["credentials.botToken"]);
+      if (denied) return denied;
+      c.header("Cache-Control", "no-store");
+      const body = await safeJson(c);
+      const owner = wechatLoginOwner(c);
+      if (action === "qrcode") {
+        try { return c.json(await (await getWechatLogins()).start(body.sessionId, agent.id, owner, agent.config?.bridge?.wechat)); }
+        catch { return c.json({ ok: false, error: "wechat_base_url_not_trusted" }, 400); }
+      }
+      if (action === "qrcode-cancel") {
+        (await getWechatLogins()).cancel(body.sessionId, agent.id, owner);
+        return c.json({ ok: true });
+      }
+      return c.json(await (await getWechatLogins()).poll(body.sessionId, agent.id, owner, body.verifyCode));
+    }));
+  }
 
   return route;
 }

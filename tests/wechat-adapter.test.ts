@@ -305,3 +305,16 @@ describe("createWechatAdapter", () => {
     fs.rmSync(hanaHome, { recursive: true, force: true });
   });
 });
+
+it('validates configured baseUrl before starting any request and defaults old configurations', async () => {
+  const fetchMock = vi.fn<typeof fetch>(() => new Promise<Response>(() => {})); vi.stubGlobal('fetch', fetchMock);
+  for (const baseUrl of ['https://sink.invalid', 'https://ilinkai.weixin.qq.com/path']) {
+    expect(() => createWechatAdapter({ botToken: 'SYN_TOKEN', baseUrl, hanaHome: undefined, agentId: 'a', onMessage: vi.fn(), onStatus: vi.fn() })).toThrow('wechat_base_url_not_trusted');
+  }
+  expect(fetchMock).not.toHaveBeenCalled();
+  for (const baseUrl of [undefined, 'https://ILINKAI.WEIXIN.QQ.COM:443/']) {
+    const adapter = createWechatAdapter({ botToken: 'SYN_TOKEN', baseUrl, hanaHome: undefined, agentId: 'a', onMessage: vi.fn(), onStatus: vi.fn() });
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toBe('https://ilinkai.weixin.qq.com/ilink/bot/getupdates');
+    adapter.stop();
+  }
+});

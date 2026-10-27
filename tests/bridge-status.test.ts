@@ -32,6 +32,15 @@ import { Hono } from "hono";
 import { createBridgeRoute } from "../server/routes/bridge.ts";
 
 describe("BridgeManager platform status", () => {
+  it("passes the optional WeChat endpoint from per-agent config into the adapter", () => {
+    createWechatAdapter.mockReset();
+    createWechatAdapter.mockReturnValue({ stop: vi.fn() });
+    const bm = new BridgeManager({ engine: { hanakoHome: os.tmpdir(), getAgent: () => null }, hub: { eventBus: { emit: vi.fn() } } });
+    bm.startPlatformFromConfig("wechat", { enabled: true, botToken: "SYN_TOKEN", baseUrl: "https://ilinkai.weixin.qq.com/" }, "a");
+    expect(createWechatAdapter.mock.calls[0][0]).toMatchObject({ botToken: "SYN_TOKEN", baseUrl: "https://ilinkai.weixin.qq.com/", agentId: "a" });
+    bm.stopAll(); createWechatAdapter.mockReset();
+  });
+
   it("sanitizes startup/config errors and defensive status reads while retaining error identity", () => {
     createTelegramAdapter.mockReset();
     const cause = Object.assign(new TypeError("ticket=fixtureCause X-Auth-Token=SYN_HEADER_CAUSE"), { code: "ECONNRESET" });

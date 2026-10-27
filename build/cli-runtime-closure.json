@@ -4712,14 +4712,9 @@
           "root": "server-bootstrap",
           "from": "server/routes/bridge.ts",
           "kind": "dynamic-import"
-        },
-        {
-          "root": "server-bootstrap",
-          "from": "server/routes/bridge.ts",
-          "kind": "dynamic-import"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by server/routes/bridge.ts (dynamic-import); server/routes/bridge.ts (dynamic-import)."
+      "reason": "Reached via esbuild source module graph, imported by server/routes/bridge.ts (dynamic-import)."
     },
     {
       "path": "lib/bridge/wechat-media.ts",
@@ -4732,11 +4727,16 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/bridge/wechat-login.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/bridge/wechat-adapter.ts",
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by lib/bridge/wechat-api.ts (import-statement); lib/bridge/wechat-adapter.ts (import-statement)."
+      "reason": "Reached via esbuild source module graph, imported by lib/bridge/wechat-api.ts (import-statement); lib/bridge/wechat-login.ts (import-statement); lib/bridge/wechat-adapter.ts (import-statement)."
     },
     {
       "path": "lib/browser/browser-manager.ts",
@@ -82175,6 +82175,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "server/http/wechat-destination-guard.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "server/http/dingtalk-destination-guard.ts",
           "kind": "import-statement"
         },
@@ -82239,7 +82244,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by server/http/security-audit.ts (import-statement); server/routes/config.ts (import-statement); server/routes/providers.ts (import-statement); +13 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by server/http/security-audit.ts (import-statement); server/routes/config.ts (import-statement); server/routes/providers.ts (import-statement); +14 more importer(s)."
     },
     {
       "path": "server/http/cors-policy.ts",
@@ -82502,6 +82507,23 @@
         }
       ],
       "reason": "Reached via esbuild source module graph, imported by server/index.ts (import-statement)."
+    },
+    {
+      "path": "server/http/wechat-destination-guard.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/agents.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/bridge.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by server/routes/agents.ts (import-statement); server/routes/bridge.ts (import-statement)."
     },
     {
       "path": "server/index.ts",
@@ -85733,6 +85755,38 @@
       "reason": "Reached via esbuild source module graph, imported by core/config-coordinator.ts (import-statement); server/routes/preferences.ts (import-statement)."
     },
     {
+      "path": "shared/wechat-endpoint.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "server/http/wechat-destination-guard.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/agents.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/bridge/wechat-login.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/bridge.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/bridge/wechat-adapter.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by server/http/wechat-destination-guard.ts (import-statement); server/routes/agents.ts (import-statement); lib/bridge/wechat-login.ts (import-statement); +2 more importer(s)."
+    },
+    {
       "path": "shared/workspace-history.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -86132,9 +86186,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 7099,
+    "totalFiles": 7101,
     "byInputType": {
-      "source-graph": 746,
+      "source-graph": 748,
       "runtime-asset": 11,
       "nft-runtime-trace": 6342
     }

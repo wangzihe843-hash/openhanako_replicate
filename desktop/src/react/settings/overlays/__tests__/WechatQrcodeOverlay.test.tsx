@@ -16,7 +16,7 @@ function deferred<T>() {
   return { resolve, promise };
 }
 const response = (data: unknown) => ({ json: async () => data });
-const qr = (id: string) => ({ ok: true, qrcodeId: id, qrcodeUrl: `https://example.invalid/${id}` });
+const qr = (id: string) => ({ ok: true, sessionId: id, qrcodeUrl: `https://example.invalid/${id}` });
 const flush = () => act(async () => {});
 const open = (agentId: string) => act(async () => {
   window.dispatchEvent(new CustomEvent('hana-show-wechat-qrcode', { detail: { agentId } }));
@@ -33,9 +33,9 @@ it('cannot save an old QR confirmation to the newly opened agent, including a la
   const oldBody = deferred<unknown>();
   let generation = 0;
   mock.fetch.mockImplementation(async (url: string, options?: RequestInit) => {
-    if (url.endsWith('/qrcode')) return response(qr(`qr-${++generation}`));
-    if (url.endsWith('/qrcode-status')) {
-      const id = JSON.parse(String(options?.body)).qrcodeId;
+    if (url.split('?')[0].endsWith('/qrcode')) return response(qr(`qr-${++generation}`));
+    if (url.split('?')[0].endsWith('/qrcode-status')) {
+      const id = JSON.parse(String(options?.body)).sessionId;
       return { json: () => id === 'qr-1' ? oldBody.promise : new Promise(() => {}) };
     }
     return response({ ok: true });
@@ -53,7 +53,7 @@ it('ignores an old QR fetch after another agent opens the overlay', async () => 
   const old = deferred<ReturnType<typeof response>>();
   let calls = 0;
   mock.fetch.mockImplementation((url: string) => {
-    if (url.endsWith('/qrcode')) return ++calls === 1 ? old.promise : Promise.resolve(response(qr('new')));
+    if (url.split('?')[0].endsWith('/qrcode')) return ++calls === 1 ? old.promise : Promise.resolve(response(qr('new')));
     return new Promise(() => {});
   });
   render(<WechatQrcodeOverlay />);
@@ -66,8 +66,8 @@ it('ignores an old QR fetch after another agent opens the overlay', async () => 
 it('keeps the intended agent for successful saves and cancels an old automatic close on reopen', async () => {
   let qrs = 0;
   mock.fetch.mockImplementation(async (url: string) => {
-    if (url.endsWith('/qrcode')) return response(qr(`qr-${++qrs}`));
-    if (url.endsWith('/qrcode-status')) return qrs === 1 ? response({ status: 'confirmed', botToken: 'test-token', userId: 'test-user' }) : new Promise(() => {});
+    if (url.split('?')[0].endsWith('/qrcode')) return response(qr(`qr-${++qrs}`));
+    if (url.split('?')[0].endsWith('/qrcode-status')) return qrs === 1 ? response({ status: 'confirmed', botToken: 'test-token', userId: 'test-user' }) : new Promise(() => {});
     return response({ ok: true });
   });
   render(<WechatQrcodeOverlay />);
@@ -82,8 +82,8 @@ it('keeps the intended agent for successful saves and cancels an old automatic c
 
 it('shows a save failure instead of claiming the login was saved', async () => {
   mock.fetch.mockImplementation(async (url: string) => {
-    if (url.endsWith('/qrcode')) return response(qr('qr'));
-    if (url.endsWith('/qrcode-status')) return response({ status: 'confirmed', botToken: 'test-token' });
+    if (url.split('?')[0].endsWith('/qrcode')) return response(qr('qr'));
+    if (url.split('?')[0].endsWith('/qrcode-status')) return response({ status: 'confirmed', botToken: 'test-token' });
     throw new Error('Configuration save failed');
   });
   render(<WechatQrcodeOverlay />);
@@ -94,7 +94,7 @@ it('shows a save failure instead of claiming the login was saved', async () => {
 
 it('refreshes expired QR codes up to the limit and does not leave retry timers on unmount', async () => {
   let qrs = 0;
-  mock.fetch.mockImplementation(async (url: string) => response(url.endsWith('/qrcode') ? qr(`qr-${++qrs}`) : { status: 'expired' }));
+  mock.fetch.mockImplementation(async (url: string) => response(url.split('?')[0].endsWith('/qrcode') ? qr(`qr-${++qrs}`) : { status: 'expired' }));
   const view = render(<StrictMode><WechatQrcodeOverlay /></StrictMode>);
   await open('agent-a');
   await flush();
@@ -108,8 +108,8 @@ it('does not continue an old save with owner updates or close a newer flow', asy
   const saved = deferred<ReturnType<typeof response>>();
   let qrs = 0;
   mock.fetch.mockImplementation(async (url: string) => {
-    if (url.endsWith('/qrcode')) return response(qr(`qr-${++qrs}`));
-    if (url.endsWith('/qrcode-status')) return qrs === 1 ? response({ status: 'confirmed', botToken: 'test-token', userId: 'test-user' }) : new Promise(() => {});
+    if (url.split('?')[0].endsWith('/qrcode')) return response(qr(`qr-${++qrs}`));
+    if (url.split('?')[0].endsWith('/qrcode-status')) return qrs === 1 ? response({ status: 'confirmed', botToken: 'test-token', userId: 'test-user' }) : new Promise(() => {});
     if (url.startsWith('/api/bridge/config')) return saved.promise;
     return response({ ok: true });
   });
@@ -123,17 +123,69 @@ it('does not continue an old save with owner updates or close a newer flow', asy
   expect(screen.getByRole('img')).toHaveAttribute('src', 'https://example.invalid/qr-2');
 });
 
-it('cancels a queued network retry when the overlay closes', async () => {
+it('ends a failed request and cancels the server session when the overlay closes', async () => {
   mock.fetch.mockImplementation(async (url: string) => {
-    if (url.endsWith('/qrcode')) return response(qr('qr'));
+    if (url.split('?')[0].endsWith('/qrcode')) return response(qr('qr'));
     throw new Error('temporary network failure');
   });
   render(<WechatQrcodeOverlay />);
   await open('agent-a');
-  expect(vi.getTimerCount()).toBe(1);
+  expect(vi.getTimerCount()).toBe(0);
   const calls = mock.fetch.mock.calls.length;
   fireEvent.click(screen.getByRole('button', { name: 'close' }));
   await act(async () => vi.advanceTimersByTimeAsync(1500));
   expect(vi.getTimerCount()).toBe(0);
-  expect(mock.fetch).toHaveBeenCalledTimes(calls);
+  expect(mock.fetch).toHaveBeenCalledTimes(calls + 1);
+  expect(mock.fetch.mock.calls.at(-1)?.[0]).toContain('/qrcode-cancel?agentId=agent-a');
+});
+
+it('pauses for verification input and submits each code only once', async () => {
+  let polls = 0;
+  mock.fetch.mockImplementation(async (url: string) => {
+    if (url.split('?')[0].endsWith('/qrcode')) return response(qr('qr'));
+    if (url.split('?')[0].endsWith('/qrcode-status')) return response({ status: ++polls < 3 ? 'need_verifycode' : 'verify_code_blocked' });
+    return response({ ok: true });
+  });
+  render(<WechatQrcodeOverlay />); await open('agent-a');
+  expect(polls).toBe(1); await act(async () => vi.advanceTimersByTimeAsync(5000)); expect(polls).toBe(1);
+  for (let i = 0; i < 2; i++) {
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '1234' } });
+    fireEvent.click(screen.getByRole('button', { name: 'settings.bridge.wechatVerifySubmit' })); await flush();
+  }
+  expect(screen.getByText('settings.bridge.wechatVerifyBlocked')).toBeInTheDocument();
+  const pollsWithCodes = mock.fetch.mock.calls.filter(([url, options]) => String(url).includes('qrcode-status') && JSON.parse(String(options?.body)).verifyCode);
+  expect(pollsWithCodes).toHaveLength(2); expect(writes()).toHaveLength(0);
+  await act(async () => vi.advanceTimersByTimeAsync(1000));
+  expect(polls).toBe(3); expect(vi.getTimerCount()).toBe(0);
+});
+
+it('preserves already-bound credentials and stops on explicit protocol errors', async () => {
+  for (const status of ['binded_redirect', 'error']) {
+    mock.fetch.mockReset();
+    mock.fetch.mockImplementation(async (url: string) => response(url.split('?')[0].endsWith('/qrcode') ? qr(status) : { status, error: 'safe_protocol_error' }));
+    const view = render(<WechatQrcodeOverlay />); await open('agent-a');
+    expect(screen.getByText(status === 'error' ? 'safe_protocol_error' : 'settings.bridge.wechatAlreadyBound')).toBeInTheDocument();
+    expect(writes()).toHaveLength(0); expect(vi.getTimerCount()).toBe(0); view.unmount();
+  }
+});
+
+it('saves baseUrl and checks an unsuccessful save body before owner mutation', async () => {
+  mock.fetch.mockImplementation(async (url: string) => {
+    if (url.split('?')[0].endsWith('/qrcode')) return response(qr('qr'));
+    if (url.includes('/qrcode-status')) return response({ status: 'confirmed', botToken: 'SYN_TOKEN', userId: 'user', baseUrl: 'https://ilinkai.weixin.qq.com' });
+    return response({ ok: false, error: 'save_rejected' });
+  });
+  render(<WechatQrcodeOverlay />); await open('agent-a');
+  expect(JSON.parse(String(writes()[0][1]?.body))).toMatchObject({ loginSessionId: 'qr', credentials: { baseUrl: 'https://ilinkai.weixin.qq.com' } });
+  expect(screen.getByText('save_rejected')).toBeInTheDocument();
+  expect(mock.fetch.mock.calls.some(([url]) => String(url).includes('/bridge/owner'))).toBe(false);
+});
+
+it('invalidates a late result when the selected agent changes without reopening', async () => {
+  const old = deferred<unknown>();
+  mock.fetch.mockImplementation(async (url: string) => url.split('?')[0].endsWith('/qrcode') ? response(qr('qr')) : { json: () => old.promise });
+  render(<WechatQrcodeOverlay />); await open('agent-a');
+  act(() => window.dispatchEvent(new Event('hana-close-wechat-qrcode')));
+  await act(async () => old.resolve({ status: 'confirmed', botToken: 'SYN_LATE_TOKEN' }));
+  expect(writes()).toHaveLength(0); expect(screen.queryByRole('img')).not.toBeInTheDocument();
 });

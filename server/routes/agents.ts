@@ -72,6 +72,8 @@ import {
   resolveSecretPatch,
 } from "../../shared/secret-custody.ts";
 import { denySecretMutationWithoutScope, denyWithoutScope } from "../http/capability-guard.ts";
+import { denyWechatDestinationChange } from "../http/wechat-destination-guard.ts";
+import { normalizeWechatBaseUrl } from "../../shared/wechat-endpoint.ts";
 import { denyDingTalkDestinationChange } from "../http/dingtalk-destination-guard.ts";
 import { recordSecurityAuditEvent } from "../http/security-audit.ts";
 
@@ -139,6 +141,12 @@ function denyAgentDingTalkDestinationChange(c, engine, id, configPath, partial) 
   try {
     const denied = denyDingTalkDestinationChange(c, saved.bridge?.dingtalk, effective.bridge?.dingtalk, "bridge.dingtalk");
     if (denied) return denied;
+    if (partial.bridge === null || hasOwn(partial.bridge, "wechat")) {
+      const wechatDenied = denyWechatDestinationChange(c, saved.bridge?.wechat, effective.bridge?.wechat, "bridge.wechat");
+      if (wechatDenied) return wechatDenied;
+      normalizeWechatBaseUrl(effective.bridge?.wechat?.baseUrl);
+      if (!engine.getAgent?.(id)) return c.json({ error: "agent not found" }, 404);
+    }
     // The runtime coordinator falls back to focus when an explicit lookup
     // misses. A disk path (including a Windows case alias) is insufficient:
     // keep every DingTalk write bound to the same registered Agent identity.
@@ -656,6 +664,8 @@ export function createAgentsRoute(engine) {
 
       // ── schema-driven 全局字段分流 ──
       const { global: globalFields, agent: agentPartial } = splitByScope(partial) as { global: any[], agent: Record<string, any> };
+      const wechatPatch = agentPartial.bridge?.wechat;
+      if (wechatPatch && typeof wechatPatch === "object" && isMaskedSecretValue(wechatPatch.botToken)) delete wechatPatch.botToken;
       const dingtalkPatch = agentPartial.bridge?.dingtalk;
       if (dingtalkPatch && typeof dingtalkPatch === "object" && !Array.isArray(dingtalkPatch)) {
         // A mask means keep, including when only a legacy saved key exists.

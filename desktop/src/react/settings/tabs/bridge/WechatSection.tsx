@@ -1,7 +1,7 @@
 /**
  * WeChat platform section — uses QR scan instead of token input.
  */
-import React from 'react';
+import React, { useEffect } from 'react';
 import { t } from '../../helpers';
 import { hanaFetch } from '../../api';
 import { Toggle } from '@/ui';
@@ -19,6 +19,8 @@ interface WechatSectionProps {
 }
 
 export function WechatSection({ status, showToast, onSaveConfig, onReload, agentId }: WechatSectionProps) {
+  useEffect(() => () => { window.dispatchEvent(new Event('hana-close-wechat-qrcode')); }, [agentId]);
+
   const unbind = async () => {
     try {
       const agentQuery = agentId ? `?agentId=${encodeURIComponent(agentId)}` : '';

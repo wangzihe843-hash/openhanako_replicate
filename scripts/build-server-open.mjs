@@ -62,6 +62,7 @@ export const OPEN_BUNDLE_ENTRY = "server/main-open.ts";
 // 少了 pinned.example.md —— 该文件只被 lib/tools/pinned-memory.ts 这类运行时
 // 工具惰性读取，census 的启动期声明式资产扫描没有证据；见文件头注释。
 export const OPEN_LIB_DATA_FILES = [
+  "wechat-LICENSE.txt",
   "known-models.json",
   "known-model-fallbacks.json",
   "default-models.json",
