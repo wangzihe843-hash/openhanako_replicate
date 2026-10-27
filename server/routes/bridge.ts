@@ -15,7 +15,8 @@ import { collectBridgeMediaAllowedRoots, isInsideBridgeMediaRoot } from "../../l
 import { sanitizeBridgeVisibleText } from "../../shared/bridge-visible-text.ts";
 import { t } from "../../lib/i18n.ts";
 import { AgentNotFoundError, resolveAgentStrict } from "../utils/resolve-agent.ts";
-import { telegramBotOptions } from "../../lib/net/outbound-proxy.ts";
+import { telegramApiOptions } from "../../lib/net/telegram-fetch.ts";
+import { redactSecretsFromText } from "../../lib/secret-fingerprint.ts";
 import { createBridgeOutboundHttp } from "../../lib/bridge/outbound-http.ts";
 import { normalizeWechatBaseUrl } from "../../shared/wechat-endpoint.ts";
 import type { WechatLoginSessions } from "../../lib/bridge/wechat-login.ts";
@@ -865,9 +866,15 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
         effectiveCredentials.baseUrl = normalizeWechatBaseUrl(effectiveCredentials.baseUrl);
       }
       if (platform === "telegram") {
-        const TelegramBot = (await import("node-telegram-bot-api")).default;
-        const bot = new TelegramBot(effectiveCredentials.token, telegramBotOptions());
-        const me = await bot.getMe();
+        const { Api } = await import("node-telegram-bot-api");
+        const api = new Api(effectiveCredentials.token, telegramApiOptions());
+        let me;
+        try { me = await api.getMe(AbortSignal.timeout(10_000)); }
+        catch (error) {
+          // Upstream descriptions can echo credentials. Keep the saved token
+          // inside this boundary even for the no-polling credential probe.
+          return c.json({ ok: false, error: redactSecretsFromText(error.message, [effectiveCredentials.token]) });
+        }
         return c.json({ ok: true, info: { username: me.username, name: me.first_name } });
       } else if (platform === "feishu") {
         const domainInfo = resolveFeishuDomain(effectiveCredentials.region);

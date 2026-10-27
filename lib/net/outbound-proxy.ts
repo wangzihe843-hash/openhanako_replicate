@@ -199,18 +199,3 @@ export function webSocketOptionsForUrl(targetUrl: any) {
   const agent = getNodeProxyAgentForUrl(targetUrl);
   return agent ? { agent } : {};
 }
-
-export function telegramBotOptions(baseOptions: any = {}) {
-  // Telegram retains these options for its lifetime, including direct -> proxy switches.
-  const agent = getNodeProxyAgent();
-  return {
-    ...baseOptions,
-    request: {
-      ...(baseOptions.request || {}),
-      // request otherwise resolves raw proxy environment variables before using
-      // the agent, overriding both manual routing and explicit direct mode.
-      proxy: false,
-      agent,
-    },
-  };
-}

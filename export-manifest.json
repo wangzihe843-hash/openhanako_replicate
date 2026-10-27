@@ -368,6 +368,7 @@
     "lib/memory/scoped-derivation-store.ts",
     "lib/memory/time-context.ts",
     "lib/net/outbound-proxy.ts",
+    "lib/net/telegram-fetch.ts",
     "lib/nonfatal-error.ts",
     "lib/notifications/notification-service.ts",
     "lib/permission/approval-review-context.ts",

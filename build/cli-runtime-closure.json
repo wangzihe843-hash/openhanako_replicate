@@ -6180,6 +6180,11 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/bridge/telegram-adapter.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/bridge/media-utils.ts",
           "kind": "import-statement"
         },
@@ -6189,7 +6194,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by lib/session-files/session-file-registry.ts (import-statement); lib/session-files/bridge-inbound-files.ts (import-statement); lib/file-ref/resource-io.ts (import-statement); +5 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by lib/session-files/session-file-registry.ts (import-statement); lib/session-files/bridge-inbound-files.ts (import-statement); lib/file-ref/resource-io.ts (import-statement); +6 more importer(s)."
     },
     {
       "path": "lib/file-ref/resource-io.ts",
@@ -7571,17 +7576,12 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "lib/net/telegram-fetch.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/bridge/outbound-http.ts",
-          "kind": "import-statement"
-        },
-        {
-          "root": "server-bootstrap",
-          "from": "server/routes/bridge.ts",
-          "kind": "import-statement"
-        },
-        {
-          "root": "server-bootstrap",
-          "from": "lib/bridge/telegram-adapter.ts",
           "kind": "import-statement"
         },
         {
@@ -7600,7 +7600,24 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by core/mcp/clients/http-client.ts (import-statement); lib/bridge/outbound-http.ts (import-statement); server/routes/bridge.ts (import-statement); +4 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by core/mcp/clients/http-client.ts (import-statement); lib/net/telegram-fetch.ts (import-statement); lib/bridge/outbound-http.ts (import-statement); +3 more importer(s)."
+    },
+    {
+      "path": "lib/net/telegram-fetch.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/bridge.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/bridge/telegram-adapter.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by server/routes/bridge.ts (import-statement); lib/bridge/telegram-adapter.ts (import-statement)."
     },
     {
       "path": "lib/nonfatal-error.ts",
@@ -9462,6 +9479,16 @@
         },
         {
           "root": "server-bootstrap",
+          "from": "server/routes/bridge.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "lib/bridge/telegram-adapter.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
           "from": "lib/bridge/dingtalk-adapter.ts",
           "kind": "import-statement"
         },
@@ -9471,7 +9498,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by lib/bridge/dingtalk-api.ts (import-statement); server/routes/bridge.ts (import-statement); lib/bridge/dingtalk-adapter.ts (import-statement); +1 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by lib/bridge/dingtalk-api.ts (import-statement); server/routes/bridge.ts (import-statement); server/routes/bridge.ts (import-statement); +3 more importer(s)."
     },
     {
       "path": "lib/session-collab/decision-record.ts",
@@ -14939,171 +14966,6 @@
     },
     {
       "path": "node_modules/@csstools/css-tokenizer/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request-promise/lib/rp.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request-promise/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request/lib/auth.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request/lib/cookies.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request/lib/getProxyFromURI.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request/lib/har.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request/lib/hawk.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request/lib/helpers.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request/lib/multipart.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request/lib/querystring.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request/lib/redirect.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request/lib/tunnel.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/@cypress/request/request.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -41960,160 +41822,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/array.prototype.findindex/implementation.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/array.prototype.findindex/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/array.prototype.findindex/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/array.prototype.findindex/polyfill.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/array.prototype.findindex/shim.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/asn1/lib/ber/errors.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/asn1/lib/ber/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/asn1/lib/ber/reader.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/asn1/lib/ber/types.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/asn1/lib/ber/writer.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/asn1/lib/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/asn1/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/assert-plus/assert.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/assert-plus/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/ast-types/def/babel-core.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -42510,61 +42218,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/aws-sign2/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/aws-sign2/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/aws4/aws4.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/aws4/lru.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/aws4/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/axios/dist/node/axios.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -42896,28 +42549,6 @@
     },
     {
       "path": "node_modules/basic-ftp/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bcrypt-pbkdf/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bcrypt-pbkdf/package.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -43300,413 +42931,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/bluebird/js/release/any.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/async.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/bind.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/bluebird.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/call_get.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/cancel.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/catch_filter.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/context.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/debuggability.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/direct_resolve.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/each.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/errors.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/es5.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/filter.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/finally.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/generators.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/join.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/map.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/method.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/nodeback.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/nodeify.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/promise_array.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/promise.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/promisify.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/props.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/queue.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/race.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/reduce.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/schedule.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/settle.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/some.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/synchronous_inspection.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/thenables.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/timers.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/using.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/js/release/util.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/bluebird/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/brace-expansion/dist/commonjs/index.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -43872,17 +43096,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/call-bind-apply-helpers/applyBind.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/call-bind-apply-helpers/functionApply.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -43938,28 +43151,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/call-bind/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/call-bind/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/call-bound/index.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -43972,28 +43163,6 @@
     },
     {
       "path": "node_modules/call-bound/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/caseless/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/caseless/package.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -47524,50 +46693,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/define-data-property/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/define-data-property/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/define-properties/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/define-properties/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/degenerator/dist/compile.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -48294,50 +47419,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/ecc-jsbn/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/ecc-jsbn/lib/ec.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/ecc-jsbn/lib/sec.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/ecc-jsbn/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/ecdsa-sig-formatter/package.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -48591,204 +47672,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/es-abstract/2024/Call.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/2024/floor.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/2024/Get.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/2024/IsArray.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/2024/IsCallable.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/2024/LengthOfArrayLike.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/2024/StringToNumber.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/2024/ToBoolean.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/2024/ToIntegerOrInfinity.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/2024/ToLength.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/2024/ToNumber.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/2024/ToPrimitive.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/2024/ToString.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/2024/truncate.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/helpers/IsArray.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/helpers/isPrimitive.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/helpers/isPropertyKey.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-abstract/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/es-define-property/index.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -48910,40 +47793,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/es-object-atoms/isObject.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/es-object-atoms/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-object-atoms/RequireObjectCoercible.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-object-atoms/ToObject.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -48966,61 +47816,6 @@
     },
     {
       "path": "node_modules/es-set-tostringtag/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-shim-unscopables/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-shim-unscopables/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-to-primitive/es2015.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-to-primitive/helpers/isPrimitive.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/es-to-primitive/package.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -49142,28 +47937,6 @@
     },
     {
       "path": "node_modules/esutils/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/eventemitter3/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/eventemitter3/package.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -50945,28 +49718,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/extsprintf/lib/extsprintf.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/extsprintf/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/fast-csv/build/src/index.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -51141,28 +49892,6 @@
     },
     {
       "path": "node_modules/follow-redirects/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/forever-agent/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/forever-agent/package.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -52559,28 +51288,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/has-property-descriptors/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/has-property-descriptors/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/has-symbols/index.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -53318,72 +52025,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/http-signature/lib/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/http-signature/lib/parser.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/http-signature/lib/signer.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/http-signature/lib/utils.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/http-signature/lib/verify.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/http-signature/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/https-proxy-agent/dist/index.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -53626,50 +52267,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/is-callable/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/is-callable/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/is-date-object/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/is-date-object/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/is-potential-custom-element-name/index.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -53682,72 +52279,6 @@
     },
     {
       "path": "node_modules/is-potential-custom-element-name/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/is-regex/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/is-regex/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/is-symbol/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/is-symbol/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/is-typedarray/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/is-typedarray/package.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -53814,28 +52345,6 @@
     },
     {
       "path": "node_modules/isexe/windows.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/isstream/isstream.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/isstream/package.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -54199,28 +52708,6 @@
     },
     {
       "path": "node_modules/js-yaml/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/jsbn/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/jsbn/package.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -61865,72 +60352,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/json-schema/lib/validate.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/json-schema/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/json-stringify-safe/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/json-stringify-safe/stringify.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/jsprim/lib/jsprim.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/jsprim/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/jszip/lib/base64.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -63087,149 +61508,6 @@
     },
     {
       "path": "node_modules/lodash.uniq/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/lodash/_baseGetTag.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/lodash/_freeGlobal.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/lodash/_getRawTag.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/lodash/_objectToString.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/lodash/_root.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/lodash/_Symbol.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/lodash/isArray.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/lodash/isFunction.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/lodash/isObject.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/lodash/isObjectLike.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/lodash/isString.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/lodash/isUndefined.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/lodash/package.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -64813,29 +63091,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/math-intrinsics/constants/maxSafeInteger.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/math-intrinsics/floor.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/math-intrinsics/isFinite.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65462,7 +63718,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/index.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/adapters.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65473,7 +63729,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/lib/errors.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/adapters.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65484,7 +63740,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/lib/telegram.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/api.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65495,7 +63751,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/lib/telegramPolling.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/api.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65506,7 +63762,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/lib/telegramWebHook.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/bot.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65517,7 +63773,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/lib/utils.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/bot.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65528,7 +63784,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/bl/bl.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/compose.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65539,7 +63795,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/bl/package.json",
+      "path": "node_modules/node-telegram-bot-api/dist/core/compose.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65550,7 +63806,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/debug/package.json",
+      "path": "node_modules/node-telegram-bot-api/dist/core/context.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65561,7 +63817,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/debug/src/browser.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/context.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65572,7 +63828,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/debug/src/common.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/debug.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65583,7 +63839,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/debug/src/index.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/debug.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65594,7 +63850,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/debug/src/node.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/delay.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65605,7 +63861,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/file-type/index.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/delay.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65616,7 +63872,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/file-type/package.json",
+      "path": "node_modules/node-telegram-bot-api/dist/core/encode.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65627,7 +63883,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/mime/mime.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/encode.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65638,7 +63894,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/mime/package.json",
+      "path": "node_modules/node-telegram-bot-api/dist/core/entities.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65649,7 +63905,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/mime/types.json",
+      "path": "node_modules/node-telegram-bot-api/dist/core/entities.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65660,7 +63916,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/pump/index.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/errors.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65671,7 +63927,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/pump/package.json",
+      "path": "node_modules/node-telegram-bot-api/dist/core/errors.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65682,7 +63938,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/readable-stream/duplex.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/files.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65693,7 +63949,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/readable-stream/lib/_stream_duplex.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/files.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65704,7 +63960,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/readable-stream/lib/_stream_passthrough.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/index.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65715,7 +63971,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/readable-stream/lib/_stream_readable.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/index.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65726,7 +63982,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/readable-stream/lib/_stream_transform.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/keyboard.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65737,7 +63993,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/readable-stream/lib/_stream_writable.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/keyboard.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65748,7 +64004,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/readable-stream/lib/internal/streams/BufferList.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/longpoll.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65759,7 +64015,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/readable-stream/lib/internal/streams/destroy.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/longpoll.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65770,7 +64026,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/readable-stream/lib/internal/streams/stream.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/media.cjs",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65781,7 +64037,7 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/readable-stream/package.json",
+      "path": "node_modules/node-telegram-bot-api/dist/core/media.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65792,7 +64048,194 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/node-telegram-bot-api/node_modules/readable-stream/readable.js",
+      "path": "node_modules/node-telegram-bot-api/dist/core/multipart.cjs",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/core/multipart.js",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/core/ratelimiter.cjs",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/core/ratelimiter.js",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/core/richmessage.cjs",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/core/richmessage.js",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/core/richtext.cjs",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/core/richtext.js",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/core/serialize.cjs",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/core/serialize.js",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/core/transport.cjs",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/core/transport.js",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/core/webhook.cjs",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/core/webhook.js",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/types/index.cjs",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/types/index.js",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/types/schemas.cjs",
+      "inputType": "nft-runtime-trace",
+      "provenance": [
+        {
+          "root": "nft-server-bundle",
+          "kind": "nft-trace"
+        }
+      ],
+      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
+    },
+    {
+      "path": "node_modules/node-telegram-bot-api/dist/types/schemas.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65804,61 +64247,6 @@
     },
     {
       "path": "node_modules/node-telegram-bot-api/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/node-telegram-bot-api/src/errors.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/node-telegram-bot-api/src/telegram.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/node-telegram-bot-api/src/telegramPolling.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/node-telegram-bot-api/src/telegramWebHook.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/node-telegram-bot-api/src/utils.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -65914,50 +64302,6 @@
     },
     {
       "path": "node_modules/object-inspect/util.inspect.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/object-keys/implementation.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/object-keys/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/object-keys/isArguments.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/object-keys/package.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -70918,28 +69262,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/performance-now/lib/performance-now.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/performance-now/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/pngjs/lib/bitmapper.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -72392,50 +70714,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/request-promise-core/configure/request2.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/request-promise-core/lib/errors.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/request-promise-core/lib/plumbing.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/request-promise-core/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/requires-port/index.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -72656,50 +70934,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/safe-regex-test/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/safe-regex-test/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/safer-buffer/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/safer-buffer/safer.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/saxes/package.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -72712,28 +70946,6 @@
     },
     {
       "path": "node_modules/saxes/saxes.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/set-function-length/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/set-function-length/package.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -73272,292 +71484,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/sshpk/lib/algs.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/certificate.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/dhe.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/ed-compat.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/errors.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/fingerprint.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/formats/auto.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/formats/dnssec.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/formats/openssh-cert.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/formats/pem.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/formats/pkcs1.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/formats/pkcs8.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/formats/putty.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/formats/rfc4253.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/formats/ssh-private.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/formats/ssh.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/formats/x509-pem.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/formats/x509.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/identity.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/key.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/private-key.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/signature.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/ssh-buffer.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/lib/utils.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/sshpk/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/standardwebhooks/dist/index.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -73591,28 +71517,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/stealthy-require/lib/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/stealthy-require/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/string_decoder/lib/string_decoder.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -73625,61 +71529,6 @@
     },
     {
       "path": "node_modules/string_decoder/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/string.prototype.trim/implementation.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/string.prototype.trim/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/string.prototype.trim/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/string.prototype.trim/polyfill.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/string.prototype.trim/shim.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -74010,50 +71859,6 @@
     },
     {
       "path": "node_modules/tslib/tslib.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/tunnel-agent/index.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/tunnel-agent/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/tweetnacl/nacl-fast.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/tweetnacl/package.json",
       "inputType": "nft-runtime-trace",
       "provenance": [
         {
@@ -80323,28 +78128,6 @@
       "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
     },
     {
-      "path": "node_modules/verror/lib/verror.js",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
-      "path": "node_modules/verror/package.json",
-      "inputType": "nft-runtime-trace",
-      "provenance": [
-        {
-          "root": "nft-server-bundle",
-          "kind": "nft-trace"
-        }
-      ],
-      "reason": "nft-runtime-trace via nft-server-bundle (see roots[] for the full explanation)"
-    },
-    {
       "path": "node_modules/w3c-xmlserializer/lib/attributes.js",
       "inputType": "nft-runtime-trace",
       "provenance": [
@@ -84308,12 +82091,12 @@
         },
         {
           "root": "server-bootstrap",
-          "from": "lib/bridge/wechat-api.ts",
+          "from": "lib/secret-fingerprint.ts",
           "kind": "import-statement"
         },
         {
           "root": "server-bootstrap",
-          "from": "lib/secret-fingerprint.ts",
+          "from": "lib/bridge/wechat-api.ts",
           "kind": "import-statement"
         },
         {
@@ -84332,7 +82115,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by shared/error-bus.ts (import-statement); lib/log-redactor.ts (import-statement); lib/bridge/wechat-api.ts (import-statement); +4 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by shared/error-bus.ts (import-statement); lib/log-redactor.ts (import-statement); lib/secret-fingerprint.ts (import-statement); +4 more importer(s)."
     },
     {
       "path": "shared/memory-provenance.ts",
@@ -86186,11 +83969,11 @@
     }
   ],
   "stats": {
-    "totalFiles": 7101,
+    "totalFiles": 6898,
     "byInputType": {
-      "source-graph": 748,
+      "source-graph": 749,
       "runtime-asset": 11,
-      "nft-runtime-trace": 6342
+      "nft-runtime-trace": 6138
     }
   }
 }

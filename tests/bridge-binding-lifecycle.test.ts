@@ -91,6 +91,8 @@ describe("Bridge binding lifetime through public adapter callbacks", () => {
     const f = fixture(); const old = f.start(); const other = f.start("telegram", "b"); const fresh = f.start();
     await old.send("late"); await old.send("wrong-agent", { agentId: "b", sessionKey: other.key });
     old.hooks.onStatus?.("error", "old status");
+    expect(f.bm.getStatus("a").telegram.status).toBe("connecting");
+    fresh.hooks.onStatus?.("connected");
     expect(f.bm.getStatus("a").telegram.status).toBe("connected");
     await fresh.send("fresh"); await other.send("other"); await tick(2000);
     expect(f.hub.send.mock.calls.map(c => c[0])).toEqual(["fresh", "other"]);

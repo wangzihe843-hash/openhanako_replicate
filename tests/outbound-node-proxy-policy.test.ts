@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createOutboundProxyRuntime,
   getNodeProxyAgentForUrl,
-  telegramBotOptions,
   webSocketOptionsForUrl,
 } from "../lib/net/outbound-proxy.ts";
 
@@ -55,33 +54,12 @@ describe("Node outbound proxy policy", () => {
     }
   });
 
-  it("routes WebSocket and Telegram agents through the same policy", async () => {
+  it("routes WebSocket agents through the configured policy", async () => {
     vi.stubEnv("https_proxy", "pac+ftp://untrusted.invalid/proxy.pac");
     runtime.apply({ mode: "manual", httpsProxy: "http://127.0.0.1:7890" });
     const ws = webSocketOptionsForUrl("wss://remote.invalid/socket");
-    const telegram = telegramBotOptions({ polling: true, request: { timeout: 5000 } });
     expect(await ws.agent.getProxyForUrl("wss://remote.invalid/socket", undefined)).toBe("http://127.0.0.1:7890");
-    expect(await telegram.request.agent.getProxyForUrl(target, undefined)).toBe("http://127.0.0.1:7890");
-    expect(telegram).toMatchObject({ polling: true, request: { timeout: 5000, proxy: false } });
-  });
-
-  it("disables Telegram request's independent environment routing in direct mode", async () => {
-    vi.stubEnv("https_proxy", "http://untrusted.invalid:8080");
     runtime.apply({ mode: "direct" });
-    expect(webSocketOptionsForUrl("wss://remote.invalid")).toEqual({});
-    const options = telegramBotOptions({ request: { timeout: 5000 } });
-    expect(options.request.proxy).toBe(false);
-    expect(await options.request.agent.getProxyForUrl(target, undefined)).toBe("");
-    expect(options.request.timeout).toBe(5000);
-  });
-
-  it.each(["direct", "manual"])("updates retained Telegram agents after starting in %s mode", async mode => {
-    runtime.apply(mode === "direct" ? { mode } : { mode, httpsProxy: "http://127.0.0.1:7890" });
-    const options = telegramBotOptions().request;
-    expect(options.agent).toBeDefined();
-    runtime.apply({ mode: "manual", httpsProxy: "http://127.0.0.1:7891" });
-    expect(await options.agent.getProxyForUrl(target, undefined)).toBe("http://127.0.0.1:7891");
-    runtime.apply({ mode: "direct" });
-    expect(await options.agent.getProxyForUrl(target, undefined)).toBe("");
+    expect(webSocketOptionsForUrl("wss://remote.invalid/socket")).toEqual({});
   });
 });

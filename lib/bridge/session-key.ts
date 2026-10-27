@@ -115,12 +115,22 @@ export function resolveBridgeSessionIdentity(raw, { sessionKey = null, parsed = 
   }
 
   const displayName = cleanDisplayName(entry.displayName) || cleanDisplayName(entry.name);
+  let avatarUrl = cleanString(entry.avatarUrl);
+  // Old Telegram adapters stored getFileLink URLs containing the bot token.
+  // Suppress that legacy presentation value on read; leave the saved record
+  // intact and let the next Telegram profile refresh supply safe image data.
+  if (parsedKey.platform === "telegram" && avatarUrl) {
+    try {
+      const url = new URL(avatarUrl);
+      if (url.hostname === "api.telegram.org" && url.pathname.startsWith("/file/bot")) avatarUrl = null;
+    } catch { /* A legacy non-URL value is handled as before. */ }
+  }
   return {
     userId,
     principalId: cleanString(entry.principalId) || userId,
     aliases: [],
     displayName,
-    avatarUrl: cleanString(entry.avatarUrl),
+    avatarUrl,
   };
 }
 

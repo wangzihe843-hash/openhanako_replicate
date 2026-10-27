@@ -131,6 +131,7 @@ const ADAPTER_REGISTRY = {
     create: (creds, onMessage, hooks, agentId) => createTelegramAdapter({ token: creds.token, agentId, onMessage, onStatus: hooks?.onStatus }),
     getCredentials: (cfg) => cfg?.enabled && cfg?.token ? { token: cfg.token } : null,
     ownerSessionKey: (userId, agentId) => `tg_dm_${userId}@${agentId}`,
+    connectsAsync: true,
   },
   feishu: {
     create: (creds, onMessage, hooks, agentId) => createFeishuAdapter({ appId: creds.appId, appSecret: creds.appSecret, region: creds.region, agentId, onMessage, onStatus: hooks?.onStatus }),
@@ -1723,7 +1724,11 @@ export class BridgeManager {
               });
               await adapter.sendRichReply(chatId, textOnly, context);
               return mediaUrls;
-            } catch {
+            } catch (err) {
+              // Telegram v2 distinguishes an unknown persistent send result
+              // from a rejected draft/message. Plain fallback would duplicate
+              // an already accepted rich message in the unknown case.
+              if (err?.deliveryUnknown === true) throw err;
               failed = true;
             }
           }

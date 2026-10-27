@@ -5,9 +5,14 @@
  * 通过 onMessage 回调将标准化消息交给 BridgeManager。
  */
 
+import type { File as TelegramFile, User, UserProfilePhotos } from "node-telegram-bot-api";
 import { loadTelegramSdk } from "./optional-sdks.ts";
 import { debugLog } from "../debug-log.ts";
-import { telegramBotOptions } from "../net/outbound-proxy.ts";
+import { telegramApiOptions, telegramFetch } from "../net/telegram-fetch.ts";
+import { createHash } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
+import { detectMime } from "../file-metadata.ts";
+import { redactSecretsFromText } from "../secret-fingerprint.ts";
 import { createMediaCapabilities } from "./media-capabilities.ts";
 import { createStreamingCapabilities } from "./streaming-capabilities.ts";
 import { createReceiptCapabilities } from "./receipt-capabilities.ts";
@@ -81,9 +86,19 @@ function safeExtFromUrl(url) {
   catch { return ""; }
 }
 
-function telegramMessageOptions(options: Record<string, any> = {}, format = "plain") {
+interface TelegramSendOptions {
+  messageThreadId?: string | number;
+  replyContext?: { messageThreadId?: string | number };
+  draftId?: string | number;
+  includeThinkingPlaceholder?: boolean;
+  thinkingText?: string;
+  mime?: string;
+  filename?: string;
+}
+
+function telegramMessageOptions(options: TelegramSendOptions = {}, format = "plain") {
   const messageThreadId = options.messageThreadId ?? options.replyContext?.messageThreadId;
-  const result: Record<string, any> = {};
+  const result: { parse_mode?: string; message_thread_id?: string | number } = {};
   if (format === "html") result.parse_mode = "HTML";
   if (messageThreadId != null && messageThreadId !== "") result.message_thread_id = messageThreadId;
   return Object.keys(result).length ? result : undefined;
@@ -94,308 +109,308 @@ function cleanTelegramString(value) {
   return text || null;
 }
 
-function telegramDisplayName(user: Record<string, any> = {}) {
+function telegramDisplayName(user: Partial<User> = {}) {
   const fullName = [cleanTelegramString(user.first_name), cleanTelegramString(user.last_name)]
     .filter(Boolean)
     .join(" ");
   return fullName || (cleanTelegramString(user.username) ? `@${cleanTelegramString(user.username)}` : null);
 }
 
-/**
- * @param {object} opts
- * @param {string} opts.token - Telegram Bot Token（从 @BotFather 获取）
- * @param {(msg: BridgeMessage) => void} opts.onMessage
- * @param {(status: string, error?: string) => void} [opts.onStatus]
- * @returns {{ sendReply, stop, getMe }}
- */
-export function createTelegramAdapter({ token, agentId, onMessage, onStatus }) {
-  const TelegramBot = loadTelegramSdk();
-  let bot = new TelegramBot(token, telegramBotOptions({ polling: true }));
-  let stopped = false;
-  let consecutiveErrors = 0;
-  let restartTimer = null;
-  const userProfileCache = new Map();
+// Keep a process-local accepted-update cursor across same-key restarts. No
+// persisted queue or exactly-once claim: a process crash can replay updates.
+type PollingRun = { done: Promise<void>; stop: () => void; tokenHash: string; nextOffset?: number };
+const pollingRuns = new Map<string, PollingRun>();
+const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024;
+const MAX_AVATAR_BYTES = 1024 * 1024;
 
-  async function resolveUserProfile(user: Record<string, any> = {}) {
+export function createTelegramAdapter({ token, agentId, onMessage, onStatus, fetch: fetchImpl = telegramFetch }: {
+  token: string;
+  agentId: string;
+  onMessage: (message: Record<string, unknown>) => unknown;
+  onStatus?: (status: string, error?: string) => void;
+  fetch?: typeof fetch;
+}) {
+  const { Bot, InputFile } = loadTelegramSdk();
+  const bot = new Bot(token, telegramApiOptions(fetchImpl));
+  const lifetime = new AbortController();
+  const key = agentId;
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const previous = pollingRuns.get(key);
+  previous?.stop();
+  let stopped = false;
+  let lastBlockTs = 0;
+  const userProfileCache = new Map();
+  const inFlight = new Set<Promise<unknown>>();
+  const run: PollingRun = { done: Promise.resolve(), stop: stopNow, tokenHash };
+  pollingRuns.set(key, run);
+
+  function stopNow() {
+    stopped = true;
+    lifetime.abort();
+    bot.stop();
+  }
+  function assertActive() {
+    lifetime.signal.throwIfAborted();
+  }
+  function safeError(error: unknown) {
+    const fields = (error && typeof error === "object" ? error : {}) as {
+      message?: string; code?: string; errorCode?: number; retryAfter?: number;
+    };
+    const code = fields.errorCode;
+    const descriptions = { 401: "unauthorized token", 403: "access forbidden", 409: "polling conflict; check the other poller or webhook" };
+    const detail = descriptions[code] || redactSecretsFromText(fields.message || String(error), [token]);
+    const retryAfter = Number.isFinite(fields.retryAfter) ? fields.retryAfter : undefined;
+    return Object.assign(new Error(`Telegram ${code || fields.code || "request"}: ${detail}${retryAfter === undefined ? "" : ` (retry_after=${retryAfter}s)`}`), {
+      code: fields.code, errorCode: code, retryAfter,
+    });
+  }
+  function track<T>(work: Promise<T>): Promise<T> {
+    inFlight.add(work);
+    void work.finally(() => inFlight.delete(work)).catch(() => {});
+    return work;
+  }
+  async function call(method: string, params?: Record<string, unknown>): Promise<unknown> {
+    assertActive();
+    try {
+      const args = params === undefined ? [lifetime.signal] : [params, lifetime.signal];
+      const result = await track(bot.api[method](...args));
+      assertActive();
+      return result;
+    } catch (error) {
+      if (lifetime.signal.aborted) throw lifetime.signal.reason;
+      const safe = safeError(error);
+      if (["sendMessage", "sendRichMessage", "sendPhoto", "sendVideo", "sendAudio", "sendDocument"].includes(method)
+        && (["EFETCH", "ETIMEOUT", "EPARSE"].includes(safe.code) || safe.errorCode >= 500)) {
+        safe.message = `Telegram delivery outcome unknown; not automatically resent. ${safe.message}`;
+        throw Object.assign(safe, { deliveryUnknown: true });
+      }
+      throw safe;
+    }
+  }
+  // The SDK waits for middleware. Abort the local wait if stop occurs after
+  // handoff; the Manager synchronously invalidates the binding on its side.
+  async function waitForHandler(work: unknown) {
+    let abort: () => void;
+    const cancelled = new Promise<never>((_, reject) => {
+      abort = () => reject(lifetime.signal.reason);
+      if (lifetime.signal.aborted) abort();
+      else lifetime.signal.addEventListener("abort", abort, { once: true });
+    });
+    try { await Promise.race([Promise.resolve(work), cancelled]); }
+    finally { lifetime.signal.removeEventListener("abort", abort); }
+  }
+  function accept(updateId: number) {
+    run.nextOffset = Math.max(run.nextOffset || 0, updateId + 1);
+  }
+
+  async function downloadFile(fileId: string, maxBytes = MAX_DOWNLOAD_BYTES) {
+    try {
+      const file = await call("getFile", { file_id: fileId }) as TelegramFile;
+      if (file.file_size > maxBytes) throw new Error("file exceeds Telegram download budget");
+      const segments = typeof file.file_path === "string" ? file.file_path.split("/") : [];
+      if (!segments.length || segments.some(part => !/^[A-Za-z0-9_.-]+$/.test(part) || part === "." || part === "..")) {
+        throw new Error("invalid Telegram file path");
+      }
+      // This URL never escapes the Telegram download boundary or enters a
+      // Bridge attachment, profile, resource record, log or frontend payload.
+      const url = `https://api.telegram.org/file/bot${token}/${segments.join("/")}`;
+      const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000)]);
+      const work = (async () => {
+        const response = await fetchImpl(url, { signal, redirect: "error" });
+        if (!response.ok) { await response.body?.cancel(); throw new Error(`file download HTTP ${response.status}`); }
+        if (Number(response.headers.get("content-length")) > maxBytes) {
+          await response.body?.cancel(); throw new Error("file exceeds Telegram download budget");
+        }
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("empty Telegram file body");
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        const abort = () => { void reader.cancel(signal.reason).catch(() => {}); };
+        signal.addEventListener("abort", abort, { once: true });
+        try {
+          for (;;) {
+            signal.throwIfAborted();
+            const { value, done } = await reader.read();
+            signal.throwIfAborted();
+            if (done) break;
+            size += value.byteLength;
+            if (size > maxBytes) throw new Error("file exceeds Telegram download budget");
+            chunks.push(value);
+          }
+          return Buffer.concat(chunks, size);
+        } finally {
+          signal.removeEventListener("abort", abort);
+          await reader.cancel().catch(() => {});
+          reader.releaseLock();
+        }
+      })();
+      const buffer = await track(work);
+      assertActive();
+      return buffer;
+    } catch (error) {
+      if (lifetime.signal.aborted) throw lifetime.signal.reason;
+      throw safeError(error);
+    }
+  }
+
+  async function resolveUserProfile(user: Partial<User> = {}) {
     const userId = cleanTelegramString(user.id);
     const cached = userId ? userProfileCache.get(userId) : null;
     const displayName = telegramDisplayName(user) || cached?.displayName || "User";
     let avatarUrl = cached?.avatarUrl || null;
-
-    if (userId && !avatarUrl && typeof bot.getUserProfilePhotos === "function") {
+    if (userId && !cached) {
       try {
-        const photos = await bot.getUserProfilePhotos(user.id, { limit: 1 });
+        const photos = await call("getUserProfilePhotos", { user_id: user.id, limit: 1 }) as UserProfilePhotos;
         const sizes = photos?.photos?.[0] || [];
         const best = sizes[sizes.length - 1];
-        if (best?.file_id && typeof bot.getFileLink === "function") {
-          avatarUrl = await bot.getFileLink(best.file_id);
+        if (best?.file_id) {
+          const buffer = await downloadFile(best.file_id, MAX_AVATAR_BYTES);
+          const mime = detectMime(buffer, "application/octet-stream");
+          if (["image/jpeg", "image/png", "image/gif", "image/webp"].includes(mime)) {
+            avatarUrl = `data:${mime};base64,${buffer.toString("base64")}`;
+          }
         }
-      } catch {
-        avatarUrl = cached?.avatarUrl || null;
+      } catch (error) {
+        assertActive();
+        debugLog()?.warn("bridge", safeError(error).message);
       }
     }
-
+    assertActive();
     const profile = { principalId: userId, displayName, avatarUrl };
-    if (userId) userProfileCache.set(userId, profile);
+    if (userId) {
+      if (userProfileCache.size >= 200) userProfileCache.delete(userProfileCache.keys().next().value);
+      userProfileCache.set(userId, profile);
+    }
     return profile;
   }
 
-  function attachListeners(b) {
-    b.on("message", async (msg) => {
-      const text = msg.text || msg.caption || "";
-      consecutiveErrors = 0;
-
-      // 提取附件（每种类型独立 try/catch，单个失败不影响其他）
-      const attachments = [];
-      if (msg.photo?.length) {
-        try {
-          const best = msg.photo[msg.photo.length - 1];
-          const url = await bot.getFileLink(best.file_id);
-          attachments.push({ type: "image", url, mimeType: "image/jpeg",
-            width: best.width, height: best.height, platformRef: best.file_id });
-        } catch (err) {
-          debugLog()?.warn("bridge", `[telegram] photo 提取失败: ${err.message}`);
-        }
-      }
-      if (msg.document) {
-        try {
-          const url = await bot.getFileLink(msg.document.file_id);
-          attachments.push({ type: "file", url, filename: msg.document.file_name,
-            mimeType: msg.document.mime_type, size: msg.document.file_size,
-            platformRef: msg.document.file_id });
-        } catch (err) {
-          debugLog()?.warn("bridge", `[telegram] document 提取失败: ${err.message}`);
-        }
-      }
-      if (msg.voice) {
-        try {
-          const url = await bot.getFileLink(msg.voice.file_id);
-          attachments.push({ type: "audio", url, mimeType: msg.voice.mime_type,
-            duration: msg.voice.duration, platformRef: msg.voice.file_id });
-        } catch (err) {
-          debugLog()?.warn("bridge", `[telegram] voice 提取失败: ${err.message}`);
-        }
-      }
-      if (msg.video) {
-        try {
-          const url = await bot.getFileLink(msg.video.file_id);
-          attachments.push({ type: "video", url, filename: msg.video.file_name,
-            mimeType: msg.video.mime_type, duration: msg.video.duration,
-            platformRef: msg.video.file_id });
-        } catch (err) {
-          debugLog()?.warn("bridge", `[telegram] video 提取失败: ${err.message}`);
-        }
-      }
-
-      if (!text && !attachments.length) return;
-
-      const trimmed = text.length > MAX_MSG_SIZE
-        ? (log.warn(`消息过大（${text.length} chars），已截断`), text.slice(0, MAX_MSG_SIZE))
-        : text;
-
-      const profile = await resolveUserProfile(msg.from || {});
-      const chatId = String(msg.chat.id);
-      const userId = profile.principalId || String(msg.from?.id || msg.chat.id);
-      const chatType = msg.chat.type; // "private" | "group" | "supergroup" | "channel"
-      const isGroup = chatType !== "private";
-      const sessionKey = isGroup ? `tg_group_${chatId}@${agentId}` : `tg_dm_${userId}@${agentId}`;
-
-      onMessage({
-        platform: "telegram",
-        agentId,
-        chatId,
-        userId,
-        sessionKey,
-        text: trimmed,
-        senderName: profile.displayName,
-        displayName: profile.displayName,
-        avatarUrl: profile.avatarUrl || undefined,
-        principalId: profile.principalId || userId,
-        isGroup,
-        messageThreadId: msg.message_thread_id,
-        attachments: attachments.length ? attachments : undefined,
-      });
+  bot.use(async (ctx, next) => {
+    assertActive();
+    // Servers may repeat an already accepted update. Never deliver it twice in
+    // this process; only advance after normalization or deliberate filtering.
+    if (run.nextOffset !== undefined && ctx.update.update_id < run.nextOffset) return;
+    await next();
+    if (!stopped) accept(ctx.update.update_id);
+  });
+  bot.on("message", async (ctx) => {
+    const msg = ctx.message;
+    if (!msg) return;
+    const text = msg.text || msg.caption || "";
+    const attachments = [];
+    const best = msg.photo?.[msg.photo.length - 1];
+    if (best) attachments.push({ type: "image", mimeType: "image/jpeg", width: best.width, height: best.height, size: best.file_size, platformRef: best.file_id });
+    if (msg.document) attachments.push({ type: "file", filename: msg.document.file_name, mimeType: msg.document.mime_type, size: msg.document.file_size, platformRef: msg.document.file_id });
+    if (msg.voice) attachments.push({ type: "audio", mimeType: msg.voice.mime_type, size: msg.voice.file_size, duration: msg.voice.duration, platformRef: msg.voice.file_id });
+    if (msg.video) attachments.push({ type: "video", filename: msg.video.file_name, mimeType: msg.video.mime_type, size: msg.video.file_size, duration: msg.video.duration, platformRef: msg.video.file_id });
+    if (!text && !attachments.length) return;
+    const profile = await resolveUserProfile(msg.from || {});
+    assertActive();
+    const chatId = String(msg.chat.id);
+    const userId = profile.principalId || String(msg.from?.id || msg.chat.id);
+    const isGroup = msg.chat.type !== "private";
+    // Acceptance means handed to the current Manager binding, not persisted or
+    // delivered externally. Handler failures are consumed (SDK's v2 default).
+    accept(ctx.update.update_id);
+    await waitForHandler(onMessage({
+      platform: "telegram", agentId, chatId, userId,
+      sessionKey: isGroup ? `tg_group_${chatId}@${agentId}` : `tg_dm_${userId}@${agentId}`,
+      text: text.slice(0, MAX_MSG_SIZE), senderName: profile.displayName, displayName: profile.displayName,
+      avatarUrl: profile.avatarUrl || undefined, principalId: profile.principalId || userId,
+      isGroup, messageThreadId: msg.message_thread_id,
+      attachments: attachments.length ? attachments : undefined,
+    }));
+  });
+  bot.catch((error, ctx) => {
+    if (stopped) return;
+    accept(ctx.update.update_id);
+    log.error(safeError(error).message);
+  });
+  const getUpdates = bot.api.getUpdates.bind(bot.api);
+  bot.api.getUpdates = async (params, signal) => {
+    const updates = await getUpdates(params, signal);
+    assertActive();
+    onStatus?.("connected");
+    return updates;
+  };
+  run.done = Promise.resolve().then(async () => {
+    await previous?.done;
+    run.nextOffset = previous?.tokenHash === tokenHash ? previous.nextOffset : undefined;
+    if (stopped) return;
+    await call("getMe");
+    assertActive();
+    onStatus?.("connected");
+    await bot.startPolling(undefined, {
+      offset: run.nextOffset, allowedUpdates: ["message"],
+      onError(error) {
+        if (!stopped) onStatus?.("connecting", safeError(error).message);
+      },
     });
+  }).catch(error => {
+    if (!stopped) {
+      const message = safeError(error).message;
+      log.error(message);
+      onStatus?.("error", message);
+      stopNow();
+    }
+  }).finally(async () => { await Promise.allSettled([...inFlight]); });
 
-    b.on("polling_error", (err) => {
-      consecutiveErrors++;
-      const errMsg = err.message || String(err);
-      log.error(`polling error: ${errMsg}`);
-      debugLog()?.error("bridge", `telegram polling error (${consecutiveErrors}): ${errMsg}`);
-
-      // 连续错误超过 3 次且没有 pending restart，尝试重建 polling
-      if (consecutiveErrors >= 3 && !stopped && !restartTimer) {
-        debugLog()?.warn("bridge", `telegram polling failed ${consecutiveErrors}x, restarting...`);
-        scheduleRestart();
-      }
-    });
+  async function sendMediaValue(chatId, value, kind: string, metadata = {}) {
+    const methods = { image: ["sendPhoto", "photo"], video: ["sendVideo", "video"], audio: ["sendAudio", "audio"], document: ["sendDocument", "document"] };
+    const [method, field] = methods[kind];
+    return call(method, { chat_id: chatId, [field]: value, ...telegramMessageOptions(metadata) });
   }
-
-  function scheduleRestart() {
-    if (stopped || restartTimer) return;
-    const delay = Math.min(5000 * consecutiveErrors, 30_000);
-    restartTimer = setTimeout(async () => {
-      restartTimer = null;
-      if (stopped) return;
-      const oldBot = bot;
-      try {
-        oldBot.removeAllListeners();
-        await oldBot.stopPolling();
-      } catch (e) {
-        debugLog()?.warn("bridge", `telegram old bot cleanup: ${e.message}`);
-      }
-      try {
-        bot = new TelegramBot(token, telegramBotOptions({ polling: true }));
-        attachListeners(bot);
-        consecutiveErrors = 0;
-        debugLog()?.log("bridge", "telegram polling restarted");
-        onStatus?.("connected");
-      } catch (err) {
-        debugLog()?.error("bridge", `telegram restart failed: ${err.message}`);
-        onStatus?.("error", err.message);
-      }
-    }, delay);
-  }
-
-  attachListeners(bot);
-
-  /** 上次 block streaming 发送时间（用于 humanDelay） */
-  let lastBlockTs = 0;
-
   return {
     mediaCapabilities: TELEGRAM_MEDIA_CAPABILITIES,
     richStreamingCapabilities: TELEGRAM_RICH_STREAMING_CAPABILITIES,
     streamingCapabilities: TELEGRAM_STREAMING_CAPABILITIES,
     receiptCapabilities: TELEGRAM_RECEIPT_CAPABILITIES,
-
-    async sendTypingIndicator(chatId, _options = {}) {
-      try { await bot.sendChatAction(chatId, "typing"); } catch {}
+    async sendTypingIndicator(chatId, options = {}) {
+      try { await call("sendChatAction", { chat_id: chatId, action: "typing", ...telegramMessageOptions(options) }); }
+      catch { /* Typing is best-effort; never retry it or fail the reply. */ }
     },
-
     async sendReply(chatId, text, options = {}) {
-      // Telegram 单条消息限制 4096 字符，超长时分段发送
-      const messageOptions = telegramMessageOptions(options, "html");
       for (const chunk of formatTelegramMessageChunks(text)) {
-        await bot.sendMessage(chatId, chunk, messageOptions);
+        await call("sendMessage", { chat_id: chatId, text: chunk, ...telegramMessageOptions(options, "html") });
       }
     },
-
-    /** block streaming 专用：发一条气泡，两条之间加 humanDelay */
     async sendBlockReply(chatId, text, options = {}) {
-      const now = Date.now();
-      const elapsed = now - lastBlockTs;
-      const delay = 800 + Math.random() * 1200; // 800~2000ms
-      if (lastBlockTs && elapsed < delay) {
-        await new Promise(r => setTimeout(r, delay - elapsed));
-      }
-      const messageOptions = telegramMessageOptions(options, "html");
-      for (const chunk of formatTelegramMessageChunks(text)) {
-        await bot.sendMessage(chatId, chunk, messageOptions);
-      }
+      assertActive();
+      const remaining = 800 + Math.random() * 1200 - (Date.now() - lastBlockTs);
+      if (lastBlockTs && remaining > 0) await delay(remaining, undefined, { signal: lifetime.signal });
+      await this.sendReply(chatId, text, options);
       lastBlockTs = Date.now();
     },
-
-    /** 流式草稿（Bot API 9.5 sendMessageDraft） */
-    async sendDraft(chatId, text, options: Record<string, any> = {}) {
+    async sendDraft(chatId, text, options: TelegramSendOptions = {}) {
       const draftId = Number(options.draftId);
-      if (!Number.isInteger(draftId) || draftId === 0) {
-        throw new Error("Telegram sendDraft requires a non-zero integer draftId");
-      }
-      const messageOptions = telegramMessageOptions(options);
-      const form = { chat_id: chatId, draft_id: draftId, text, ...(messageOptions || {}) };
-      return bot._request("sendMessageDraft", {
-        form,
-      });
+      if (!Number.isInteger(draftId) || draftId === 0) throw new Error("Telegram sendDraft requires a non-zero integer draftId");
+      return call("sendMessageDraft", { chat_id: chatId, draft_id: draftId, text, ...telegramMessageOptions(options) });
     },
-
-    /** Rich streaming draft（Bot API sendRichMessageDraft） */
-    async sendRichDraft(chatId, text, options: Record<string, any> = {}) {
+    async sendRichDraft(chatId, text, options: TelegramSendOptions = {}) {
       const draftId = Number(options.draftId);
-      if (!Number.isInteger(draftId) || draftId === 0) {
-        throw new Error("Telegram sendRichDraft requires a non-zero integer draftId");
-      }
-      const messageOptions = telegramMessageOptions(options);
-      const richMessage = renderTelegramRichMessage(text, {
-        includeThinkingPlaceholder: options.includeThinkingPlaceholder,
-        thinkingText: options.thinkingText,
-      });
-      const form = {
-        chat_id: chatId,
-        draft_id: draftId,
-        rich_message: JSON.stringify(richMessage),
-        ...(messageOptions || {}),
-      };
-      return bot._request("sendRichMessageDraft", {
-        form,
+      if (!Number.isInteger(draftId) || draftId === 0) throw new Error("Telegram sendRichDraft requires a non-zero integer draftId");
+      return call("sendRichMessageDraft", {
+        chat_id: chatId, draft_id: draftId, ...telegramMessageOptions(options),
+        rich_message: renderTelegramRichMessage(text, { includeThinkingPlaceholder: options.includeThinkingPlaceholder, thinkingText: options.thinkingText }),
       });
     },
-
-    /** Persistent Rich Message final send（Bot API sendRichMessage） */
-    async sendRichReply(chatId, text, options: Record<string, any> = {}) {
-      const messageOptions = telegramMessageOptions(options);
-      const richMessage = renderTelegramRichMessage(text);
-      const form = {
-        chat_id: chatId,
-        rich_message: JSON.stringify(richMessage),
-        ...(messageOptions || {}),
-      };
-      return bot._request("sendRichMessage", {
-        form,
-      });
+    async sendRichReply(chatId, text, options = {}) {
+      return call("sendRichMessage", { chat_id: chatId, rich_message: renderTelegramRichMessage(text), ...telegramMessageOptions(options) });
     },
-
-    /** 发送媒体（根据 URL 扩展名自动选择发送方式） */
     async sendMedia(chatId, url, metadata = {}) {
       const ext = safeExtFromUrl(url);
-      const imageExts = ["jpg", "jpeg", "png", "gif", "webp"];
-      const videoExts = ["mp4", "mov", "avi", "mkv"];
-      const audioExts = ["mp3", "ogg", "wav", "m4a", "opus"];
-      const messageOptions = telegramMessageOptions(metadata);
-      try {
-        if (imageExts.includes(ext)) {
-          if (messageOptions) await bot.sendPhoto(chatId, url, messageOptions);
-          else await bot.sendPhoto(chatId, url);
-        } else if (videoExts.includes(ext)) {
-          if (messageOptions) await bot.sendVideo(chatId, url, messageOptions);
-          else await bot.sendVideo(chatId, url);
-        } else if (audioExts.includes(ext)) {
-          if (messageOptions) await bot.sendAudio(chatId, url, messageOptions);
-          else await bot.sendAudio(chatId, url);
-        } else if (messageOptions) await bot.sendDocument(chatId, url, messageOptions);
-        else await bot.sendDocument(chatId, url);
-      } catch (err) {
-        debugLog()?.warn("bridge", `[telegram] sendMedia 失败 (${ext}): ${err.message}`);
-        throw err;
-      }
+      const kind = ["jpg", "jpeg", "png", "gif", "webp"].includes(ext) ? "image"
+        : ["mp4", "mov", "avi", "mkv"].includes(ext) ? "video"
+        : ["mp3", "ogg", "wav", "m4a", "opus"].includes(ext) ? "audio" : "document";
+      return sendMediaValue(chatId, url, kind, metadata);
     },
-
-    /** 发送本地 staged file 内容：MediaDeliveryService 负责归属校验和读入 Buffer。 */
-    async sendMediaBuffer(chatId, buffer, metadata: Record<string, any> = {}) {
+    async sendMediaBuffer(chatId, buffer, metadata: TelegramSendOptions = {}) {
       const mime = metadata.mime || "application/octet-stream";
-      const filename = metadata.filename;
-      try {
-        const opts = { filename, contentType: mime };
-        const messageOptions = telegramMessageOptions(metadata);
-        if (mime.startsWith("image/")) await bot.sendPhoto(chatId, buffer, messageOptions || {}, opts);
-        else if (mime.startsWith("video/")) await bot.sendVideo(chatId, buffer, messageOptions || {}, opts);
-        else if (mime.startsWith("audio/")) await bot.sendAudio(chatId, buffer, messageOptions || {}, opts);
-        else await bot.sendDocument(chatId, buffer, messageOptions || {}, opts);
-      } catch (err) {
-        debugLog()?.warn("bridge", `[telegram] sendMediaBuffer 失败 (${mime}): ${err.message}`);
-        throw err;
-      }
+      const kind = mime.startsWith("image/") ? "image" : mime.startsWith("video/") ? "video" : mime.startsWith("audio/") ? "audio" : "document";
+      return sendMediaValue(chatId, new InputFile(buffer, { filename: metadata.filename, contentType: mime }), kind, metadata);
     },
-
-    stop() {
-      stopped = true;
-      if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
-      bot.removeAllListeners();
-      bot.stopPolling();
-    },
-
-    /** 验证 token 有效性 */
-    async getMe() {
-      return bot.getMe();
-    },
+    downloadImage: (fileId: string) => downloadFile(fileId),
+    downloadFileByRef: (fileId: string) => downloadFile(fileId),
+    stop() { stopNow(); return run.done; },
+    getMe: () => call("getMe") as Promise<User>,
   };
 }

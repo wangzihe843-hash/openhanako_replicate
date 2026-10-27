@@ -99,7 +99,9 @@ describe("optional feature dependencies at startup", () => {
       assert.equal(typeof lark.WSClient, "function");
       assert.equal(loadFeishuSdk(), lark);
       const telegram = loadTelegramSdk();
-      assert.equal(typeof telegram, "function");
+      for (const name of ["Bot", "Api", "InputFile", "Context"]) {
+        assert.equal(typeof telegram[name], "function");
+      }
       assert.equal(loadTelegramSdk(), telegram);
       console.log("optional-use-ok");
     `);

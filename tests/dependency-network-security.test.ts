@@ -1,6 +1,5 @@
 import { createServer, type Server } from "node:http";
 import { once } from "node:events";
-import { createRequire } from "node:module";
 import { connect, type Socket } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
@@ -9,10 +8,8 @@ import { createAdaptorServer } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import WebSocket from "ws";
 import { fetch } from "undici";
-import { createOutboundProxyRuntime, fetchDispatcherForUrl, telegramBotOptions } from "../lib/net/outbound-proxy.ts";
+import { createOutboundProxyRuntime, fetchDispatcherForUrl } from "../lib/net/outbound-proxy.ts";
 
-const require = createRequire(import.meta.url);
-const request = require("@cypress/request");
 const servers: Server[] = [];
 const sockets = new Set<Socket>();
 const runtime = createOutboundProxyRuntime({ env: {}, log: () => {}, warn: () => {} });
@@ -102,40 +99,4 @@ describe("network dependencies using isolated loopback endpoints", () => {
     expect(targets).toEqual(["service.invalid:80"]);
   });
 
-  it("preserves Telegram HTTP requests and bypasses the proxy after a loopback redirect", async () => {
-    const originPort = await listen(createServer((_req, res) => res.end("local-control")));
-    const targets: string[] = [];
-    const proxyPort = await listen(createServer((req, res) => {
-      targets.push(req.url || "");
-      res.writeHead(302, { Location: `http://127.0.0.1:${originPort}/control` }); res.end();
-    }));
-    vi.stubEnv("http_proxy", "pac+ftp://untrusted.invalid/proxy.pac");
-    runtime.apply({ mode: "manual", httpProxy: `http://127.0.0.1:${proxyPort}` });
-    const options = telegramBotOptions({ request: { timeout: 2000 } }).request;
-    const body = await new Promise((resolve, reject) => request({ ...options, url: "http://remote.invalid/start" }, (error: Error | null, _response: unknown, data: string) => error ? reject(error) : resolve(data)));
-    expect(body).toBe("local-control");
-    expect(targets).toEqual(["http://remote.invalid/start"]);
-  });
-
-  it("updates real requests from the same Telegram options across direct and proxy changes", async () => {
-    const directPort = await listen(createServer((_req, res) => res.end("direct")));
-    const firstPort = await listen(createServer((_req, res) => res.end("proxy-a")));
-    const secondPort = await listen(createServer((_req, res) => res.end("proxy-b")));
-    runtime.apply({ mode: "direct" });
-    const options = telegramBotOptions({ request: { timeout: 2000 } }).request;
-    const send = () => new Promise((resolve, reject) => request({
-      ...options,
-      url: `http://local-mock.invalid:${directPort}/control`,
-      lookup: (_hostname, lookupOptions, callback) => lookupOptions.all
-        ? callback(null, [{ address: "127.0.0.1", family: 4 }])
-        : callback(null, "127.0.0.1", 4),
-    }, (error: Error | null, _response: unknown, data: string) => error ? reject(error) : resolve(data)));
-    expect(await send()).toBe("direct");
-    runtime.apply({ mode: "manual", httpProxy: `http://127.0.0.1:${firstPort}` });
-    expect(await send()).toBe("proxy-a");
-    runtime.apply({ mode: "manual", httpProxy: `http://127.0.0.1:${secondPort}` });
-    expect(await send()).toBe("proxy-b");
-    runtime.apply({ mode: "direct" });
-    expect(await send()).toBe("direct");
-  });
 });

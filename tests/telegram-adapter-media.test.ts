@@ -1,245 +1,97 @@
-import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { telegramFixture as fixture, telegramOk as ok, telegramPending as pending, stopTelegramFixtures } from "./helpers/telegram-sdk-harness.ts";
 
-const botInstances = [];
+afterEach(stopTelegramFixtures);
+const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
 
-vi.mock("../lib/bridge/optional-sdks.ts", () => {
-  class MockTelegramBot {
-    declare _request: Mock<() => Promise<void>>;
-    declare getMe: Mock<() => Promise<{ username: string }>>;
-    declare getFileLink: Mock<(fileId: string) => Promise<string>>;
-    declare getUserProfilePhotos: Mock<() => Promise<{ photos: { file_id: string }[][] }>>;
-    declare on: Mock<(event: string, handler: (payload: unknown) => unknown) => void>;
-    declare emit: (event: string, payload: unknown) => Promise<void>;
-    declare removeAllListeners: Mock<() => void>;
-    declare sendAudio: Mock<() => Promise<void>>;
-    declare sendDocument: Mock<() => Promise<void>>;
-    declare sendMessage: Mock<() => Promise<void>>;
-    declare sendPhoto: Mock<() => Promise<void>>;
-    declare sendVideo: Mock<() => Promise<void>>;
-    declare stopPolling: Mock<() => void>;
-    declare handlers: Map<string, Array<(payload: unknown) => unknown>>;
-    constructor() {
-      this.handlers = new Map();
-      this.on = vi.fn((event: string, handler: (payload: unknown) => unknown) => {
-        const handlers = this.handlers.get(event) || [];
-        handlers.push(handler);
-        this.handlers.set(event, handlers);
-      });
-      this.emit = async (event, payload) => {
-        for (const handler of this.handlers.get(event) || []) {
-          await handler(payload);
-        }
-      };
-      this.removeAllListeners = vi.fn<() => void>();
-      this.stopPolling = vi.fn<() => void>();
-      this.sendMessage = vi.fn(async () => {});
-      this.sendPhoto = vi.fn(async () => {});
-      this.sendVideo = vi.fn(async () => {});
-      this.sendAudio = vi.fn(async () => {});
-      this.sendDocument = vi.fn(async () => {});
-      this._request = vi.fn(async () => {});
-      this.getMe = vi.fn(async () => ({ username: "hana" }));
-      this.getUserProfilePhotos = vi.fn(async () => ({
-        photos: [[{ file_id: "avatar-small" }, { file_id: "avatar-large" }]],
-      }));
-      this.getFileLink = vi.fn(async (fileId: string) => `https://cdn.example.com/${fileId}.jpg`);
-      botInstances.push(this);
-    }
-  }
-  return { loadTelegramSdk: () => MockTelegramBot };
-});
-
-vi.mock("../lib/debug-log.js", () => ({
-  debugLog: () => null,
-  createModuleLogger: () => ({ log: vi.fn(), warn: vi.fn(), error: vi.fn() }),
-}));
-
-import { createTelegramAdapter } from "../lib/bridge/telegram-adapter.ts";
-
-describe("createTelegramAdapter media delivery", () => {
-  beforeEach(() => {
-    botInstances.length = 0;
-  });
-
-  function makeAdapter() {
-    const onMessage = vi.fn();
-    const adapter = createTelegramAdapter({
-      token: "tg-token",
-      agentId: "hana",
-      onMessage,
-    } as any);
-    return { adapter, bot: botInstances[0], onMessage };
-  }
-
+describe("Telegram media through the published SDK and fake transport", () => {
   it.each([
-    ["image/png", "image.png", "sendPhoto"],
-    ["video/mp4", "video.mp4", "sendVideo"],
-    ["audio/mpeg", "audio.mp3", "sendAudio"],
-    ["text/plain", "note.txt", "sendDocument"],
-  ])("sends local %s buffers through the documented Telegram method", async (mime, filename, method) => {
-    const { adapter, bot } = makeAdapter();
-    const buffer = Buffer.from("file");
-
-    await adapter.sendMediaBuffer("chat-1", buffer, { mime, filename });
-
-    expect(bot[method]).toHaveBeenCalledWith(
-      "chat-1",
-      buffer,
-      {},
-      { filename, contentType: mime },
-    );
-    adapter.stop();
+    ["image/png", "image.png", "sendPhoto", "photo"],
+    ["video/mp4", "video.mp4", "sendVideo", "video"],
+    ["audio/mpeg", "audio.mp3", "sendAudio", "audio"],
+    ["text/plain", "note.txt", "sendDocument", "document"],
+  ])("uploads %s as InputFile multipart with filename, MIME and topic", async (mime, filename, method, field) => {
+    let form: FormData;
+    const f = fixture({ [method]: async (_params, init) => {
+      form = await new Response(init.body as BodyInit, { headers: init.headers }).formData();
+      return ok({ message_id: 1 });
+    } });
+    await f.adapter.sendMediaBuffer("123", Buffer.from("synthetic bytes"), { mime, filename, replyContext: { messageThreadId: 7 } });
+    const file = form!.get(field) as File;
+    expect(file.name).toBe(filename);
+    expect(file.type).toBe(mime);
+    expect(await file.text()).toBe("synthetic bytes");
+    expect(form!.get("chat_id")).toBe("123");
+    expect(form!.get("message_thread_id")).toBe("7");
   });
-
   it.each([
-    ["https://example.com/image.png", "sendPhoto"],
-    ["https://example.com/video.mp4", "sendVideo"],
-    ["https://example.com/audio.mp3", "sendAudio"],
-    ["https://example.com/archive.zip", "sendDocument"],
-  ])("routes remote URL %s by extension", async (url, method) => {
-    const { adapter, bot } = makeAdapter();
-
-    await adapter.sendMedia("chat-1", url);
-
-    expect(bot[method]).toHaveBeenCalledWith("chat-1", url);
-    adapter.stop();
+    ["https://example.invalid/image.png", "sendPhoto", "photo"],
+    ["https://example.invalid/video.mp4", "sendVideo", "video"],
+    ["https://example.invalid/audio.mp3", "sendAudio", "audio"],
+    ["https://example.invalid/archive.zip", "sendDocument", "document"],
+  ])("retains URL routing for %s", async (url, method, field) => {
+    const f = fixture();
+    await f.adapter.sendMedia("123", url, { messageThreadId: 8 });
+    expect(Object.fromEntries(f.calls.find(c => c.method === method)!.params)).toEqual({ chat_id: "123", [field]: url, message_thread_id: "8" });
   });
-
-  it("keeps Telegram replies and media inside the inbound forum topic", async () => {
-    const { adapter, bot } = makeAdapter();
-
-    await adapter.sendReply("chat-1", "hello", { messageThreadId: 67890 });
-    await adapter.sendBlockReply("chat-1", "block", { messageThreadId: 67890 });
-    await adapter.sendMedia("chat-1", "https://example.com/image.png", {
-      replyContext: { messageThreadId: 67890 },
-    });
-    await adapter.sendMediaBuffer("chat-1", Buffer.from("png"), {
-      mime: "image/png",
-      filename: "image.png",
-      replyContext: { messageThreadId: 67890 },
-    });
-
-    expect(bot.sendMessage).toHaveBeenNthCalledWith(1, "chat-1", "hello", {
-      parse_mode: "HTML",
-      message_thread_id: 67890,
-    });
-    expect(bot.sendMessage).toHaveBeenNthCalledWith(2, "chat-1", "block", {
-      parse_mode: "HTML",
-      message_thread_id: 67890,
-    });
-    expect(bot.sendPhoto).toHaveBeenNthCalledWith(1, "chat-1", "https://example.com/image.png", {
-      message_thread_id: 67890,
-    });
-    expect(bot.sendPhoto).toHaveBeenNthCalledWith(2, "chat-1", Buffer.from("png"), {
-      message_thread_id: 67890,
-    }, { filename: "image.png", contentType: "image/png" });
-    adapter.stop();
+  it("preserves HTML, block replies, typing topics and long-text chunks", async () => {
+    const f = fixture();
+    await f.adapter.sendBlockReply("123", "**bold** and `code`", { messageThreadId: 7 });
+    await f.adapter.sendReply("123", "x".repeat(9000));
+    await f.adapter.sendTypingIndicator("123", { messageThreadId: 7 });
+    const sends = f.calls.filter(c => c.method === "sendMessage");
+    expect(Object.fromEntries(sends[0].params)).toMatchObject({ text: "<b>bold</b> and <code>code</code>", parse_mode: "HTML", message_thread_id: "7" });
+    expect(sends.slice(1).map(c => c.params.get("text")).join("")).toBe("x".repeat(9000));
+    expect(sends.slice(1).every(c => c.params.get("text")!.length <= 4096)).toBe(true);
+    expect(Object.fromEntries(f.calls.find(c => c.method === "sendChatAction")!.params)).toMatchObject({ action: "typing", message_thread_id: "7" });
   });
-
-  it("renders common Markdown replies as Telegram HTML in the adapter boundary", async () => {
-    const { adapter, bot } = makeAdapter();
-
-    await adapter.sendReply("chat-1", "**bold** and `code`");
-    await adapter.sendBlockReply("chat-1", "- first\n- second");
-
-    expect(bot.sendMessage).toHaveBeenNthCalledWith(
-      1,
-      "chat-1",
-      "<b>bold</b> and <code>code</code>",
-      { parse_mode: "HTML" },
-    );
-    expect(bot.sendMessage).toHaveBeenNthCalledWith(
-      2,
-      "chat-1",
-      "- first\n- second",
-      { parse_mode: "HTML" },
-    );
-    adapter.stop();
+  it("hands off Context messages with token-free file refs and bounded avatar data", async () => {
+    let polls = 0;
+    const f = fixture({
+      getUpdates: (_p, init) => ++polls === 1 ? ok([{ update_id: 41, message: {
+        message_id: 1, date: 0, text: "hello", chat: { id: 123, type: "supergroup" }, message_thread_id: 7,
+        from: { id: 456, first_name: "Ada", last_name: "Lovelace" },
+        photo: [{ file_id: "photo", width: 10, height: 20 }],
+        document: { file_id: "doc", file_name: "note.txt", mime_type: "text/plain" },
+        voice: { file_id: "voice", duration: 2, mime_type: "audio/ogg" },
+        video: { file_id: "video", duration: 3, mime_type: "video/mp4" },
+      } }]) : pending(init.signal),
+      getUserProfilePhotos: () => ok({ total_count: 1, photos: [[{ file_id: "avatar" }]] }),
+      getFile: p => ok({ file_id: p.get("file_id"), file_path: `files/${p.get("file_id")}.bin`, file_size: png.length }),
+      "avatar.bin": () => new Response(png), "photo.bin": () => new Response(png),
+      "doc.bin": () => new Response("note"), "voice.bin": () => new Response("voice"), "video.bin": () => new Response("video"),
+    });
+    await vi.waitFor(() => expect(f.onMessage).toHaveBeenCalledOnce());
+    const message = f.onMessage.mock.calls[0][0];
+    expect(message).toMatchObject({ platform: "telegram", chatId: "123", userId: "456", senderName: "Ada Lovelace", messageThreadId: 7, isGroup: true });
+    expect(message.sessionKey).toBe(`tg_group_123@${f.options.agentId}`);
+    expect(message.avatarUrl).toBe(`data:image/png;base64,${png.toString("base64")}`);
+    expect(message.attachments.map(a => [a.type, a.platformRef])).toEqual([["image", "photo"], ["file", "doc"], ["audio", "voice"], ["video", "video"]]);
+    expect(JSON.stringify(message)).not.toMatch(/SYNTHETIC_ONLY|api\.telegram|\/bot/);
+    expect(message.attachments.every(a => !a.url)).toBe(true);
+    expect(await f.adapter.downloadImage("photo")).toEqual(png);
+    for (const id of ["doc", "voice", "video"]) expect((await f.adapter.downloadFileByRef(id)).length).toBeGreaterThan(0);
+    expect(f.calls.filter(c => c.method === "getFile").map(c => c.params.get("file_id"))).toEqual(["avatar", "photo", "doc", "voice", "video"]);
   });
-
-  it("normalizes inbound Telegram profile metadata for Bridge identity", async () => {
-    const { adapter, bot, onMessage } = makeAdapter();
-
-    await bot.emit("message", {
-      text: "hello",
-      chat: { id: 123, type: "private" },
-      from: { id: 456, first_name: "Ada", last_name: "Lovelace", username: "ada" },
-    });
-
-    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
-      platform: "telegram",
-      chatId: "123",
-      userId: "456",
-      sessionKey: "tg_dm_456@hana",
-      senderName: "Ada Lovelace",
-      displayName: "Ada Lovelace",
-      avatarUrl: "https://cdn.example.com/avatar-large.jpg",
-      principalId: "456",
-    }));
-    adapter.stop();
+  it.each(["../secret", "https://evil.invalid/x", "files/../../x", "files/a?x=y", "files/%2e%2e/x", "files/a\\b"])("rejects untrusted getFile path %s without downloading", async file_path => {
+    const f = fixture({ getFile: () => ok({ file_path }) });
+    await expect(f.adapter.downloadFileByRef("file")).rejects.toThrow("invalid Telegram file path");
+    expect(f.calls.every(c => !c.url.includes("/file/bot"))).toBe(true);
   });
-
-  it("declares Telegram draft streaming and sends required draft metadata", async () => {
-    const { adapter, bot } = makeAdapter();
-
-    expect(adapter.streamingCapabilities).toMatchObject({
-      mode: "draft",
-      scopes: ["dm"],
-      maxChars: 4096,
-    });
-
-    await adapter.sendDraft("chat-1", "streaming text", {
-      draftId: 12345,
-      messageThreadId: 67890,
-    });
-
-    expect(bot._request).toHaveBeenCalledWith("sendMessageDraft", {
-      form: {
-        chat_id: "chat-1",
-        draft_id: 12345,
-        message_thread_id: 67890,
-        text: "streaming text",
-      },
-    });
-    adapter.stop();
+  it("enforces declared and streamed download size limits", async () => {
+    const f = fixture({ getFile: () => ok({ file_path: "files/a", file_size: 21 * 1024 * 1024 }) });
+    await expect(f.adapter.downloadImage("too-large")).rejects.toThrow("budget");
+    const g = fixture({ getFile: () => ok({ file_path: "files/a" }), a: () => new Response(new Uint8Array(21 * 1024 * 1024)) });
+    await expect(g.adapter.downloadFileByRef("large-body")).rejects.toThrow("budget");
   });
-
-  it("declares Telegram rich draft streaming and sends rich draft/final payloads", async () => {
-    const { adapter, bot } = makeAdapter();
-
-    expect(adapter.richStreamingCapabilities).toMatchObject({
-      mode: "rich_draft",
-      scopes: ["dm"],
-      maxChars: 32768,
-      renderer: "telegram_rich_markdown",
-      requiresRichStreaming: true,
-    });
-
-    await adapter.sendRichDraft("chat-1", "**streaming**", {
-      draftId: 12345,
-      messageThreadId: 67890,
-    });
-    await adapter.sendRichReply("chat-1", "# Final\n\n<details><summary>More</summary>x</details>", {
-      messageThreadId: 67890,
-    });
-
-    expect(bot._request).toHaveBeenNthCalledWith(1, "sendRichMessageDraft", {
-      form: {
-        chat_id: "chat-1",
-        draft_id: 12345,
-        message_thread_id: 67890,
-        rich_message: JSON.stringify({ markdown: "**streaming**" }),
-      },
-    });
-    expect(bot._request).toHaveBeenNthCalledWith(2, "sendRichMessage", {
-      form: {
-        chat_id: "chat-1",
-        message_thread_id: 67890,
-        rich_message: JSON.stringify({
-          markdown: "# Final\n\n<details><summary>More</summary>x</details>",
-        }),
-      },
-    });
-    adapter.stop();
+  it("does not add audio-only, channel_post or rich_message inbound support", async () => {
+    let polls = 0;
+    const f = fixture({ getUpdates: (_p, init) => ++polls === 1 ? ok([
+      { update_id: 1, message: { chat: { id: 1, type: "private" }, audio: { file_id: "a" } } },
+      { update_id: 2, channel_post: { chat: { id: 1, type: "channel" }, text: "excluded" } },
+      { update_id: 3, message: { chat: { id: 1, type: "private" }, rich_message: { markdown: "excluded" } } },
+    ]) : pending(init.signal) });
+    await vi.waitFor(() => expect(polls).toBe(2));
+    expect(f.onMessage).not.toHaveBeenCalled();
   });
 });
