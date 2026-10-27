@@ -5,15 +5,16 @@
  * mount them inline. It now statically imports
  * `server/composition/open-root.ts` (open) and accepts an optional
  * `root.registerClosedRoutes` hook (supplied by `server/main-full.ts` via
- * `server/composition/full-root.ts`, closed-product) instead. This file
+ * `server/composition/full-root.ts`, closed-product) instead. Unclassified
+ * routes are supplied separately by the full entry at the same seam. This file
  * locks the three properties the refactor must not change:
  *
- * 1. The exact set of mounted route factories (and their mount prefix) is
+ * 1. The full product's exact set of mounted route factories (and their mount prefix) is
  *    unchanged — a pure "moved code between files" refactor, not a route
  *    behavior change.
- * 2. A real spawned full composition (`server/main-full.ts`) still serves
- *    both open-root and full-root routes behind the same global auth
- *    middleware, proven with real HTTP requests — not static assertions.
+ * 2. Real spawned full/open entries keep the global auth middleware. Full
+ *    serves the original routes; open omits the unclassified and closed
+ *    surfaces, proven with authenticated HTTP requests.
  * 3. `server/index.ts` alone boots nothing on mere import — only
  *    `server/main-full.ts` (or another composition entry that calls
  *    `startServer()`) does. This is the "no silent non-start" contract.
@@ -103,22 +104,28 @@ function extractMountCalls(filePath: string): string[] {
 }
 
 describe("composition boundary behavior lock: sorted mount-call inventory", () => {
-  it("server/index.ts + composition/open-root.ts + composition/full-root.ts together mount exactly the expected route factories, at the same prefixes, as the pre-refactor server/index.ts", () => {
+  it("the full composition mounts exactly the expected route factories at the pre-refactor prefixes", () => {
     const combined = [
       ...extractMountCalls(path.join(root, "server", "index.ts")),
       ...extractMountCalls(path.join(root, "server", "composition", "open-root.ts")),
       ...extractMountCalls(path.join(root, "server", "composition", "full-root.ts")),
+      ...extractMountCalls(path.join(root, "server", "main-full.ts")),
     ].sort();
 
     expect(combined).toEqual([...PRE_REFACTOR_MOUNT_CALLS]);
   });
 
-  it("mobile-workbench (evidence-needed) is mounted directly by server/index.ts itself, not absorbed into open-root.ts or full-root.ts", () => {
-    const indexPairs = extractMountCalls(path.join(root, "server", "index.ts"));
-    const openRootPairs = extractMountCalls(path.join(root, "server", "composition", "open-root.ts"));
-
-    expect(indexPairs).toContain('"/api" :: createMobileWorkbenchRoute');
-    expect(openRootPairs).not.toContain('"/api" :: createMobileWorkbenchRoute');
+  it("full injects mobile-workbench without classifying it as open or closed-product", () => {
+    for (const file of ["index.ts", "composition/open-root.ts", "composition/full-root.ts"]) {
+      const source = fs.readFileSync(path.join(root, "server", file), "utf8");
+      expect(extractMountCalls(path.join(root, "server", file))).not.toContain('"/api" :: createMobileWorkbenchRoute');
+      expect(source).not.toMatch(/from ["'].*routes\/mobile-workbench\.ts["']/);
+    }
+    const fullSource = fs.readFileSync(path.join(root, "server", "main-full.ts"), "utf8");
+    expect(fullSource).toContain('import { createMobileWorkbenchRoute } from "./routes/mobile-workbench.ts";');
+    expect(fullSource).toMatch(/registerUnclassifiedRoutes:\s*\(app,\s*\{ engine \}\)\s*=>\s*\{\s*app\.route\("\/api",\s*createMobileWorkbenchRoute\(engine\)\);\s*\}/);
+    const indexSource = fs.readFileSync(path.join(root, "server", "index.ts"), "utf8");
+    expect(indexSource).toMatch(/registerOpenRoutes\(app, ctx\);\s*root\.registerUnclassifiedRoutes\?\.\(app, ctx\);\s*root\.registerClosedRoutes\?\.\(app, ctx\);/);
   });
 
   it("server/index.ts imports composition/open-root.ts unconditionally and imports no closed-product route file directly", () => {
@@ -161,7 +168,7 @@ describe("composition boundary behavior lock: builtin media adapter injection", 
 
     expect(mainFullSource).toContain('from "./composition/full-root.ts"');
     expect(mainFullSource).toMatch(/registerClosedRoutes,\s*builtinMediaAdapters/);
-    expect(mainFullSource).toMatch(/startServer\(\{\s*registerClosedRoutes,\s*builtinMediaAdapters\s*\}\)/);
+    expect(mainFullSource).toMatch(/startServer\(\{\s*registerClosedRoutes,\s*builtinMediaAdapters,/);
     expect(mainFullSource).toContain('from "./standalone-runtime-smoke.ts"');
     expect(mainFullSource).toContain('process.env.HANA_INTERNAL_STANDALONE_RUNTIME_SMOKE === "1"');
     expect(mainFullSource).toContain("await runPackagedStandaloneRuntimeSmoke();");
@@ -272,8 +279,8 @@ function waitForServerInfo(serverInfoPath: string, child: ReturnType<typeof spaw
   });
 }
 
-describe("composition boundary behavior lock: real request smoke against the full composition (server/main-full.ts)", () => {
-  it("serves an open-root route and a full-root (closed-product) route behind the same global auth middleware", async () => {
+describe("composition boundary behavior lock: real requests against both entries", () => {
+  it.each(["full", "open"])("%s preserves global auth and selects its route surface", async (composition) => {
     const hanaHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-composition-smoke-"));
     const serverInfoPath = path.join(hanaHome, "server-info.json");
     const child = spawn(process.execPath, ["server/bootstrap.ts"], {
@@ -286,7 +293,7 @@ describe("composition boundary behavior lock: real request smoke against the ful
         USERPROFILE: path.join(hanaHome, "os-home"),
         HANA_PORT: "0",
         HANA_ROOT: root,
-        HANA_SERVER_ENTRY: path.join(root, "server", "main-full.ts"),
+        HANA_SERVER_ENTRY: path.join(root, "server", `main-${composition}.ts`),
         HANA_CREATE_STARTUP_SESSION: "0",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -325,9 +332,25 @@ describe("composition boundary behavior lock: real request smoke against the ful
       const diaryNoAuth = await fetch(`${base}/api/diary/list`);
       expect(diaryNoAuth.status).toBe(403);
       const diaryAuth = await fetch(`${base}/api/diary/list`, { headers: authHeaders });
-      expect(diaryAuth.status).toBe(200);
-      const diaryBody = await diaryAuth.json();
-      expect(Array.isArray(diaryBody.files)).toBe(true);
+      expect(diaryAuth.status).toBe(composition === "full" ? 200 : 404);
+      if (composition === "full") {
+        const diaryBody = await diaryAuth.json();
+        expect(Array.isArray(diaryBody.files)).toBe(true);
+      }
+
+      // Unclassified routes keep their full-product behavior, behind the
+      // same auth gate. Authenticated 404s prove their absence in open.
+      for (const endpoint of ["/api/mobile/bootstrap", "/api/mobile/workbench/files", "/api/workbench/files"]) {
+        const denied = await fetch(`${base}${endpoint}`);
+        expect(denied.status, endpoint).toBe(403);
+        const authorized = await fetch(`${base}${endpoint}`, { headers: authHeaders });
+        expect(authorized.status, endpoint).toBe(composition === "full" ? 200 : 404);
+        if (composition === "full") {
+          const body = await authorized.json();
+          if (endpoint.endsWith("bootstrap")) expect(body).toHaveProperty("agentName");
+          else expect(Array.isArray(body.files)).toBe(true);
+        }
+      }
     } finally {
       child.kill("SIGKILL");
       await waitForExit(child);

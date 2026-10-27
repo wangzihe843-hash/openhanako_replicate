@@ -17,6 +17,10 @@
  * runtime feature switch: which composition is selected is decided once, at
  * the process-entry level (which file gets spawned/imported), never by an
  * env var or config flag read inside `startServer`.
+ * Unclassified routes use a separate `registerUnclassifiedRoutes` hook at
+ * the same seam, between open and closed registration. Full supplies that
+ * hook; open supplies neither hook. Injection does not grant redistribution
+ * permission or classify a route as closed-product.
  *
  * `ctx` carries every dependency a route factory needs explicitly (engine,
  * hub, ws plumbing, per-request-scoped services) so closed route
@@ -48,9 +52,15 @@ export interface CompositionContext {
 
 export interface CompositionRoot {
   /**
-   * Closed-product route registration hook. Absent (`undefined`) means the
-   * open composition: only open routes are mounted. Supplied means the full
-   * composition: called once, after all open routes are mounted, to add
+   * Routes whose redistribution status is still evidence-needed. The full
+   * entry supplies their implementations; the open entry leaves this absent.
+   * Called once after open routes and before closed-product routes, preserving
+   * the full product's mount order and the shared global auth middleware.
+   */
+  registerUnclassifiedRoutes?: (app: Hono, ctx: CompositionContext) => void;
+  /**
+   * Closed-product route registration hook. Supplied by the full entry and
+   * called once after open and unclassified route registration, to add
    * the closed-product surface on top of the same `app` and `ctx`.
    */
   registerClosedRoutes?: (app: Hono, ctx: CompositionContext) => void;

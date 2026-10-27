@@ -2,21 +2,8 @@
   "version": 1,
   "generatedBy": "scripts/compute-cli-closure.mjs",
   "sourceClosure": "build/cli-runtime-closure.json",
-  "edges": [
-    {
-      "from": "server/index.ts",
-      "to": "server/routes/mobile-workbench.ts",
-      "provenance": "server-bootstrap:import-statement",
-      "classification": "evidence-needed",
-      "note": "Superseded by the mobile-workspace route in ongoing development; this edge is expected to retire with that replacement rather than be re-cut here, so it stays recorded as evidence rather than acted on."
-    }
-  ],
-  "evidenceNeeded": [
-    {
-      "path": "server/routes/mobile-workbench.ts",
-      "note": "Superseded by the mobile-workspace route in ongoing development; this edge is expected to retire with that replacement rather than be re-cut here, so it stays recorded as evidence rather than acted on."
-    }
-  ],
+  "edges": [],
+  "evidenceNeeded": [],
   "provisional": [],
   "staleClassificationReferences": [
     {
@@ -45,10 +32,8 @@
     }
   ],
   "stats": {
-    "totalEdges": 1,
-    "byClassification": {
-      "evidence-needed": 1
-    },
-    "uniqueCoupledFiles": 1
+    "totalEdges": 0,
+    "byClassification": {},
+    "uniqueCoupledFiles": 0
   }
 }

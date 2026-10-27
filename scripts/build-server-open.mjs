@@ -16,11 +16,11 @@
  *     专属：本文件从不 import build-server-artifact.mjs，全程不读
  *     HANA_SIGN_KEY）
  *
- * 动手前先做白名单断言（assertOpenBuildInputsWhitelisted）：本构建即将读取
- * 的每一个仓库源路径，必须命中 export-manifest.json 的显式白名单，或命中
- * build/cli-runtime-closure.json 的 runtime-asset 证据。命中不了直接报错、
- * 列出违规路径——这是"从一棵干净的开源导出树也能构建"的机械等价物，不需要
- * 真的先删仓库文件再验证。
+ * 动手前先做白名单断言（assertOpenBuildInputsWhitelisted）：本构建声明的
+ * 直接入口和数据路径，必须命中 export-manifest.json 的显式白名单，或命中
+ * build/cli-runtime-closure.json 的 runtime-asset 证据。该断言不遍历传递
+ * import 闭包；裁剪后的源码、依赖安装及运行时是否自足，必须由
+ * rehearse:open 在真实独立导出目录构建并 smoke 验证。
  *
  * 产出结构：
  *   dist-server-open/{platform}-{arch}/

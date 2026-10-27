@@ -169,7 +169,7 @@ describe("lint-open-boundary: real repo state (smoke)", () => {
     const baseline = readBaseline({ rootDir: REPOSITORY_ROOT });
     const result = checkRatchet({ violations, baseline });
     expect(result.ok).toBe(true);
-    expect(result.totalViolations).toBeGreaterThan(0); // known debt is expected to be non-zero right now
+    expect(result.totalViolations).toBe(0);
   }, 30_000);
 
   it("the CLI subprocess exits 0 against the real repo and reports the known-debt count", () => {

@@ -9,8 +9,8 @@
  * publish server-info.json, then makes one authenticated loopback HTTP
  * request to `/api/server/identity` and asserts a 200 with the expected
  * shape. This is the actual proof the open build boots and serves traffic
- * — scripts/build-server-open.mjs's whitelist assertion only proves the
- * build didn't *read* anything closed, not that the result *runs*.
+ * — the builder's whitelist assertion covers declared direct inputs only.
+ * Authenticated 404s also prove unclassified workbench routes are absent.
  *
  * Negative direction: temporarily removes one required runtime-asset file
  * from the built tree (lib/config.example.yaml — read synchronously during
@@ -174,6 +174,14 @@ export async function runPositiveSmoke({ rootDir = ROOT, platform = process.plat
     const body = await res.json();
     if (typeof body.serverProtocol !== "number" && typeof body.serverProtocol !== "string") {
       throw new Error(`[smoke-open-server] /api/server/identity response missing serverProtocol field: ${JSON.stringify(body)}`);
+    }
+
+    for (const endpoint of ["/api/mobile/bootstrap", "/api/mobile/workbench/files", "/api/workbench/files"]) {
+      const absent = await fetch(new URL(endpoint, url), { headers: { Authorization: `Bearer ${token}` } });
+      if (absent.status !== 404) {
+        throw new Error(`[smoke-open-server] authenticated GET ${endpoint} returned ${absent.status}, expected 404 in open composition`);
+      }
+      await absent.arrayBuffer();
     }
 
     const workspacePath = path.join(hanakoHome, "os-home", "Desktop", "OH-WorkSpace");

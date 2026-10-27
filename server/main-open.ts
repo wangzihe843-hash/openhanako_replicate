@@ -5,7 +5,8 @@
  * the dual of server/main-full.ts, which does the same for the closed
  * product. It statically imports only server/index.ts's `startServer`
  * export and calls it with an empty composition root: no
- * `registerClosedRoutes` hook, no `builtinMediaAdapters` — exactly the
+ * `registerClosedRoutes` or `registerUnclassifiedRoutes` hook, no
+ * `builtinMediaAdapters` — exactly the
  * open route/WS surface `composition/open-root.ts` mounts unconditionally,
  * nothing closed-product layered on top. See composition/contract.ts for
  * why `root.registerClosedRoutes?.()` in server/index.ts is a static

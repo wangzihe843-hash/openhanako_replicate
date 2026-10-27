@@ -206,3 +206,8 @@ jobs:
 
       - name: Smoke-test open composition server
         run: npm run smoke:server:open
+
+      # A full checkout can hide imports of files omitted by the export plan.
+      # Rehearse the actual standalone tree; do not publish its build output.
+      - name: Rehearse standalone open export
+        run: npm run rehearse:open -- "$RUNNER_TEMP/open-export"

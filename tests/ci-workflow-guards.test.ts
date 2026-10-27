@@ -356,6 +356,18 @@ describe("ci.yml: open composition build+smoke guard is wired", () => {
     const steps = job?.steps ?? [];
     expect(steps.some((s) => stepRun(s).includes("scripts/lint-open-boundary.mjs"))).toBe(true);
   });
+
+  it("also rehearses a standalone export after full-checkout smoke without publishing it", () => {
+    const steps = doc.jobs["open-build-smoke"].steps ?? [];
+    const smokeIndex = steps.findIndex((step) => stepRun(step).includes("smoke:server:open"));
+    const exportIndex = steps.findIndex((step) => stepRun(step).includes("rehearse:open"));
+    expect(exportIndex).toBeGreaterThan(smokeIndex);
+    const rehearsal = steps[exportIndex];
+    expect(stepRun(rehearsal)).toBe('npm run rehearse:open -- "$RUNNER_TEMP/open-export"');
+    expect(rehearsal["continue-on-error"]).not.toBe(true);
+    expect(rehearsal.if).toBeUndefined();
+    expect(steps.some((step) => String(step.uses ?? "").includes("upload-artifact"))).toBe(false);
+  });
 });
 
 describe("ci.yml: Windows restricted-token helper is exercised before release builds", () => {

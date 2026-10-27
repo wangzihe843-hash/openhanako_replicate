@@ -12,8 +12,23 @@ import {
   OPEN_LIB_TEMPLATE_DIRS,
 } from "../scripts/build-server-open.mjs";
 import * as buildServerPhases from "../scripts/build-server-phases.mjs";
+import { computeCliRuntimeClosure } from "../scripts/compute-cli-closure.mjs";
+import { EXPORT_SKELETON, planExportCopies } from "../scripts/export-open-tree.mjs";
+import { readExportManifest } from "../scripts/lint-open-boundary.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+it("the open source graph fits the actual export plan without unclassified routes", async () => {
+  const closure = await computeCliRuntimeClosure({ rootDir: ROOT, includeNftTrace: false });
+  const exported = new Set(planExportCopies({ rootDir: ROOT, manifest: readExportManifest({ rootDir: ROOT }), skeleton: EXPORT_SKELETON }));
+  const sourcePaths = closure.files.filter((file) => file.inputType === "source-graph").map((file) => file.path);
+  expect(sourcePaths.length).toBeGreaterThan(500);
+  expect(sourcePaths.filter((file) => !exported.has(file))).toEqual([]);
+  for (const file of ["server/main-full.ts", "server/composition/full-root.ts", "server/routes/mobile-workbench.ts"]) {
+    expect(sourcePaths).not.toContain(file);
+    expect(exported.has(file)).toBe(false);
+  }
+}, 30_000);
 
 /**
  * Strips block (/** *\/) and line (//) comments so source-scanning

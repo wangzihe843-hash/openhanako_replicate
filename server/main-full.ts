@@ -9,17 +9,26 @@
  * `server/bootstrap.ts` imports at runtime).
  *
  * Normal boot statically pairs the open composition root's `startServer`
- * export with the closed route hook and media adapter list. The sole env
- * branch below is a release-only, one-shot runtime probe: it starts no
+ * export with the closed route hook, media adapter list, and the still
+ * unclassified mobile-workbench route. Supplying the latter here preserves
+ * full behavior without changing its evidence-needed redistribution status.
+ * The sole env branch below is a release-only, one-shot runtime probe: it starts no
  * composition and cannot switch an open server into the closed product or
  * vice versa. Which composition boots remains fixed by the selected entry.
  */
 import { startServer } from "./index.ts";
 import { registerClosedRoutes, builtinMediaAdapters } from "./composition/full-root.ts";
 import { runPackagedStandaloneRuntimeSmoke } from "./standalone-runtime-smoke.ts";
+import { createMobileWorkbenchRoute } from "./routes/mobile-workbench.ts";
 
 if (process.env.HANA_INTERNAL_STANDALONE_RUNTIME_SMOKE === "1") {
   await runPackagedStandaloneRuntimeSmoke();
 } else {
-  await startServer({ registerClosedRoutes, builtinMediaAdapters });
+  await startServer({
+    registerClosedRoutes,
+    builtinMediaAdapters,
+    registerUnclassifiedRoutes: (app, { engine }) => {
+      app.route("/api", createMobileWorkbenchRoute(engine));
+    },
+  });
 }

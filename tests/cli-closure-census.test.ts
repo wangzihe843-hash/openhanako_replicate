@@ -346,7 +346,7 @@ describe("compute-cli-closure: full generation (real esbuild + nft, slow)", () =
     // changes and this assertion needs a manual bump.
     expect(generatedClosure.stats.byInputType["source-graph"]).toBeGreaterThan(500);
     expect(generatedClosure.stats.byInputType["nft-runtime-trace"]).toBeGreaterThan(5000);
-    expect(generatedBaseline.stats.totalEdges).toBeGreaterThan(0);
+    expect(generatedBaseline.stats.totalEdges).toBe(0);
   }, 120_000);
 
   it("is idempotent: two independent full runs produce identical output", async () => {

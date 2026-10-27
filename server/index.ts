@@ -56,7 +56,6 @@ import {
 } from "./http/plugin-assets.ts";
 import { resolveHttpRequestPrincipal } from "./http/request-principal.ts";
 import { ensureLocalIdentityRegistries } from "../core/server-identity.ts";
-import { createMobileWorkbenchRoute } from "./routes/mobile-workbench.ts";
 import { registerOpenRoutes } from "./composition/open-root.ts";
 import type { CompositionRoot, CompositionContext } from "./composition/contract.ts";
 import { registerTaskRegistryBusHandlers } from "./task-bus-handlers.ts";
@@ -949,9 +948,9 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
 
   // ── 开放/闭集组合接缝 ──
   // 开放路由/WS 面全部收进 composition/open-root.ts；这里无条件静态 import 并
-  // 调用它，维持运行闭包 census 对开放路由的可达性。mobile-workbench 仍是
-  // evidence-needed(未定性),原样留在这里直接挂载，不并入 open-root.ts 以免
-  // 隐式把它计入"已确认开放"。root.registerClosedRoutes 存在时才追加闭集产品
+  // 调用它，维持运行闭包 census 对开放路由的可达性。未分类路由由入口通过
+  // registerUnclassifiedRoutes 显式供给；共享闭包不引用其实现，也不改变其
+  // evidence-needed 定性。root.registerClosedRoutes 存在时才追加闭集产品
   // 路由(avatar/character-cards/cards/desk/diary)——这是静态入参，不是运行
   // 时开关：选哪个组合由"哪个入口文件被 spawn/import"在进程启动前一次性决定。
   const ctx: CompositionContext = {
@@ -966,7 +965,7 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
     appVersion,
   };
   registerOpenRoutes(app, ctx);
-  app.route("/api", createMobileWorkbenchRoute(engine));
+  root.registerUnclassifiedRoutes?.(app, ctx);
   root.registerClosedRoutes?.(app, ctx);
   // internal-browser WS — see unified upgrade handler in server startup below
 

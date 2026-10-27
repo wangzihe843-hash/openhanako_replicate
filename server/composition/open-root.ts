@@ -7,10 +7,12 @@
  * switch. Every line below is moved verbatim from `server/index.ts`'s old
  * inline mount block (same factory, same arguments, same relative order
  * among open routes); `server/routes/mobile-workbench.ts` deliberately
- * stays mounted directly in `server/index.ts` instead of here — it is
+ * is supplied only by the full entry's `registerUnclassifiedRoutes` hook — it is
  * still `evidence-needed` (neither confirmed open nor confirmed
- * closed-product, see build/open-boundary-baseline.json), and this file
- * must not silently reclassify it by absorbing its mount call.
+ * closed-product, see scripts/compute-cli-closure.mjs's classification rules), and this file
+ * must not silently reclassify it by absorbing its mount call. The shared
+ * index invokes that hook at the original position without importing the
+ * unclassified implementation into the open source graph.
  */
 import type { Hono } from "hono";
 import type { CompositionContext } from "./contract.ts";
