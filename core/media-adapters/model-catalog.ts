@@ -30,6 +30,7 @@ export const MODEL_CATALOG = {
     { id: "gpt-image-1", name: "GPT Image 1", aliases: ["1"], listed: false },
     { id: "gpt-image-1.5", name: "GPT Image 1.5", aliases: ["1.5"], default: true },
     { id: "gpt-image-2", name: "GPT Image 2", aliases: ["2"] },
+    { id: "gpt-image-2.5-sunburst", name: "GPT Image 2.5 Sunburst", listed: false },
   ],
   "openai-codex-oauth": [
     { id: "gpt-image-2", name: "GPT Image 2", aliases: ["2"] },

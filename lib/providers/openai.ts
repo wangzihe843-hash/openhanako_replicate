@@ -34,7 +34,7 @@ const DALL_E_3_PROPERTIES = {
 const GPT_IMAGE_DEFAULTS = { ratio: "3:2", resolution: "1K" };
 const DALL_E_3_DEFAULTS = { ratio: "16:9", size: "1792x1024" };
 
-function gptImageModel(id, displayName, aliases) {
+function gptImageModel(id, displayName, aliases, referenceLimits = {}) {
   return {
     id,
     displayName,
@@ -45,7 +45,7 @@ function gptImageModel(id, displayName, aliases) {
     aliases,
     modes: [
       mediaMode("text2image", "Text to image", GPT_IMAGE_PROPERTIES, GPT_IMAGE_DEFAULTS, noReferenceImages()),
-      mediaMode("image2image", "Image edit/reference", GPT_IMAGE_PROPERTIES, GPT_IMAGE_DEFAULTS, referenceImages()),
+      mediaMode("image2image", "Image edit/reference", GPT_IMAGE_PROPERTIES, GPT_IMAGE_DEFAULTS, referenceImages(referenceLimits)),
     ],
     ratios: [...OPENAI_IMAGE_RATIOS],
     resolutions: ["1K"],
@@ -85,6 +85,11 @@ export const openaiPlugin = {
             ],
             ratios: ["1:1", "16:9", "9:16"],
             resolutions: ["1K"],
+          },
+          {
+            ...gptImageModel("gpt-image-2.5-sunburst", "GPT Image 2.5 Sunburst", [], { max: 16 }),
+            // Explicit compatibility preparation; retain the current default and menu.
+            listed: false,
           },
         ],
       },
