@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { Agent } from '../types';
 import type { XingyeRoleProfileDisplay } from './xingye-profile-store';
 import type {
@@ -64,6 +64,13 @@ export function MomentComposer({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+  const generation = useRef(0);
+  // A → B → A and unmount must expire earlier AI/submit callbacks as well.
+  useLayoutEffect(() => {
+    setAiBusy(false);
+    setSubmitting(false);
+    return () => { generation.current += 1; };
+  }, [agent?.id, identityMode]);
   const isUser = identityMode === 'user';
   const trimmedContent = content.trim();
   // 以用户身份发表不需要选中角色；以角色身份发表才要求 agent 存在。
@@ -72,7 +79,7 @@ export function MomentComposer({
 
   // 切换发帖 agent 时，缓存的 seed（含上一位 agent 的 virtual_contact 引用）必须清空，
   // 否则会把 A 的私人通讯录互动写到 B 的帖子里。
-  useEffect(() => {
+  useLayoutEffect(() => {
     setContent('');
     setSeedLikes([]);
     setSeedComments([]);
@@ -82,7 +89,7 @@ export function MomentComposer({
 
   // 切到「我自己」时，清掉角色 AI 生成缓存的 seed（那是角色私人通讯录里的互动者，
   // 与用户帖子无关——用户帖子的互动由发布后的角色扇出产生）。
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isUser) {
       setSeedLikes([]);
       setSeedComments([]);
@@ -92,6 +99,8 @@ export function MomentComposer({
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
+    const request = generation.current;
+    const isCurrent = () => generation.current === request;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -100,18 +109,21 @@ export function MomentComposer({
         seedLikes: !isUser && seedLikes.length ? seedLikes : undefined,
         seedComments: !isUser && seedComments.length ? seedComments : undefined,
       });
+      if (!isCurrent()) return;
       setContent('');
       setSeedLikes([]);
       setSeedComments([]);
     } catch (e) {
-      setSubmitError(e instanceof Error ? e.message : String(e));
+      if (isCurrent()) setSubmitError(e instanceof Error ? e.message : String(e));
     } finally {
-      setSubmitting(false);
+      if (isCurrent()) setSubmitting(false);
     }
   };
 
   const handleGenerate = async () => {
     if (!canGenerate || !onGenerateAiDraft) return;
+    const request = generation.current;
+    const isCurrent = () => generation.current === request;
     setAiBusy(true);
     setAiError(null);
     /**
@@ -126,6 +138,7 @@ export function MomentComposer({
       const draft = await onGenerateAiDraft(
         interactionsOnlyMode ? { existingContent: preservedContent } : undefined,
       );
+      if (!isCurrent()) return;
       if (!interactionsOnlyMode) {
         const next = (draft?.content ?? '').slice(0, 600);
         if (next) setContent(next);
@@ -133,9 +146,9 @@ export function MomentComposer({
       setSeedLikes(draft?.seedLikes ? [...draft.seedLikes] : []);
       setSeedComments(draft?.seedComments ? [...draft.seedComments] : []);
     } catch (e) {
-      setAiError(e instanceof Error ? e.message : String(e));
+      if (isCurrent()) setAiError(e instanceof Error ? e.message : String(e));
     } finally {
-      setAiBusy(false);
+      if (isCurrent()) setAiBusy(false);
     }
   };
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../stores';
 import type { Agent } from '../types';
 import { MomentCard, type MomentReplyAgentOption } from './MomentCard';
@@ -75,6 +75,20 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
 
   // viewer === 当前 xingye 视角的 agent（用于隐藏其他 agent 的 virtual_contact 互动）。
   const viewerAgentId = composerAgent?.id ?? null;
+  // A fresh scope on every owner transition also fences A → B → A callbacks.
+  const ownerScope = useMemo(() => ({
+    ownerAgentId: viewerAgentId,
+    active: false,
+    generation: 0,
+    load: 0,
+    operation: 0,
+    handledDraftIds: new Set<string>(),
+  }), [viewerAgentId]);
+  const composerGeneration = useRef(0);
+  useLayoutEffect(() => () => {
+    // Closing/reopening the composer must also expire its parent's close callback.
+    composerGeneration.current += 1;
+  }, [composerOpen, ownerScope]);
   // feed 聚合范围里额外纳入「用户本人」这个保留作者——用户自己发的朋友圈也要进流。
   const feedAgentIds = useMemo(
     () => [...agentIds, XINGYE_MOMENT_USER_AUTHOR_ID],
@@ -90,6 +104,10 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
 
   const handleCreate = useCallback(
     async ({ content, seedLikes, seedComments }: MomentComposerSubmitInput) => {
+      const generation = ownerScope.generation;
+      const composerRequest = composerGeneration.current;
+      const isCurrent = () => ownerScope.active && ownerScope.generation === generation
+        && composerGeneration.current === composerRequest;
       // 「我自己」身份：以保留作者 id 发帖，发完后台扇出让各角色按关系点赞/评论。
       if (composerIdentity === 'user') {
         const createdByUser = await createXingyeMomentPost({
@@ -99,7 +117,7 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
           source: { kind: 'manual' },
         });
         if (!createdByUser) throw new Error('发表失败：内容无效');
-        setComposerOpen(false);
+        if (isCurrent()) setComposerOpen(false);
         // fire-and-forget：帖子已即时出现，角色反应通过 store 事件陆续刷进 feed。
         void fanOutAgentReactionsToUserPost({
           postId: createdByUser.id,
@@ -125,9 +143,9 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
         seedComments,
       });
       if (!created) throw new Error('发表失败：内容无效');
-      setComposerOpen(false);
+      if (isCurrent()) setComposerOpen(false);
     },
-    [composerIdentity, userName, agents, profiles, composerAgent, composerDisplay?.displayName],
+    [composerIdentity, userName, agents, profiles, composerAgent, composerDisplay?.displayName, ownerScope],
   );
 
   const handleToggleLike = useCallback(
@@ -235,26 +253,51 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
   const [draftBusyKind, setDraftBusyKind] = useState<'plain' | 'combined' | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
 
+  useLayoutEffect(() => {
+    ownerScope.active = true;
+    setPendingDrafts([]);
+    setDraftEdits({});
+    setDraftBusyId(null);
+    setDraftBusyKind(null);
+    setDraftError(null);
+    return () => {
+      ownerScope.active = false;
+      ownerScope.generation += 1;
+    };
+  }, [ownerScope]);
+
   const reloadDrafts = useCallback(async () => {
-    if (!composerAgent) {
-      setPendingDrafts([]);
-      setDraftEdits({});
-      return;
-    }
+    // A late discard failure must not start a new read for an expired owner.
+    if (!ownerScope.active || !composerAgent) return;
+    const generation = ownerScope.generation;
+    const request = ++ownerScope.load;
+    const isCurrent = () => ownerScope.active && ownerScope.generation === generation
+      && ownerScope.load === request;
     try {
       const drafts = await listMomentDrafts(composerAgent.id);
-      setPendingDrafts(drafts);
+      if (isCurrent()) {
+        setPendingDrafts(drafts.filter((draft) => !ownerScope.handledDraftIds.has(draft.id)));
+      }
     } catch (err) {
+      if (!isCurrent()) return;
       console.warn('[MomentsPanel] failed to load moment drafts:', err);
       setPendingDrafts([]);
     }
-  }, [composerAgent]);
+  }, [composerAgent, ownerScope]);
 
   useEffect(() => {
-    setDraftError(null);
-    setDraftEdits({});
     void reloadDrafts();
   }, [reloadDrafts]);
+
+  const beginDraftOperation = () => {
+    const generation = ownerScope.generation;
+    const operation = ++ownerScope.operation;
+    const isCurrentOwner = () => ownerScope.active && ownerScope.generation === generation;
+    return {
+      isCurrentOwner,
+      isLatest: () => isCurrentOwner() && ownerScope.operation === operation,
+    };
+  };
 
   const draftWorkingContent = useCallback(
     (draft: XingyePendingMomentDraft) => draftEdits[draft.id]?.content ?? draft.content,
@@ -267,6 +310,7 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
 
   /** Reused by both confirm paths to clean up local UI state after a successful publish. */
   const removeDraftFromUiState = (draftId: string) => {
+    ownerScope.handledDraftIds.add(draftId);
     setPendingDrafts((prev) => prev.filter((d) => d.id !== draftId));
     setDraftEdits((prev) => {
       if (!(draftId in prev)) return prev;
@@ -277,6 +321,7 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
 
   const handleConfirmDraft = async (draft: XingyePendingMomentDraft) => {
     if (!composerAgent) return;
+    const operation = beginDraftOperation();
     setDraftBusyId(draft.id);
     setDraftBusyKind('plain');
     setDraftError(null);
@@ -287,14 +332,17 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
         content: draftWorkingContent(draft),
         authorName,
       });
+      if (!operation.isCurrentOwner()) return;
       removeDraftFromUiState(draft.id);
       /** 让 feed 也刷新一下（新发的 post 通过 XINGYE_MOMENTS_CHANGED_EVENT 会自动 picked up）。 */
       retry();
     } catch (err) {
-      setDraftError(err instanceof Error ? err.message : String(err));
+      if (operation.isLatest()) setDraftError(err instanceof Error ? err.message : String(err));
     } finally {
-      setDraftBusyId(null);
-      setDraftBusyKind(null);
+      if (operation.isLatest()) {
+        setDraftBusyId(null);
+        setDraftBusyKind(null);
+      }
     }
   };
 
@@ -307,6 +355,7 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
    */
   const handleConfirmDraftWithInteractions = async (draft: XingyePendingMomentDraft) => {
     if (!composerAgent) return;
+    const operation = beginDraftOperation();
     setDraftBusyId(draft.id);
     setDraftBusyKind('combined');
     setDraftError(null);
@@ -316,6 +365,8 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
         throw new Error('正文不能为空，无法生成互动。');
       }
       const aiResult = await handleGenerateAiDraft({ existingContent: workingContent });
+      // Unpublished AI results expire with the owner; an already-started save keeps its owner.
+      if (!operation.isCurrentOwner()) return;
       const authorName = composerDisplay?.displayName ?? composerAgent.name;
       await confirmMomentDraft(composerAgent.id, draft.id, {
         content: workingContent,
@@ -323,13 +374,16 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
         seedComments: aiResult.seedComments,
         authorName,
       });
+      if (!operation.isCurrentOwner()) return;
       removeDraftFromUiState(draft.id);
       retry();
     } catch (err) {
-      setDraftError(err instanceof Error ? err.message : String(err));
+      if (operation.isLatest()) setDraftError(err instanceof Error ? err.message : String(err));
     } finally {
-      setDraftBusyId(null);
-      setDraftBusyKind(null);
+      if (operation.isLatest()) {
+        setDraftBusyId(null);
+        setDraftBusyKind(null);
+      }
     }
   };
 
@@ -338,21 +392,25 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
     if (!window.confirm('确定丢弃这条待确认朋友圈草稿？此操作不可恢复，但角色可在下次巡检里重新提议。')) {
       return;
     }
+    const operation = beginDraftOperation();
     setDraftBusyId(draft.id);
     setDraftBusyKind('plain');
     setDraftError(null);
     try {
       const ok = await discardMomentDraft(composerAgent.id, draft.id);
+      if (!operation.isCurrentOwner()) return;
       if (ok) {
         removeDraftFromUiState(draft.id);
       } else {
         await reloadDrafts();
       }
     } catch (err) {
-      setDraftError(err instanceof Error ? err.message : String(err));
+      if (operation.isLatest()) setDraftError(err instanceof Error ? err.message : String(err));
     } finally {
-      setDraftBusyId(null);
-      setDraftBusyKind(null);
+      if (operation.isLatest()) {
+        setDraftBusyId(null);
+        setDraftBusyKind(null);
+      }
     }
   };
 
