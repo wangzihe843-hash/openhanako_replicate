@@ -1036,28 +1036,133 @@ export class ChannelRouter {
         "只输出 1 到 3 条干净短句，用分号分隔；每条必须写清“谁做了什么 / 决定了什么 / 状态发生了什么变化”。",
         "如果输入包含已有频道记忆，请把已有记忆和本次频道内容合并重写，修掉旧 ID、含混主语和杂乱摘要。",
         "使用输入里的角色显示名，不要保留 sender id，不要写聊天流水、标题、项目符号、mood、泛称或含混主语。",
-        "如果这批内容没有长期检索价值，只输出 NO_MEMORY。",
+        "如果本批内容没有新的长期检索价值，只输出 NO_MEMORY；这表示保留已有记忆，不是清空。",
       ].join("\n")
       : [
         "Compress the channel transcript Truth into searchable long-term memory.",
         "Output 1 to 3 clean short facts separated by semicolons; each fact must state who did what, what was decided, or what state changed.",
         "If existing channel memory is provided, merge and rewrite it with the current channel content, cleaning old ids, vague subjects, and messy summaries.",
         "Use the display names from the input. Do not keep sender ids, chat logs, headings, bullets, mood, vague subjects, or generic group references.",
-        "If there is no durable searchable value, output NO_MEMORY.",
+        "If this batch adds no durable searchable value, output NO_MEMORY; this preserves existing memory rather than clearing it.",
       ].join("\n");
   }
 
   _normalizeChannelMemorySummary(rawSummary) {
-    return String(rawSummary || "")
-      .trim()
-      .replace(/^```(?:\w+)?\s*/u, "")
-      .replace(/\s*```$/u, "")
-      .trim();
+    if (typeof rawSummary !== "string") throw new Error("Channel memory summarizer returned a non-text response");
+    const text = rawSummary.trim();
+    if (!text.includes("```")) return text;
+    // Only unwrap a complete, single text fence. Independently stripping either end can
+    // turn a truncated response or prose mixed with a code block into a publishable fact.
+    const fence = /^```(text|json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/iu.exec(text);
+    if (!fence || fence[2].includes("```")) throw new Error("Channel memory summarizer returned malformed fenced output");
+    const body = fence[2].trim();
+    // Keep the existing exact empty-array compatibility; other JSON is not our protocol.
+    if (fence[1]?.toLowerCase() === "json" && !/^\[\s*\]$/u.test(body)) {
+      throw new Error("Channel memory summarizer returned unsupported structured output");
+    }
+    return body;
   }
 
   _isEmptyChannelMemorySummary(summaryText) {
     const normalized = String(summaryText || "").trim().toUpperCase();
-    return !normalized || normalized === "NO_MEMORY" || normalized === "无记忆";
+    return normalized === "NO_MEMORY" || normalized === "无记忆" || /^\[\s*\]$/u.test(normalized);
+  }
+
+  _isStructuredChannelMemorySummary(summaryText: string) {
+    // The producer's protocol is prose, not JSON. At a fact boundary a container
+    // is publishable only as a complete text label followed by a fact body. Never
+    // infer prose from JSON.parse failing (e.g. [True,] or an unknown bare token).
+    const hasText = (text: string) => /[\p{L}\p{N}]/u.test(text);
+    // An entire punctuation-only response has no fact, even when splitting on
+    // semicolons/newlines would leave only empty fragments.
+    if (!hasText(summaryText)) return true;
+    const scalar = (text: string) => {
+      try { JSON.parse(text); return true; } catch { /* Prose is not a JSON value. */ }
+      return /^[+\d.eE-]+$/u.test(text)
+        || ["true", "false", "null"].some(value => value.startsWith(text.toLowerCase()));
+    };
+    const structured = (fragment: string) => {
+      let text = fragment.trim();
+      if (!text) return false;
+      // Empty spacing between facts is harmless; a nonempty orphan delimiter
+      // or punctuation-only fragment is a failed response, not a replacement.
+      if (!hasText(text) || /^[\]}]/u.test(text)) return true;
+      let hasLabel = false;
+      while (["[", "{", '"'].includes(text[0])) {
+        let end = -1;
+        if (text[0] === '"') {
+          for (let i = 1; i < text.length; i++) {
+            if (text[i] === "\\") { i++; continue; }
+            if (text[i] === '"') { end = i; break; }
+          }
+          if (end < 0) return true;
+          try { JSON.parse(text.slice(0, end + 1)); } catch { return true; }
+        } else {
+          end = text.indexOf(text[0] === "[" ? "]" : "}");
+          if (end < 0) return true;
+          const label = text.slice(1, end);
+          // Flat labels may contain natural punctuation in dates, names or
+          // quotations. Exclude structural syntax instead of enumerating the
+          // characters allowed in every language. Comma variants share the same
+          // nonempty-item/scalar-list rule; the outside fact body is still required.
+          if (["[", "]", "{", "}", '"', "\\"].some(token => label.includes(token)) || !hasText(label)) return true;
+          const items = label.split(/[,，、]/u).map(item => item.trim());
+          if (items.some(item => !item) || (items.length > 1 && !items.some(item => /\p{L}/u.test(item) && !scalar(item)))) return true;
+          if (text[0] === "{" && label.includes(":")) return true;
+        }
+        text = text.slice(end + 1).trimStart();
+        hasLabel = true;
+        if (!text || /^[,:\]}]/u.test(text)) return true;
+      }
+      if (hasLabel && !/\p{L}/u.test(text)) return true;
+      // Bare partial scalars are incomplete responses, not facts. Words within a
+      // sentence ("true friendship", "42 attendees") are unaffected.
+      return scalar(text);
+    };
+
+    // Only separators outside literals introduce another fact/heading. This keeps
+    // embedded examples and quotations (including their semicolons) as prose.
+    const boundaries = (text: string) => {
+      const positions: number[] = [];
+      const closers: string[] = [];
+      let quote = "";
+      for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        if (quote) {
+          if (quote === '"' && char === "\\") i++;
+          else if (char === quote) quote = "";
+          continue;
+        }
+        if (char === '"' || char === "“" || char === "‘") {
+          quote = char === "“" ? "”" : char === "‘" ? "’" : '"';
+        } else if (char === "[" || char === "{") {
+          closers.push(char === "[" ? "]" : "}");
+        } else if (char === closers.at(-1)) {
+          closers.pop();
+        } else if (!closers.length && ";；\r\n:：".includes(char)) {
+          positions.push(i);
+        }
+      }
+      return positions;
+    };
+    const invalidFact = (fragment: string) => {
+      if (structured(fragment)) return true;
+      return boundaries(fragment).some(index => {
+        if (!":：".includes(fragment[index])) return false;
+        const body = fragment.slice(index + 1).trimStart();
+        const heading = /^(?:(?:here (?:is|are) (?:the )?)?(?:summary|facts?|memory)|摘要|记忆|总结)\s*$/iu.test(fragment.slice(0, index).trim());
+        // A colon in an ordinary fact can introduce a quotation or a JSON example.
+        // Only the presentation headings above introduce another output boundary.
+        return heading && structured(body);
+      });
+    };
+    let start = 0;
+    for (const index of boundaries(summaryText)) {
+      if (":：".includes(summaryText[index])) continue;
+      if (invalidFact(summaryText.slice(start, index))) return true;
+      start = index + 1;
+    }
+    return invalidFact(summaryText.slice(start));
   }
 
   _getPreviousChannelMemoryFacts(factStore, sessionId) {
@@ -1186,19 +1291,23 @@ export class ChannelRouter {
 
       if (!current()) return;
       sourcePayload(); // Revalidate source ownership after the model await, before the synchronous transaction.
+      if (!summaryText) throw new Error("Channel memory summarizer returned an empty response");
+      // This is an incremental merge, so a successful no-additions response cannot revoke older facts.
+      if (this._isEmptyChannelMemorySummary(summaryText)) {
+        log.log(`${agentId} memory unchanged/no new durable summary (#${channelName})`);
+        return;
+      }
+      if (this._isStructuredChannelMemorySummary(summaryText)) {
+        throw new Error("Channel memory summarizer returned unsupported structured output");
+      }
       const now = new Date();
-      const entries = this._isEmptyChannelMemorySummary(summaryText) ? [] : [{
+      const entries = [{
         fact: `[#${channelName}] ${summaryText}`,
         tags: [isZhMem ? "频道" : "channel", channelName],
         time: now.toISOString().slice(0, 16),
         session_id: sessionId,
       }];
       factStore.replaceByIds(previousFacts.filter(fact => fact?.id != null).map(fact => fact.id), entries);
-      if (entries.length === 0) {
-        log.log(`${agentId} memory cleared/no durable summary (#${channelName})`);
-        return;
-      }
-
       log.log(`${agentId} memory saved (#${channelName}, ${summaryText.length} chars)`);
     } catch (err) {
       log.error(`记忆摘要失败 (${agentId}/#${channelName}): ${err.message}`);

@@ -204,7 +204,7 @@ describe("ChannelRouter memory master fallback", () => {
     })]);
   });
 
-  it("clears stale channel memory facts when the summarizer finds no durable memory", async () => {
+  it("keeps existing channel memory facts when this batch has no durable additions", async () => {
     const paths = writeAgentFixture(true);
     const router = makeRouter(paths);
     factGetBySessionMock.mockReturnValue([{ id: 8 }]);
@@ -214,7 +214,18 @@ describe("ChannelRouter memory master fallback", () => {
       messages: [{ sender: "user", timestamp: "2026-05-14 10:00:00", body: "嗯" }],
     });
 
-    expect(factReplaceByIdsMock).toHaveBeenCalledWith([8], []);
+    expect(factReplaceByIdsMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["[Hana] confirmed the plan", "```text\nHana confirmed the plan\n```"])("still accepts a plain summary: %s", async summary => {
+    const paths = writeAgentFixture(true);
+    const router = makeRouter(paths);
+    factGetBySessionMock.mockReturnValue([{ id: 8 }]);
+    callTextMock.mockResolvedValue(summary);
+    await router._memorySummarize("hana", "general", "Hana confirmed the plan");
+    expect(factReplaceByIdsMock).toHaveBeenCalledWith([8], [expect.objectContaining({
+      fact: `[#general] ${summary.startsWith("```") ? "Hana confirmed the plan" : summary}`,
+    })]);
   });
 
   it("passes the engine usage ledger to channel memory summarization", async () => {

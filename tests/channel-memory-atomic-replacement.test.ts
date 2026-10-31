@@ -181,12 +181,11 @@ afterEach(async () => {
 
 describe.each<Reset>(["none", "compiled", "full"])("channel atomic replacement after %s reset", (mode) => {
   it.each([
-    { fault: "insert", count: 1, empty: false },
-    { fault: "insert", count: 3, empty: false },
-    { fault: "first-delete", count: 3, empty: false },
-    { fault: "middle-delete", count: 3, empty: false },
-    { fault: "middle-delete", count: 3, empty: true },
-  ])("rolls back $fault with $count previous facts (NO_MEMORY=$empty)", async ({ fault, count, empty }) => {
+    { fault: "insert", count: 1 },
+    { fault: "insert", count: 3 },
+    { fault: "first-delete", count: 3 },
+    { fault: "middle-delete", count: 3 },
+  ])("rolls back $fault with $count previous facts", async ({ fault, count }) => {
     const f = await fixture(mode, count);
     const captured = f.facts.getBySession(f.sessionId);
     const before = rows(f.facts);
@@ -208,7 +207,7 @@ describe.each<Reset>(["none", "compiled", "full"])("channel atomic replacement a
     if (fault === "insert") {
       f.facts.db.exec("CREATE TEMP TRIGGER atomic_insert_fault BEFORE INSERT ON facts BEGIN SELECT RAISE(FAIL, 'atomic insert fault'); END;");
     }
-    gate.reply.resolve(empty ? "NO_MEMORY" : "newbirch merged decision");
+    gate.reply.resolve("newbirch merged decision");
     await gate.work;
     expect(seen).toEqual(captured.slice(0, fault === "first-delete" ? 1 : fault === "middle-delete" ? 2 : count).map(fact => fact.id));
     expect(rows(f.facts), "a failed replacement must preserve every original row and metadata").toEqual(before);
@@ -249,10 +248,10 @@ describe.each<Reset>(["none", "compiled", "full"])("channel atomic replacement a
     gate.reply.resolve(summary);
     await gate.work;
     expect(rows(f.facts).filter(row => preserved.some(old => old.id === row.id))).toEqual(preserved);
-    expect(rows(f.facts).some(row => oldIds.has(row.id))).toBe(false);
-    expect(f.facts.getBySession(f.sessionId)).toHaveLength(summary === "NO_MEMORY" ? 1 : 2);
+    expect(rows(f.facts).filter(row => oldIds.has(row.id))).toHaveLength(summary === "NO_MEMORY" ? oldIds.size : 0);
+    expect(f.facts.getBySession(f.sessionId)).toHaveLength(summary === "NO_MEMORY" ? 4 : 2);
     expect(commits(f.facts)).toEqual(beforeCommits);
-    expect(indexed(f.facts, "oldcedar")).toEqual([]);
+    expect(indexed(f.facts, "oldcedar")).toHaveLength(summary === "NO_MEMORY" ? 3 : 0);
     expect(indexed(f.facts, "newbirch")).toHaveLength(summary === "NO_MEMORY" ? 0 : 1);
     expect(indexed(f.facts, "importedmaple")).toHaveLength(1);
     expect(await search(f.facts, "importedmaple")).toContain("importedmaple");
@@ -260,15 +259,57 @@ describe.each<Reset>(["none", "compiled", "full"])("channel atomic replacement a
   });
 });
 
-it.each(["", "无记忆", "```text\nNO_MEMORY\n```"])("preserves the existing empty-summary deletion contract: %j", async summary => {
-  const f = await fixture();
-  const gate = await holdModel(f);
-  importDuringModel(f);
-  gate.reply.resolve(summary);
-  await gate.work;
-  expect(f.facts.getBySession(f.sessionId).map(fact => fact.fact)).toEqual(["importedmaple explicit new fact"]);
-  expect(indexed(f.facts, "oldcedar")).toEqual([]);
-  expectReopened(f);
+describe.each<Reset>(["none", "compiled", "full"])("incremental channel memory after %s reset", mode => {
+  it.each([
+    { summary: "NO_MEMORY", failed: false },
+    { summary: "无记忆", failed: false },
+    { summary: "```text\nNO_MEMORY\n```", failed: false },
+    { summary: "[]", failed: false },
+    { summary: "[ \n ]", failed: false },
+    { summary: "```json\n[]\n```", failed: false },
+    { summary: "", failed: true },
+    { summary: "  \n ", failed: true },
+    { summary: "```text\n\n```", failed: true },
+    { summary: '{"facts":', failed: true },
+    { summary: '```json\n{"facts":\n```', failed: true },
+    { summary: '{"facts":[]}', failed: true },
+    { summary: '["newbirch structured output"]', failed: true },
+  ])("preserves facts and FTS without DML for $summary (failed=$failed)", async ({ summary, failed }) => {
+    const f = await fixture(mode);
+    const gate = await holdModel(f);
+    importDuringModel(f);
+    f.facts.importAll([{ fact: "otherchannel durable fact", tags: ["other"], session_id: "channel-other" }]);
+    const before = rows(f.facts);
+    const beforeCommits = commits(f.facts);
+    const beforeIndex = indexed(f.facts, "oldcedar");
+    const transcript = fs.readFileSync(f.channel.filePath, "utf8");
+    const replace = vi.spyOn(f.facts, "replaceByIds");
+    const error = vi.spyOn(console, "error");
+    // Even an attempted mutation fails this contract; a swallowed DB error cannot pass.
+    f.facts.db.exec(`CREATE TEMP TRIGGER noop_delete BEFORE DELETE ON facts BEGIN SELECT RAISE(FAIL, 'unexpected delete'); END;
+      CREATE TEMP TRIGGER noop_insert BEFORE INSERT ON facts BEGIN SELECT RAISE(FAIL, 'unexpected insert'); END;`);
+    gate.reply.resolve(summary);
+    await gate.work;
+    expect(replace).not.toHaveBeenCalled();
+    expect(rows(f.facts)).toEqual(before);
+    expect(commits(f.facts)).toEqual(beforeCommits);
+    expect(indexed(f.facts, "oldcedar")).toEqual(beforeIndex);
+    expect(indexed(f.facts, "newbirch")).toEqual([]);
+    expect(indexed(f.facts, "otherchannel")).toHaveLength(1);
+    expect(await search(f.facts, "oldcedar")).toContain("oldcedar");
+    expect(await search(f.facts, "importedmaple")).toContain("importedmaple");
+    expect(error).toHaveBeenCalledTimes(failed ? 1 : 0);
+    if (failed) expect(error.mock.calls[0][0]).toContain("记忆摘要失败");
+    expectReopened(f);
+    expect(fs.readFileSync(f.channel.filePath, "utf8")).toBe(transcript);
+    expect(readBookmarks(path.join(f.agent.agentDir, "channels.md")).get(f.channel.id)).toBe(gate.message.timestamp);
+    const calls = llm.mock.calls.length;
+    await f.deliver();
+    expect(llm).toHaveBeenCalledTimes(calls);
+    expect(f.executeCheck).toHaveBeenCalledTimes(2);
+    expect(rows(f.facts)).toEqual(before);
+    f.facts.db.exec("DROP TRIGGER noop_delete; DROP TRIGGER noop_insert;");
+  });
 });
 
 it.each(["Error", "AbortError"])("preserves facts when the model rejects with %s", async name => {
