@@ -1259,7 +1259,7 @@ export class ChannelRouter {
         const { FactStore } = await import("../lib/memory/fact-store.ts");
         if (!current()) return;
         const dbPath = path.join(memoryDir, "facts.db");
-        factStore = new FactStore(dbPath);
+        factStore = new FactStore(dbPath, { agentId });
         needClose = true;
       }
 

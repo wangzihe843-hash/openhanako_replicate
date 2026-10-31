@@ -6060,7 +6060,7 @@
     {
       "sourceFile": "hub/channel-router.ts",
       "kind": "persistent-store-constructor",
-      "excerpt": "new FactStore(dbPath)",
+      "excerpt": "new FactStore(dbPath, { agentId })",
       "reason": "Opens or repairs the canonical per-agent facts database.",
       "storeId": "agent-facts-sqlite",
       "exemptionId": null,

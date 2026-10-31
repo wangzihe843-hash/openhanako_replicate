@@ -882,6 +882,10 @@ for (const full of [false, true]) {
   it(`channel fallback DB import respects full=${full}`, async () => {
     const f = fixture(); await f.ticker.stop(); const router = routerFor(f);
     router._engine.getAgent = () => null;
+    // The fallback now reads Hana's facts like the live store. Model a merge
+    // instead of dropping the newly readable post-reset fact from the response.
+    f.install(call => call.operation === 'channel_memory_summary'
+      ? Promise.resolve(`${OLD} merged with ${NEW}`) : undefined);
     const channel = await createChannel(path.join(f.root, 'channels'), { id: 'fallback', members: ['hana', 'other'] });
     await appendMessage(channel.filePath, 'user', OLD);
     const entered = deferred<void>(), release = deferred<void>();
@@ -896,6 +900,7 @@ for (const full of [false, true]) {
       const facts = JSON.stringify(f.facts.exportAll());
       expect(facts.includes(OLD)).toBe(!full);
       if (full) expect(f.calls.some(call => call.operation === 'channel_memory_summary')).toBe(false);
+      else expect(f.calls.find(call => call.operation === 'channel_memory_summary')?.input).toContain(NEW);
       expect(facts).toContain(NEW);
     } finally { release.resolve(); await work; vi.doUnmock('../lib/memory/fact-store.ts'); }
   });
