@@ -9,6 +9,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { atomicWriteSync } from "../shared/safe-fs.ts";
 
 const CLEANUP_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 天
@@ -80,7 +81,7 @@ export class DeferredResultStore {
       ? options.getSessionIdForPath
       : null;
     this._persistPath = persistPath || null;
-    /** @type {Map<string, { status: string, sessionId?: string|null, sessionPath: string|null, sessionRef?: object|null, meta: object, deferredAt: number, result: any, reason: any, delivered: boolean }>} */
+    /** @type {Map<string, { attemptId: string, status: string, sessionId?: string|null, sessionPath: string|null, sessionRef?: object|null, meta: object, deferredAt: number, result: any, reason: any, delivered: boolean }>} */
     this._tasks = new Map();
     this._resultCbs = [];
     this._failCbs = [];
@@ -111,6 +112,7 @@ export class DeferredResultStore {
     if (this._tasks.has(taskId)) return;
     const sessionRef = normalizeSessionRef(sessionPath, this._getSessionIdForPath);
     this._tasks.set(taskId, {
+      attemptId: randomUUID(),
       status: "pending",
       sessionId: sessionRef.sessionId,
       sessionPath: sessionRef.sessionPath,
@@ -168,6 +170,7 @@ export class DeferredResultStore {
     const existing = this._tasks.get(taskId);
     const sessionRef = normalizeSessionRef(sessionPath, this._getSessionIdForPath);
     const next = {
+      attemptId: randomUUID(),
       status: "pending",
       sessionId: sessionRef.sessionId,
       sessionPath: sessionRef.sessionPath,
@@ -210,10 +213,12 @@ export class DeferredResultStore {
     }, task.sessionPath);
   }
 
-  /** 标记任务结果已成功送达（steer 成功后调用） */
-  markDelivered(taskId) {
+  /** Async callers must supply the captured attempt; omitted only by legacy synchronous delivery. */
+  markDelivered(taskId, expectedAttemptId?) {
     const task = this._tasks.get(taskId);
     if (task) {
+      if (expectedAttemptId !== undefined && task.attemptId !== expectedAttemptId) return false;
+      if (task.status !== "resolved" && task.status !== "failed" && task.status !== "aborted") return false;
       // Retry may fence a discarded branch while a delivery coroutine is
       // already awaiting sendCustomMessage(). That stale completion must not
       // reopen delivery by clearing the fence afterwards.
@@ -303,7 +308,7 @@ export class DeferredResultStore {
     for (const snapshot of receipt) {
       if (!snapshot?.taskId || !snapshot.task) continue;
       const current = this._tasks.get(snapshot.taskId);
-      if (!current?.deliverySuppressed) continue;
+      if (!current?.deliverySuppressed || current.attemptId !== snapshot.task.attemptId) continue;
       this._tasks.set(snapshot.taskId, { ...snapshot.task });
       restored++;
     }
@@ -346,6 +351,7 @@ export class DeferredResultStore {
           throw new Error(`deferred task fork identity already exists: ${targetTaskId}`);
         }
         const clone = structuredClone(source);
+        clone.attemptId = randomUUID();
         clone.sessionId = targetRef.sessionId;
         clone.sessionPath = targetRef.sessionPath;
         clone.sessionRef = targetRef.sessionRef;
@@ -395,7 +401,7 @@ export class DeferredResultStore {
     const result = [];
     for (const [taskId, task] of this._tasks) {
       if (matchesSession(task, sessionPath, this._getSessionIdForPath) && task.status === "pending") {
-        result.push({ taskId, meta: task.meta, deferredAt: task.deferredAt });
+        result.push({ taskId, attemptId: task.attemptId, meta: task.meta, deferredAt: task.deferredAt });
       }
     }
     return result;
@@ -529,15 +535,21 @@ export class DeferredResultStore {
     try {
       if (!fs.existsSync(this._persistPath)) return;
       const raw = JSON.parse(fs.readFileSync(this._persistPath, "utf-8"));
+      let migrated = false;
       for (const [k, v] of Object.entries(raw)) {
         const sessionRef = normalizeSessionRef(v, this._getSessionIdForPath);
+        const attemptId = textOrNull((v as any)?.attemptId);
+        if (!attemptId) migrated = true;
         this._tasks.set(k, {
           delivered: false,
           ...(v as any),
+          attemptId: attemptId || randomUUID(),
           sessionId: (v as any)?.sessionId || sessionRef.sessionId,
           sessionRef: (v as any)?.sessionRef || sessionRef.sessionRef,
         });
       }
+      // Add identity to legacy records without reopening delivered/suppressed results.
+      if (migrated) this._save();
     } catch { /* best effort */ }
   }
 }

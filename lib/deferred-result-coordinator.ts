@@ -95,19 +95,31 @@ export class DeferredResultCoordinator {
   }
 
   async deliverTask(taskId) {
-    const existing = this._inFlight.get(taskId);
+    const task = this.store.query(taskId);
+    if (!isDeliverable(task)) return false;
+    // A retry may complete before the preceding attempt's receipt returns.
+    // Coalesce only deliveries of the same attempt, not every use of a taskId.
+    const deliveryKey = JSON.stringify([taskId, task.attemptId]);
+    const existing = this._inFlight.get(deliveryKey);
     if (existing) return existing;
 
-    const promise = this._deliverTask(taskId).finally(() => {
-      this._inFlight.delete(taskId);
+    const promise = this._deliverTask(taskId, task).finally(() => {
+      if (this._inFlight.get(deliveryKey) === promise) this._inFlight.delete(deliveryKey);
     });
-    this._inFlight.set(taskId, promise);
+    this._inFlight.set(deliveryKey, promise);
     return promise;
   }
 
-  async _deliverTask(taskId) {
-    const task = this.store.query(taskId);
-    if (!isDeliverable(task)) return false;
+  _isCurrentAttempt(taskId, task) {
+    const current = this.store.query(taskId);
+    return !!(isDeliverable(current) && !current.deliverySuppressed
+      && current.attemptId === task.attemptId
+      && current.sessionId === task.sessionId
+      && current.sessionPath === task.sessionPath);
+  }
+
+  async _deliverTask(taskId, task) {
+    if (!this._isCurrentAttempt(taskId, task)) return false;
     if (isExternallyDeliveredTask(task)) return false;
     if (isUiOnlyDeferredResultTask(task) && !shouldNotifyAgentOnFailure(task)) {
       return await this._recordUiOnlyTask(taskId, task);
@@ -122,7 +134,7 @@ export class DeferredResultCoordinator {
     }
 
     try {
-      const shouldDeliver = () => this.store.query(taskId)?.deliverySuppressed !== true;
+      const shouldDeliver = () => this._isCurrentAttempt(taskId, task);
       if (!shouldDeliver()) return false;
       const delivery = await this.sessionCoordinator.deliverCustomMessage(
         task.sessionPath,
@@ -130,8 +142,7 @@ export class DeferredResultCoordinator {
         { triggerTurn: shouldTriggerParentTurn(task), shouldDeliver },
       );
       if (delivery?.mode === "suppressed") return false;
-      this.store.markDelivered(taskId);
-      return true;
+      return shouldDeliver() && this.store.markDelivered(taskId, task.attemptId);
     } catch (err) {
       this.log.warn?.(`[deferred-result] delivery failed for ${taskId}: ${err.message}`);
       return false;
@@ -151,13 +162,13 @@ export class DeferredResultCoordinator {
       return false;
     }
     try {
+      if (!this._isCurrentAttempt(taskId, task)) return false;
       await this.recordCustomEntry(
         task.sessionPath,
         DEFERRED_RESULT_RECORD_TYPE,
         buildDeferredResultRecord(taskId, task),
       );
-      this.store.markDelivered(taskId);
-      return true;
+      return this._isCurrentAttempt(taskId, task) && this.store.markDelivered(taskId, task.attemptId);
     } catch (err) {
       this.log.warn?.(`[deferred-result] UI-only record failed for ${taskId}: ${err.message}`);
       return false;

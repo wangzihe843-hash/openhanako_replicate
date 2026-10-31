@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { DeferredResultStore } from "../lib/deferred-result-store.ts";
 
 describe("DeferredResultStore", () => {
@@ -8,6 +8,65 @@ describe("DeferredResultStore", () => {
   beforeEach(() => {
     mockBus = { emit: vi.fn() };
     store = new (DeferredResultStore as any)(mockBus);
+  });
+
+  afterEach(() => {
+    store.dispose();
+    vi.restoreAllMocks();
+  });
+
+  describe("attempt receipts", () => {
+    it("allocates independent attempts even when retries share the same clock value", () => {
+      vi.spyOn(Date, "now").mockReturnValue(12345);
+      store.defer("task", "/s/a");
+      const attempts = [store.query("task").attemptId];
+      store.defer("task", "/s/a");
+      expect(store.query("task").attemptId).toBe(attempts[0]);
+      for (let i = 0; i < 3; i++) {
+        store.retry("task", "/s/a");
+        attempts.push(store.query("task").attemptId);
+      }
+      expect(attempts.every((id) => typeof id === "string" && id.length > 0)).toBe(true);
+      expect(new Set(attempts).size).toBe(4);
+      expect(store.listPending("/s/a")[0].attemptId).toBe(attempts[3]);
+      expect(store.listBySession("/s/a")[0].attemptId).toBe(attempts[3]);
+    });
+
+    it("rejects stale, pending, missing and suppressed acknowledgements, keeping legacy synchronous calls compatible", () => {
+      store.defer("task", "/s/a");
+      const oldId = store.query("task").attemptId;
+      expect(store.markDelivered("task", oldId)).toBe(false);
+      expect(store.markDelivered("task")).toBe(false);
+      store.fail("task", "old failure");
+      store.retry("task", "/s/b");
+      const newId = store.query("task").attemptId;
+      expect(store.markDelivered("task", oldId)).toBe(false);
+      store.resolve("task", "new result");
+      expect(store.markDelivered("task", oldId)).toBe(false);
+      expect(store.listUndelivered("/s/b")[0].attemptId).toBe(newId);
+      expect(store.markDelivered("task", newId)).toBe(true);
+      expect(store.markDelivered("missing", newId)).toBe(false);
+      store.retry("task", "/s/b");
+      store.abort("task", "cancelled");
+      expect(store.markDelivered("task")).toBe(true);
+      store.suppressDelivery("task", "discarded branch");
+      expect(store.markDelivered("task", store.query("task").attemptId)).toBe(false);
+      expect(store.markDelivered("task")).toBe(false);
+      expect(store.query("task").deliverySuppressed).toBe(true);
+    });
+
+    it("does not restore an earlier suppression snapshot over a later suppressed attempt", () => {
+      const session = { sessionId: "session-a", sessionPath: "/s/a" };
+      store.defer("task", session);
+      store.fail("task", "old failure");
+      const { receipt } = store.suppressTaskIdsForSession(session, ["task"]);
+      store.retry("task", session);
+      store.resolve("task", "new result");
+      store.suppressDelivery("task", "later discarded branch");
+      const current = store.query("task");
+      expect(store.restoreSuppressedTaskIds(receipt)).toBe(0);
+      expect(store.query("task")).toEqual(current);
+    });
   });
 
   describe("defer + resolve", () => {
@@ -258,6 +317,7 @@ describe("DeferredResultStore", () => {
         delivered: true,
         meta: { forkedFromTaskId: "source-task" },
       });
+      expect(resolvingStore.query("child-task").attemptId).not.toBe(resolvingStore.query("source-task").attemptId);
       expect(resolvingStore.discardForkedTerminalTasks({
         targetSessionId: "sess-child",
         taskIds: ["child-task"],
