@@ -49,7 +49,7 @@ function isVirtualContactActor(actor: { actorType?: unknown }): boolean {
   return actor?.actorType === 'virtual_contact';
 }
 
-function applyViewerVisibility(
+export function applyViewerVisibility(
   post: XingyeMomentPost,
   viewerAgentId: string | null,
 ): XingyeMomentPost {

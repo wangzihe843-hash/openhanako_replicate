@@ -54,7 +54,10 @@ vi.mock('./xingye-moments-store', () => ({
   XINGYE_MOMENT_USER_AUTHOR_ID: '__user__',
   isXingyeMomentUserAuthor: (id: string) => id === '__user__',
 }));
-vi.mock('./xingye-moments-feed', () => momentsFeedMock);
+vi.mock('./xingye-moments-feed', async importOriginal => ({
+  ...await importOriginal<typeof import('./xingye-moments-feed')>(),
+  ...momentsFeedMock,
+}));
 vi.mock('./xingye-moments-ai', () => momentsAiMock);
 vi.mock('./xingye-moments-user-fanout', () => ({
   fanOutAgentReactionsToUserPost: vi.fn(() => Promise.resolve()),

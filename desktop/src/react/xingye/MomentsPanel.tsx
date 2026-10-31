@@ -19,7 +19,7 @@ import {
   type XingyeMomentPost,
   type XingyePendingMomentDraft,
 } from './xingye-moments-store';
-import { useAggregatedXingyeMoments } from './xingye-moments-feed';
+import { applyViewerVisibility, useAggregatedXingyeMoments } from './xingye-moments-feed';
 import {
   generateXingyeMomentCommentReplyWithAI,
   generateXingyeMomentDraftWithAI,
@@ -232,7 +232,7 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
           authorIdentitySummary: authorProfile?.identitySummary ?? null,
           content: post.content,
         },
-        existingComments: userCommented.comments
+        existingComments: applyViewerVisibility(userCommented, viewerAgentId).comments
           .filter((comment) => comment.id !== operation.userCommentId)
           .map((comment) => ({
             authorName: comment.actorType === 'agent'

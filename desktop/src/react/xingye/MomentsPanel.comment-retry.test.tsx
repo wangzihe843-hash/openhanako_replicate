@@ -12,7 +12,10 @@ vi.mock('./xingye-profile-store', () => ({
   useXingyeRoleProfiles: () => ({}),
   getXingyeRoleProfileDisplay: (a: Agent) => ({displayName: a.name, relationshipLabel: 'friend'}),
 }));
-vi.mock('./xingye-moments-feed', () => ({useAggregatedXingyeMoments: mocks.feed}));
+vi.mock('./xingye-moments-feed', async importOriginal => ({
+  ...await importOriginal<typeof import('./xingye-moments-feed')>(),
+  useAggregatedXingyeMoments: mocks.feed,
+}));
 vi.mock('./xingye-moments-ai', () => ({generateXingyeMomentCommentReplyWithAI: mocks.ai, generateXingyeMomentDraftWithAI: vi.fn()}));
 vi.mock('./xingye-moments-store', async original => ({
   ...await original<typeof import('./xingye-moments-store')>(),
