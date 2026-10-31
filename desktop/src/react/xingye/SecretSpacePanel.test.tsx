@@ -250,6 +250,237 @@ const agentOther: Agent = {
   hasAvatar: false,
 };
 
+describe('SecretSpacePanel AI generation ownership', () => {
+  type PendingGeneration = {
+    resolve: (response: Response) => void;
+    reject: (error: Error) => void;
+  };
+  let originalFetch: NonNullable<ReturnType<typeof hanaFetchMock.getMockImplementation>>;
+  let pending: PendingGeneration[];
+
+  beforeEach(() => {
+    jsonlStore.clear();
+    jsonStore.clear();
+    pinnedStore.clear();
+    window.localStorage.clear();
+    hanaFetchMock.mockClear();
+    originalFetch = hanaFetchMock.getMockImplementation()!;
+    pending = [];
+    hanaFetchMock.mockImplementation((path, init) => {
+      if (path.includes('/api/xingye/phone-generate')) {
+        return new Promise<Response>((resolve, reject) => pending.push({ resolve, reject }));
+      }
+      return originalFetch(path, init);
+    });
+    (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__ = true;
+  });
+
+  afterEach(() => {
+    cleanup();
+    hanaFetchMock.mockImplementation(originalFetch);
+    delete (window as unknown as { __XINGYE_PERSISTENCE_DEV_LOCAL__?: boolean }).__XINGYE_PERSISTENCE_DEV_LOCAL__;
+  });
+
+  async function startGeneration(index: number) {
+    fireEvent.click(screen.getByTestId('secret-space-ai-generate'));
+    await waitFor(() => expect(pending).toHaveLength(index + 1));
+    expect(screen.getByTestId('secret-space-ai-generate')).toBeDisabled();
+    return pending[index];
+  }
+
+  async function succeed(request: PendingGeneration, title = 'late A record') {
+    await act(async () => {
+      request.resolve({
+        ok: true,
+        json: async () => ({ ok: true, result: { title, content: `body of ${title}` } }),
+      } as Response);
+    });
+  }
+
+  async function fail(request: PendingGeneration, message: string) {
+    await act(async () => { request.reject(new Error(message)); });
+  }
+
+  function stored(owner: Agent, category = 'saved_item') {
+    return jsonlStore.get(storeKey(owner.id, `secret-space/${category}.jsonl`)) ?? [];
+  }
+
+  it('keeps a late success in its original agent storage without changing the new agent list or seed', async () => {
+    const { rerender } = render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-saved_item'));
+    const oldRequest = await startGeneration(0);
+    rerender(<SecretSpacePanel agent={agentOther} />);
+    await screen.findByTestId('secret-space-empty');
+    fireEvent.change(screen.getByTestId('secret-space-ai-seed'), { target: { value: 'B new seed' } });
+
+    await succeed(oldRequest);
+
+    expect(stored(agent)).toHaveLength(1);
+    expect(stored(agentOther)).toHaveLength(0);
+    expect(screen.queryByText('body of late A record')).not.toBeInTheDocument();
+    expect(screen.getByTestId('secret-space-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('secret-space-ai-seed')).toHaveValue('B new seed');
+  });
+
+  it('ignores a late failure after switching agents', async () => {
+    const { rerender } = render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
+    const oldRequest = await startGeneration(0);
+    rerender(<SecretSpacePanel agent={agentOther} />);
+    await fail(oldRequest, 'old A failure');
+
+    expect(screen.queryByText('old A failure')).not.toBeInTheDocument();
+    expect(screen.getByTestId('secret-space-ai-generate')).toBeEnabled();
+    expect(stored(agent, 'draft_reply')).toHaveLength(0);
+  });
+
+  it.each(['success', 'failure'] as const)('keeps B generation busy when A finishes with %s', async (outcome) => {
+    const { rerender } = render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-saved_item'));
+    const oldRequest = await startGeneration(0);
+    rerender(<SecretSpacePanel agent={agentOther} />);
+    fireEvent.change(screen.getByTestId('secret-space-ai-seed'), { target: { value: 'B request seed' } });
+    const newRequest = await startGeneration(1);
+
+    if (outcome === 'success') await succeed(oldRequest);
+    else await fail(oldRequest, 'old A failure');
+
+    expect(screen.getByTestId('secret-space-ai-generate')).toBeDisabled();
+    expect(screen.getByTestId('secret-space-ai-seed')).toHaveValue('B request seed');
+    expect(screen.queryByText('old A failure')).not.toBeInTheDocument();
+    expect(screen.queryByText('body of late A record')).not.toBeInTheDocument();
+    await succeed(newRequest, 'current B record');
+    expect(screen.getByText('body of current B record')).toBeInTheDocument();
+    expect(screen.getByTestId('secret-space-ai-generate')).toBeEnabled();
+    expect(screen.getByTestId('secret-space-ai-seed')).toHaveValue('');
+    expect(stored(agentOther)).toHaveLength(1);
+  });
+
+  it('preserves the newer B error when A later fails', async () => {
+    const { rerender } = render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
+    const oldRequest = await startGeneration(0);
+    rerender(<SecretSpacePanel agent={agentOther} />);
+    const newRequest = await startGeneration(1);
+    await fail(newRequest, 'current B failure');
+    await fail(oldRequest, 'old A failure');
+
+    expect(screen.getByText('current B failure')).toBeInTheDocument();
+    expect(screen.queryByText('old A failure')).not.toBeInTheDocument();
+  });
+
+  it('invalidates the old request across A to B to A even when the agent ID matches again', async () => {
+    const { rerender } = render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-saved_item'));
+    const oldRequest = await startGeneration(0);
+    rerender(<SecretSpacePanel agent={agentOther} />);
+    rerender(<SecretSpacePanel agent={agent} />);
+    fireEvent.change(screen.getByTestId('secret-space-ai-seed'), { target: { value: 'A new request seed' } });
+    const newRequest = await startGeneration(1);
+    await succeed(oldRequest);
+
+    // The active A subscription may legitimately show the newly persisted A record.
+    expect(stored(agent)).toHaveLength(1);
+    expect(screen.getByTestId('secret-space-ai-seed')).toHaveValue('A new request seed');
+    expect(screen.getByTestId('secret-space-ai-generate')).toBeDisabled();
+    await fail(newRequest, 'current A failure');
+    expect(screen.getByText('current A failure')).toBeInTheDocument();
+    expect(screen.getByTestId('secret-space-ai-generate')).toBeEnabled();
+  });
+
+  it.each(['agent', 'category'] as const)('invalidates a request after a %s round trip even without a replacement request', async (scope) => {
+    const { rerender } = render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-saved_item'));
+    const oldRequest = await startGeneration(0);
+    if (scope === 'agent') {
+      rerender(<SecretSpacePanel agent={agentOther} />);
+      rerender(<SecretSpacePanel agent={agent} />);
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: '返回' }));
+      fireEvent.click(screen.getByTestId('secret-space-entry-dream'));
+      fireEvent.click(screen.getByRole('button', { name: '返回' }));
+      fireEvent.click(screen.getByTestId('secret-space-entry-saved_item'));
+    }
+    fireEvent.change(screen.getByTestId('secret-space-ai-seed'), { target: { value: 'new visit seed' } });
+    await succeed(oldRequest);
+
+    expect(stored(agent)).toHaveLength(1);
+    expect(screen.getByTestId('secret-space-ai-seed')).toHaveValue('new visit seed');
+    expect(screen.getByTestId('secret-space-ai-generate')).toBeEnabled();
+  });
+
+  it.each(['success', 'failure'] as const)('invalidates %s across a category round trip without clearing the new seed or busy state', async (outcome) => {
+    render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-saved_item'));
+    const oldRequest = await startGeneration(0);
+    fireEvent.click(screen.getByRole('button', { name: '返回' }));
+    fireEvent.click(screen.getByTestId('secret-space-entry-dream'));
+    fireEvent.click(screen.getByRole('button', { name: '返回' }));
+    fireEvent.click(screen.getByTestId('secret-space-entry-saved_item'));
+    fireEvent.change(screen.getByTestId('secret-space-ai-seed'), { target: { value: 'new category seed' } });
+    const newRequest = await startGeneration(1);
+
+    if (outcome === 'success') await succeed(oldRequest);
+    else await fail(oldRequest, 'old category failure');
+
+    expect(screen.getByTestId('secret-space-ai-seed')).toHaveValue('new category seed');
+    expect(screen.getByTestId('secret-space-ai-generate')).toBeDisabled();
+    expect(screen.queryByText('old category failure')).not.toBeInTheDocument();
+    expect(stored(agent, 'dream')).toHaveLength(0);
+    await succeed(newRequest, 'current category record');
+    expect(screen.getByTestId('secret-space-ai-seed')).toHaveValue('');
+    expect(screen.getByText('body of current category record')).toBeInTheDocument();
+  });
+
+  it('checks ownership after a delayed final list read as well as after generation', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let blockedReads = 0;
+    const controlledFetch = hanaFetchMock.getMockImplementation()!;
+    hanaFetchMock.mockImplementation(async (path, init) => {
+      const response = await controlledFetch(path, init);
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (body.action === 'listJsonl' && body.agentId === agent.id && stored(agent, 'draft_reply').length > 0) {
+        blockedReads += 1;
+        await gate;
+      }
+      return response;
+    });
+    try {
+      const { rerender } = render(<SecretSpacePanel agent={agent} />);
+      fireEvent.click(screen.getByTestId('secret-space-entry-draft_reply'));
+      const oldRequest = await startGeneration(0);
+      await succeed(oldRequest);
+      await waitFor(() => expect(blockedReads).toBeGreaterThan(0));
+      rerender(<SecretSpacePanel agent={agentOther} />);
+      await screen.findByTestId('secret-space-empty');
+      await act(async () => { release(); });
+
+      expect(stored(agent, 'draft_reply')).toHaveLength(1);
+      expect(screen.queryByText('late A record')).not.toBeInTheDocument();
+      expect(screen.getByTestId('secret-space-empty')).toBeInTheDocument();
+    } finally {
+      release();
+    }
+  });
+
+  it('retains original-agent persistence when the generating panel unmounts', async () => {
+    const { unmount } = render(<SecretSpacePanel agent={agent} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-saved_item'));
+    const oldRequest = await startGeneration(0);
+    unmount();
+    render(<SecretSpacePanel agent={agentOther} />);
+    fireEvent.click(screen.getByTestId('secret-space-entry-saved_item'));
+    fireEvent.change(screen.getByTestId('secret-space-ai-seed'), { target: { value: 'remounted seed' } });
+    await succeed(oldRequest);
+
+    expect(stored(agent)).toHaveLength(1);
+    expect(stored(agentOther)).toHaveLength(0);
+    expect(screen.queryByText('body of late A record')).not.toBeInTheDocument();
+    expect(screen.getByTestId('secret-space-ai-seed')).toHaveValue('remounted seed');
+  });
+});
+
 describe('SecretSpacePanel secret space navigation', () => {
   beforeEach(() => {
     hanaFetchMock.mockClear();

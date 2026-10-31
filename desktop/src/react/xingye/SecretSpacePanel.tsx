@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { normalizeMemoryScope, sameMemoryScope } from '../../../../shared/memory-scope';
 import { normalizeMemorySourceDependencies } from '../../../../shared/memory-provenance';
 import type { Agent } from '../types';
@@ -247,6 +247,11 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
   const [savedItemSeed, setSavedItemSeed] = useState('');
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const aiGeneration = useRef(0);
+  useLayoutEffect(() => () => {
+    // Invalidate on leaving this scope, including A → B → A and unmount.
+    aiGeneration.current += 1;
+  }, [agent?.id, activeCategory]);
   const [secretSpaceDeleteError, setSecretSpaceDeleteError] = useState<string | null>(null);
 
   // interview 生成专属状态：用户出题（可空） + 生成态 + 错误
@@ -875,14 +880,16 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
 
   const handleAiGenerate = async () => {
     if (!agent?.id || !activeCategory || !isSecretSpaceAiGenerableCategory(activeCategory)) return;
+    const request = { agentId: agent.id, category: activeCategory, generation: ++aiGeneration.current };
+    const isCurrentRequest = () => aiGeneration.current === request.generation;
     setAiError(null);
     setAiLoading(true);
     try {
       const { title, content, meta, tags, revisions } = await generateSecretSpaceRecordWithAI({
         agent,
         ownerProfile: profile,
-        category: activeCategory,
-        seedText: activeCategory === 'saved_item' ? savedItemSeed.trim() || undefined : undefined,
+        category: request.category,
+        seedText: request.category === 'saved_item' ? savedItemSeed.trim() || undefined : undefined,
       });
       const summary = content.length > 120 ? `${content.slice(0, 120)}…` : content;
       /**
@@ -891,10 +898,10 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
        * 阅读器读 metadata.draftRevisions 渲染真划掉痕迹,缺失时走装饰池兜底。
        */
       const metadataExtra =
-        activeCategory === 'draft_reply' && revisions
+        request.category === 'draft_reply' && revisions
           ? { metadata: { draftRevisions: revisions } }
           : {};
-      await appendSecretSpaceRecord(agent.id, activeCategory, {
+      await appendSecretSpaceRecord(request.agentId, request.category, {
         title,
         body: content,
         summary,
@@ -903,13 +910,14 @@ export function SecretSpacePanel({ agent, onNavigateSceneSource }: SecretSpacePa
         ...(tags && tags.length ? { tags } : {}),
         ...metadataExtra,
       });
-      const records = await listSecretSpaceRecords(agent.id, activeCategory);
-      setRecordsByCategory((prev) => ({ ...prev, [activeCategory]: records }));
-      if (activeCategory === 'saved_item') setSavedItemSeed('');
+      const records = await listSecretSpaceRecords(request.agentId, request.category);
+      if (!isCurrentRequest()) return;
+      setRecordsByCategory((prev) => ({ ...prev, [request.category]: records }));
+      if (request.category === 'saved_item') setSavedItemSeed('');
     } catch (e) {
-      setAiError(e instanceof Error ? e.message : String(e));
+      if (isCurrentRequest()) setAiError(e instanceof Error ? e.message : String(e));
     } finally {
-      setAiLoading(false);
+      if (isCurrentRequest()) setAiLoading(false);
     }
   };
 
