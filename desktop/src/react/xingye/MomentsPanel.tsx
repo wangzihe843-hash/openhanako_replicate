@@ -12,6 +12,7 @@ import {
   discardMomentDraft,
   isXingyeMomentUserAuthor,
   listMomentDrafts,
+  listXingyeMomentPosts,
   toggleXingyeMomentLike,
   XINGYE_MOMENT_USER_AUTHOR_ID,
   type XingyeMomentActor,
@@ -27,6 +28,7 @@ import { fanOutAgentReactionsToUserPost } from './xingye-moments-user-fanout';
 import type { MomentComposerIdentityMode, MomentComposerSubmitInput } from './MomentComposer';
 import { getXingyeRoleProfileDisplay, useXingyeRoleProfiles } from './xingye-profile-store';
 import styles from './XingyeShell.module.css';
+import type { MomentReplyOperation } from './MomentCard';
 
 interface MomentsPanelProps {
   agents: Agent[];
@@ -190,17 +192,29 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
     post: XingyeMomentPost,
     userCommentBody: string,
     replyAgentId: string,
+    operation: MomentReplyOperation,
   ) => {
     const replyAgent = agentsById.get(replyAgentId);
     if (!replyAgent) throw new Error('找不到要回复的角色');
+    if (!operation.isCurrent()) return;
 
-    const userCommented = await addXingyeMomentComment(
-      post.authorAgentId,
-      post.id,
-      userActor,
-      userCommentBody,
-    );
-    if (!userCommented) throw new Error('评论失败：内容无效');
+    let userCommented: XingyeMomentPost | null;
+    if (!operation.userCommentCommitted) {
+      userCommented = await addXingyeMomentComment(
+        post.authorAgentId, post.id, operation.userActor, userCommentBody,
+        { id: operation.userCommentId },
+      );
+      if (!userCommented) throw new Error('评论失败：内容无效');
+      operation.userCommentCommitted = true;
+    } else {
+      // Refresh context on retry, including concurrent comments and deletion.
+      userCommented = (await listXingyeMomentPosts(post.authorAgentId))
+        .find((row) => row.id === post.id) ?? null;
+      if (!userCommented?.comments.some((comment) => comment.id === operation.userCommentId)) {
+        throw new Error('评论不存在，无法继续回复');
+      }
+    }
+    if (!operation.isCurrent()) return;
 
     const authorAgent = agentsById.get(post.authorAgentId) ?? null;
     const authorProfile = authorAgent ? profiles[authorAgent.id] ?? null : null;
@@ -208,24 +222,28 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
       ? getXingyeRoleProfileDisplay(authorAgent, authorProfile).displayName
       : post.authorName;
 
-    const reply = await generateXingyeMomentCommentReplyWithAI({
-      replyAgent,
-      replyProfile: profiles[replyAgent.id] ?? null,
-      post: {
-        authorAgentId: post.authorAgentId,
-        authorDisplayName,
-        authorIdentitySummary: authorProfile?.identitySummary ?? null,
-        content: post.content,
-      },
-      existingComments: post.comments.map((comment) => ({
-        authorName:
-          comment.actorType === 'agent'
-            ? getAgentDisplayName(comment.actorId)
-            : comment.actorName,
-        body: comment.body,
-      })),
-      targetComment: { authorName: userActor.actorName, body: userCommentBody },
-    });
+    if (operation.replyBody === undefined) {
+      operation.replyBody = await generateXingyeMomentCommentReplyWithAI({
+        replyAgent,
+        replyProfile: profiles[replyAgent.id] ?? null,
+        post: {
+          authorAgentId: post.authorAgentId,
+          authorDisplayName,
+          authorIdentitySummary: authorProfile?.identitySummary ?? null,
+          content: post.content,
+        },
+        existingComments: userCommented.comments
+          .filter((comment) => comment.id !== operation.userCommentId)
+          .map((comment) => ({
+            authorName: comment.actorType === 'agent'
+              ? getAgentDisplayName(comment.actorId)
+              : comment.actorName,
+            body: comment.body,
+          })),
+        targetComment: { authorName: operation.userActor.actorName, body: userCommentBody },
+      });
+    }
+    if (!operation.isCurrent()) return;
 
     const replied = await addXingyeMomentComment(
       post.authorAgentId,
@@ -235,7 +253,8 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
         actorId: replyAgent.id,
         actorName: getAgentDisplayName(replyAgent.id),
       },
-      reply,
+      operation.replyBody,
+      { id: operation.replyCommentId },
     );
     if (!replied) throw new Error('回复写入失败：内容无效');
   };
@@ -616,7 +635,7 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
               : getXingyeRoleProfileDisplay(authorAgent, profiles[authorAgent.id] ?? null).relationshipLabel;
             return (
               <MomentCard
-                key={post.id}
+                key={`${viewerAgentId}:${post.authorAgentId}:${post.id}`}
                 authorAgent={authorAgent}
                 authorDisplayName={authorDisplayName}
                 authorRelationshipLabel={relationshipLabel}
@@ -629,8 +648,8 @@ export function MomentsPanel({ agents, currentAgentId, selectedXingyeAgentId }: 
                 onComment={(postId, body) => handleComment(post.authorAgentId, postId, body)}
                 onDelete={(postId) => handleDelete(post.authorAgentId, postId)}
                 onToggleLike={(postId) => handleToggleLike(post.authorAgentId, postId)}
-                onAgentReply={(_postId, body, replyAgentId) =>
-                  handleAgentReply(post, body, replyAgentId)
+                onAgentReply={(_postId, body, replyAgentId, operation) =>
+                  handleAgentReply(post, body, replyAgentId, operation)
                 }
               />
             );

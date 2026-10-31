@@ -437,6 +437,7 @@ export function createXingyeMomentStore(
       postId: string,
       actor: XingyeMomentActor,
       body: string,
+      operation?: { id: string },
     ): Promise<XingyeMomentPost | null> {
       const aid = requireSafeXingyeAgentId(agentId);
       const pid = normalizeOptionalString(postId);
@@ -444,11 +445,20 @@ export function createXingyeMomentStore(
       const normalizedBody = body.trim();
       if (!pid || !normalizedActor || !normalizedBody) return null;
 
-      const commentId = idFactory('comment');
+      // One explicit operation keeps its ID across an ambiguous write receipt.
+      // Legacy callers and intentionally repeated text still get fresh IDs.
+      const commentId = operation ? normalizeOptionalString(operation.id) : idFactory('comment');
+      if (!commentId) throw new Error('评论操作 ID 无效');
       const result = await store.updateJsonlRecord<XingyeMomentPost>(aid, XINGYE_MOMENTS_POSTS_JSONL, pid, (row) => {
         const normalized = normalizePost(row, idFactory);
         if (!normalized) return null;
         const post = { ...row, ...normalized };
+        const existing = post.comments.find((comment) => comment.id === commentId);
+        if (existing) {
+          if (existing.actorType !== normalizedActor.actorType || existing.actorId !== normalizedActor.actorId
+            || existing.body !== normalizedBody) throw new Error('评论操作 ID 冲突');
+          return post;
+        }
         const now = getNow();
         const nextPost: XingyeMomentPost = {
           ...post,

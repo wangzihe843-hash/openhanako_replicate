@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { Agent } from '../types';
 import type { XingyeMomentActor, XingyeMomentPost } from './xingye-moments-store';
 import { XingyeAgentAvatar } from './XingyeAgentAvatar';
+import { generateXingyeId } from './xingye-store-utils';
 import styles from './XingyeShell.module.css';
 
 /** 「让 TA 回复」下拉菜单里的一个可选角色。 */
@@ -10,6 +11,17 @@ export type MomentReplyAgentOption = {
   displayName: string;
   /** 是否就是这条朋友圈的作者（菜单里标「作者」）。 */
   isAuthor: boolean;
+};
+
+/** In-memory intent: fixed IDs make each save safe to retry, without text dedupe. */
+export type MomentReplyOperation = {
+  userCommentId: string;
+  userActor: XingyeMomentActor;
+  userCommentCommitted: boolean;
+  replyAgentId: string;
+  replyCommentId: string;
+  replyBody?: string;
+  isCurrent: () => boolean;
 };
 
 interface MomentCardProps {
@@ -28,7 +40,7 @@ interface MomentCardProps {
   onDelete: (postId: string) => Promise<void>;
   onToggleLike: (postId: string) => Promise<void>;
   /** 把当前输入框里的评论以 user 身份发出，再让 replyAgentId 角色回复它。 */
-  onAgentReply: (postId: string, userCommentBody: string, replyAgentId: string) => Promise<void>;
+  onAgentReply: (postId: string, userCommentBody: string, replyAgentId: string, operation: MomentReplyOperation) => Promise<void>;
 }
 
 function formatMomentTime(iso: string): string {
@@ -95,6 +107,25 @@ export function MomentCard({
   const [replyMenuOpen, setReplyMenuOpen] = useState(false);
   const [replyPending, setReplyPending] = useState(false);
   const [replyError, setReplyError] = useState<string | null>(null);
+  const replyOperation = useRef<MomentReplyOperation | null>(null);
+  const replyBusy = useRef(false);
+  const replyAttempt = useRef(0);
+  const lifetime = useRef(0);
+  useLayoutEffect(() => () => {
+    lifetime.current += 1;
+    replyOperation.current = null;
+    replyBusy.current = false;
+    replyAttempt.current += 1;
+  }, []);
+
+  const clearReplyOperation = () => {
+    replyOperation.current = null;
+    replyBusy.current = false;
+    replyAttempt.current += 1;
+    setReplyPending(false);
+    setReplyMenuOpen(false);
+    setReplyError(null);
+  };
   const liked = post.likes.some(
     (like) => like.actorType === userActor.actorType && like.actorId === userActor.actorId,
   );
@@ -102,32 +133,65 @@ export function MomentCard({
 
   const handleCommentSubmit = async () => {
     const body = commentDraft.trim();
-    if (!body || commentPending) return;
+    if (!body || commentPending || replyBusy.current) return;
+    const request = lifetime.current;
+    clearReplyOperation();
     setCommentPending(true);
     setCommentError(null);
     try {
       await onComment(post.id, body);
-      setCommentDraft('');
+      if (lifetime.current === request) setCommentDraft('');
     } catch (e) {
-      setCommentError(e instanceof Error ? e.message : String(e));
+      if (lifetime.current === request) setCommentError(e instanceof Error ? e.message : String(e));
     } finally {
-      setCommentPending(false);
+      if (lifetime.current === request) setCommentPending(false);
     }
   };
 
   const handlePickReplyAgent = async (replyAgentId: string) => {
     const body = commentDraft.trim();
-    if (!body || replyPending || commentPending) return;
+    if (!body || replyBusy.current || commentPending) return;
+    let operation = replyOperation.current;
+    if (!operation) {
+      const next: MomentReplyOperation = {
+        userCommentId: generateXingyeId('comment'),
+        userActor: { ...userActor },
+        userCommentCommitted: false,
+        replyAgentId,
+        replyCommentId: generateXingyeId('comment'),
+        isCurrent: () => replyOperation.current === next,
+      };
+      operation = next;
+      replyOperation.current = next;
+    } else if (operation.replyAgentId !== replyAgentId) {
+      operation.replyAgentId = replyAgentId;
+      operation.replyCommentId = generateXingyeId('comment');
+      operation.replyBody = undefined;
+    }
+    replyBusy.current = true;
+    const attempt = ++replyAttempt.current;
     setReplyMenuOpen(false);
     setReplyPending(true);
     setReplyError(null);
+    setCommentError(null);
     try {
-      await onAgentReply(post.id, body, replyAgentId);
+      await onAgentReply(post.id, body, replyAgentId, operation);
+      if (!operation.isCurrent()) return;
+      replyOperation.current = null;
       setCommentDraft('');
     } catch (e) {
-      setReplyError(e instanceof Error ? e.message : String(e));
+      if (operation.isCurrent()) {
+        const message = e instanceof Error ? e.message : String(e);
+        setReplyError(operation.userCommentCommitted
+          ? `评论已发布，回复未完成：${message}`
+          : `评论提交未确认：${message}`);
+      }
     } finally {
-      setReplyPending(false);
+      // A canceled operation must not clear a newer operation's busy state.
+      if (replyAttempt.current === attempt) {
+        replyBusy.current = false;
+        setReplyPending(false);
+      }
     }
   };
 
@@ -265,7 +329,11 @@ export function MomentCard({
           <input
             type="text"
             value={commentDraft}
-            onChange={(event) => setCommentDraft(event.target.value)}
+            onChange={(event) => {
+              clearReplyOperation();
+              setCommentError(null);
+              setCommentDraft(event.target.value);
+            }}
             placeholder={`以 ${userActor.actorName} 的身份评论...`}
             disabled={commentPending || replyPending}
             onKeyDown={(event) => {
@@ -278,7 +346,7 @@ export function MomentCard({
               disabled={!commentDraft.trim() || commentPending || replyPending}
               onClick={() => { void handleCommentSubmit(); }}
             >
-              {commentPending ? '评论中…' : '评论'}
+              {commentPending ? '评论中…' : replyOperation.current ? '另发评论' : '评论'}
             </button>
             {replyAgentOptions.length > 0 ? (
               <div className={styles.momentReplyMenuWrap}>
@@ -288,7 +356,7 @@ export function MomentCard({
                   disabled={!commentDraft.trim() || commentPending || replyPending}
                   aria-haspopup="menu"
                   aria-expanded={replyMenuOpen}
-                  title="发出这条评论，并让选定的角色回复它"
+                  title={replyOperation.current?.userCommentCommitted ? '评论已发布，只重试未完成的回复' : '发出这条评论，并让选定的角色回复它'}
                   onClick={() => setReplyMenuOpen((prev) => !prev)}
                 >
                   {replyPending ? '回复中…' : '让 TA 回复 ▾'}
@@ -319,6 +387,14 @@ export function MomentCard({
                   </>
                 ) : null}
               </div>
+            ) : null}
+            {replyOperation.current ? (
+              <button type="button" title="停止后续回复，已发布的评论会保留" onClick={() => {
+                clearReplyOperation();
+                setCommentDraft('');
+              }}>
+                取消回复
+              </button>
             ) : null}
           </div>
         </div>
