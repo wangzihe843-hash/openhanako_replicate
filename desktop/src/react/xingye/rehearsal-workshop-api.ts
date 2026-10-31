@@ -1,11 +1,12 @@
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import type { ServerConnection } from '../services/server-connection';
+import type { XingyeLoreCategory } from './xingye-lore-store';
 import { normalizeRehearsalPatch, type RehearsalMode } from './rehearsal-workshop-state';
 
 export async function postRehearsalTurn(
   request: {
     agentId: string; profile: Record<string, unknown>; input: string; mode: RehearsalMode;
-    previousText: string; feedback: string; loreEntries: { title: string; content: string }[];
+    previousText: string; feedback: string; loreEntries: { title: string; category: XingyeLoreCategory; content: string }[];
   },
   options: { signal: AbortSignal; connection: ServerConnection },
 ) {

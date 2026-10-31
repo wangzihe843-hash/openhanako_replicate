@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { canReadMemoryScope } from '../../../../shared/memory-scope';
 import { useStore } from '../stores';
 import { requireServerConnection } from '../services/server-connection';
 import { emptyStudioSession, loadStudioSession, saveStudioSession } from './lore-studio-session';
 import type { StudioSession, StudioProfileField } from './lore-studio-types';
 import { flattenProfilePatch } from './lore-studio-apply';
-import { listLoreEntries } from './xingye-lore-store';
+import { listLoreEntries, type XingyeLoreEntry } from './xingye-lore-store';
 import { saveXingyeRoleProfile, xingyeProfileConnectionKey, type XingyeRoleProfile } from './xingye-profile-store';
 import { postRehearsalTurn } from './rehearsal-workshop-api';
 import { emptyRehearsalDraft, normalizeRehearsalDraft, normalizeRehearsalPatch, REHEARSAL_SCENES, type RehearsalScene, type RehearsalVariant } from './rehearsal-workshop-state';
@@ -14,6 +15,15 @@ const FIELD_LABELS: Record<StudioProfileField, string> = {
   shortBio: '简介', identitySummary: '身份摘要', backgroundSummary: '背景摘要', personalitySummary: '人格摘要',
   behaviorLogic: '行为逻辑', values: '价值观', taboos: '禁忌', relationshipMode: '关系模式', speakingStyle: '说话风格',
 };
+
+// Match runtime lore's scope/source guards without changing author material selection.
+function isRehearsalLoreSourceReadable(entry: XingyeLoreEntry, agentId: string): boolean {
+  const scope = entry.memoryScope;
+  const explicitLegacy = scope !== null && typeof scope === 'object' && 'realm' in scope && scope.realm === 'legacy';
+  return canReadMemoryScope(scope, undefined, agentId)
+    && entry.sourceStatus !== 'stale'
+    && (entry.origin !== 'derived' || entry.sourceStatus === 'active' || explicitLegacy);
+}
 interface Props {
   agentId: string;
   profile: Record<string, unknown>;
@@ -99,9 +109,9 @@ export function RehearsalWorkshop({ agentId, profile, onClose, onAdopted }: Prop
         previousText: selected?.text ?? (draft.mode === 'greeting' && typeof profile.firstMessage === 'string' ? profile.firstMessage : ''),
         feedback: draft.feedback,
         loreEntries: [
-          ...listLoreEntries(agentId).filter(entry => entry.enabled && entry.visibility !== 'private'),
+          ...listLoreEntries(agentId).filter(entry => entry.enabled && entry.visibility !== 'private' && isRehearsalLoreSourceReadable(entry, agentId)),
           ...(session.draftPlan?.loreEntries ?? []),
-        ].slice(0, 12).map(entry => ({ title: entry.title, content: entry.content })),
+        ].slice(0, 12).map(entry => ({ title: entry.title, category: entry.category, content: entry.content })),
       }, { signal: requestController.signal, connection: requireServerConnection(useStore.getState(), '存储连接不可用，请重新连接。') });
       if (!current() || ticket !== generation.current || requestController.signal.aborted) return;
       const variant: RehearsalVariant = { ...result, id: crypto.randomUUID(), scene: draft.scene, mode: draft.mode, input: draft.inputs[draft.scene], feedback: draft.feedback };
