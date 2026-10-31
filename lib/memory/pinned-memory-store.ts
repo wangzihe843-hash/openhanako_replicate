@@ -111,6 +111,10 @@ function readMarkdownIfExists(agentDir) {
 
 function readStoreItems(agentDir) {
   const raw = fs.readFileSync(storePath(agentDir), "utf-8");
+  return parseStoreItems(agentDir, raw);
+}
+
+function parseStoreItems(agentDir, raw) {
   const parsed = JSON.parse(raw);
   if (!parsed || parsed.version !== SCHEMA_VERSION || !Array.isArray(parsed.items)) {
     throw new Error(`Invalid pinned memory store schema in ${storePath(agentDir)}`);
@@ -159,11 +163,17 @@ export function readPinnedMemoryForContext(agentDir, memoryScope: MemoryScopeCon
 
 /** Source retraction never deletes user-pinned or real-world history. */
 export function invalidatePinnedMemoryBySession(agentDir, sessionId, options: { sourceMessages?: Array<{ entryId?: string; id?: string; role?: string; content?: unknown; timestamp?: string | null }> | null } = {}): number {
+  const { items, count } = invalidatePinnedItems(readPinnedMemoryItems(agentDir), sessionId, options);
+  if (count) writePinnedMemoryItems(agentDir, items);
+  return count;
+}
+
+function invalidatePinnedItems(items, sessionId, options) {
   const retainedHashes = Array.isArray(options.sourceMessages)
     ? new Map(options.sourceMessages.map((message, index) => [String(message.entryId || message.id || `position-${index}`), hashScopedSourceMessage(message)]))
     : null;
   let count = 0;
-  const items = readPinnedMemoryItems(agentDir).map(item => {
+  const nextItems = items.map(item => {
     if (item.origin !== "derived" || item.memoryScope.realm !== "story"
       || !item.sourceDependencies.some(source => source.sessionId === sessionId) || item.sourceStatus === "stale") return item;
     const matching = item.sourceDependencies.filter(source => source.sessionId === sessionId);
@@ -175,8 +185,73 @@ export function invalidatePinnedMemoryBySession(agentDir, sessionId, options: { 
     count++;
     return { ...item, sourceStatus: "stale" };
   });
-  if (count) writePinnedMemoryItems(agentDir, items);
-  return count;
+  return { items: nextItems, count };
+}
+
+/** Prepare Retry's pin writes without the normal read-time migration side effect. */
+export function preparePinnedMemoryInvalidation(agentDir, sessionId, options = {}) {
+  const snapshot = (file: string) => {
+    try { return { content: fs.readFileSync(file), stat: fs.statSync(file) }; }
+    catch (error) {
+      if (error.code === "ENOENT") return { content: null, stat: null };
+      throw error;
+    }
+  };
+  const markdownPath = pinnedPath(agentDir), jsonPath = storePath(agentDir);
+  const markdown = snapshot(markdownPath), json = snapshot(jsonPath);
+  const stored = json.content === null ? [] : parseStoreItems(agentDir, json.content.toString("utf8"));
+  const preferMarkdown = json.content === null
+    || (markdown.stat && markdown.stat.mtimeMs > json.stat.mtimeMs + 1);
+  const legacy = preferMarkdown ? parseLegacyPinnedMarkdown(markdown.content?.toString("utf8") || "", path.basename(agentDir)) : [];
+  const currentItems = preferMarkdown
+    ? [...legacy.map(item => stored.find(old => old.memoryScope.realm === "legacy" && old.content === item.content) ?? item),
+      ...stored.filter(item => item.memoryScope.realm !== "legacy")]
+    : stored;
+  const { items, count } = invalidatePinnedItems(currentItems, sessionId, options);
+  const data = serializeItems(items, path.basename(agentDir));
+  const writes = [
+    { file: markdownPath, before: markdown, content: Buffer.from(renderPinnedMarkdown(data.items.filter(item =>
+      item.memoryScope.realm === "legacy" && (item.origin === "manual" || item.sourceStatus === "active")))) },
+    { file: jsonPath, before: json, content: Buffer.from(`${JSON.stringify(data, null, 2)}\n`) },
+  ];
+  let attempted = 0;
+  return {
+    apply() {
+      fs.mkdirSync(agentDir, { recursive: true });
+      for (const write of writes) {
+        // Include a failed write: rename may have committed before its caller threw.
+        attempted++;
+        atomicWriteSync(write.file, write.content, write.before.stat ? { mode: write.before.stat.mode & 0o777 } : {});
+      }
+      return count;
+    },
+    rollback() {
+      const errors = [];
+      for (const write of writes.slice(0, attempted).reverse()) {
+        try {
+          const current = snapshot(write.file);
+          const unchanged = current.content === null ? write.before.content === null
+            : write.before.content !== null && current.content.equals(write.before.content);
+          if (!unchanged && !current.content?.equals(write.content)) {
+            throw new Error(`pinned memory changed concurrently; refusing to overwrite ${path.basename(write.file)}`);
+          }
+          if (!unchanged) {
+            if (write.before.content === null) fs.unlinkSync(write.file);
+            else atomicWriteSync(write.file, write.before.content, { mode: write.before.stat.mode & 0o777 });
+          }
+          if (write.before.stat && current.stat) {
+            // mtime chooses Markdown vs JSON authority on the next normal read.
+            // Restore that choice even when normalization wrote identical bytes.
+            if (!unchanged || current.stat.mode !== write.before.stat.mode) fs.chmodSync(write.file, write.before.stat.mode & 0o777);
+            if (!unchanged || current.stat.mtimeMs !== write.before.stat.mtimeMs) {
+              fs.utimesSync(write.file, write.before.stat.atimeMs / 1000, write.before.stat.mtimeMs / 1000);
+            }
+          }
+        } catch (error) { errors.push(error); }
+      }
+      if (errors.length) throw new AggregateError(errors, errors.map(error => error.message).join("; "));
+    },
+  };
 }
 
 export function addPinnedMemoryItem(agentDir, content, metadata: { memoryScope?: unknown; origin?: "manual" | "derived"; sourceDependencies?: unknown; sourceStatus?: string } = {}) {

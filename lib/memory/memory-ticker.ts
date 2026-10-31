@@ -57,7 +57,6 @@ import { atomicWriteSync } from "../../shared/safe-fs.ts";
 import { invalidateSessionDerivedStateSync } from "./session-derived-state.ts";
 import { ScopedDerivationStore } from "./scoped-derivation-store.ts";
 import { normalizeMemoryScope } from "../../shared/memory-scope.ts";
-import { invalidatePinnedMemoryBySession } from "./pinned-memory-store.ts";
 import { createMemoryDreamRunner } from "./dream/runner.ts";
 import type { DreamErrorCode } from "./dream/state-store.ts";
 import {
@@ -1227,9 +1226,8 @@ export function createMemoryTicker(opts) {
       summaryManager,
       factStore,
       scopedDerivationStore,
+      agentDir,
     });
-    if (preserveSourceEntries) scopedDerivationStore.syncSessionSourceSnapshot(sessionId, scope, sourceMessages);
-    if (agentDir) invalidatePinnedMemoryBySession(agentDir, sessionId, preserveSourceEntries ? { sourceMessages } : {});
     _turnCounts.delete(sessionId);
     debugLog()?.warn?.(
       "memory",

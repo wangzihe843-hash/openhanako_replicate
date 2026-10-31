@@ -57,6 +57,8 @@ type SourceRecord = SourceDependency & {
   message?: ScopedSourceMessage;
 };
 type ScopedRollbackCheckpoint = { state: Manifest; fingerprint: string };
+// In-memory receipt for one synchronous operation; never persisted in the manifest.
+export type ScopedWriteExpectation = { fingerprint: string; pendingFingerprint?: string };
 type Manifest = {
   version: 1;
   sources: Record<string, SourceRecord>;
@@ -94,9 +96,21 @@ export class ScopedDerivationStore {
     return state;
   }
 
-  private write(state: Manifest) {
+  private write(state: Manifest, expectation?: ScopedWriteExpectation) {
+    if (expectation) {
+      if (this.getStateFingerprint() !== expectation.fingerprint) {
+        throw Object.assign(new Error("scoped memory changed concurrently; refusing to overwrite newer provenance"), { code: "scoped_memory_rollback_conflict" });
+      }
+      // Record our intended contents before any I/O: rename can commit and still
+      // throw. A later rollback may accept only the prior or this exact version.
+      expectation.pendingFingerprint = digest(JSON.stringify(state));
+    }
     fs.mkdirSync(this.memoryDir, { recursive: true });
     atomicWriteSync(this.manifestPath, JSON.stringify(state, null, 2) + "\n");
+    if (expectation) {
+      expectation.fingerprint = expectation.pendingFingerprint;
+      delete expectation.pendingFingerprint;
+    }
   }
 
   createRollbackCheckpoint(): ScopedRollbackCheckpoint {
@@ -112,13 +126,14 @@ export class ScopedDerivationStore {
    * valid provenance; write fences and replacement artifact IDs prevent pending
    * computations from reusing tokens captured before the failed invalidation.
    */
-  restoreRollbackCheckpoint(checkpoint: ScopedRollbackCheckpoint, expectedFingerprint: string) {
+  restoreRollbackCheckpoint(checkpoint: ScopedRollbackCheckpoint, expected: string | ScopedWriteExpectation): boolean {
     const current = this.read();
     const fingerprint = digest(JSON.stringify(current));
-    if (fingerprint !== expectedFingerprint) {
+    const ownedFingerprints = typeof expected === "string" ? [expected] : [expected.fingerprint, expected.pendingFingerprint];
+    if (!ownedFingerprints.includes(fingerprint)) {
       throw Object.assign(new Error("scoped memory changed concurrently; refusing to overwrite newer provenance"), { code: "scoped_memory_rollback_conflict" });
     }
-    if (fingerprint === checkpoint.fingerprint) return;
+    if (fingerprint === checkpoint.fingerprint) return false;
     const before = checkpoint.state;
     const restored = clone(current);
     for (const [key, source] of Object.entries(restored.sources)) {
@@ -179,6 +194,7 @@ export class ScopedDerivationStore {
     }
     this.invalidateBrokenArtifacts(restored, "failed operation rolled back");
     this.write(restored);
+    return true;
   }
 
   /** Rebase only dependencies that match the restored content generation. */
@@ -248,7 +264,7 @@ export class ScopedDerivationStore {
    * Appending an entry does not invalidate earlier entry-sized derivations. An
    * edit/retraction invalidates only changed/removed entries and their DAG.
    */
-  syncSessionSourceSnapshot(sessionId: string, memoryScope: unknown, messages: ScopedSourceMessage[]): SourceDependency {
+  syncSessionSourceSnapshot(sessionId: string, memoryScope: unknown, messages: ScopedSourceMessage[], expectation?: ScopedWriteExpectation): SourceDependency {
     const scope = normalizeMemoryScope(memoryScope, this.agentId);
     if (scope.realm === "legacy") throw new Error("legacy sources use the legacy aggregate pipeline");
     const active = (messages || []).filter((message) => message?.role === "user" || message?.role === "assistant");
@@ -278,7 +294,7 @@ export class ScopedDerivationStore {
         revision: hash, hash, message: snapshot.message });
       changed = changed || result.changed;
     }
-    if (changed) { this.invalidateBrokenArtifacts(state, "transcript snapshot changed"); this.write(state); }
+    if (changed) { this.invalidateBrokenArtifacts(state, "transcript snapshot changed"); this.write(state, expectation); }
     return aggregate.dependency;
   }
 
@@ -297,7 +313,7 @@ export class ScopedDerivationStore {
   }
 
   /** Persist invalidation before returning. Entry fences can be deferred only to a trusted immediate transcript refresh. */
-  invalidateSource(sessionId: string, opts: { reason?: string; revision?: string; preserveEntries?: boolean } = {}) {
+  invalidateSource(sessionId: string, opts: { reason?: string; revision?: string; preserveEntries?: boolean; expectation?: ScopedWriteExpectation } = {}) {
     const state = this.read();
     let changed = false;
     for (const source of Object.values(state.sources)) {
@@ -311,7 +327,7 @@ export class ScopedDerivationStore {
     }
     if (!changed) return 0;
     const count = this.invalidateBrokenArtifacts(state, opts.reason || "source invalidated");
-    this.write(state);
+    this.write(state, opts.expectation);
     return count;
   }
 

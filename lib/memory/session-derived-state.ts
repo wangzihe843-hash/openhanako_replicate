@@ -1,3 +1,6 @@
+import { preparePinnedMemoryInvalidation } from "./pinned-memory-store.ts";
+import type { ScopedWriteExpectation } from "./scoped-derivation-store.ts";
+
 function cloneMemorySnapshot(value: any) {
   if (value == null) return value;
   return JSON.parse(JSON.stringify(value));
@@ -6,11 +9,10 @@ function cloneMemorySnapshot(value: any) {
 /**
  * Atomically invalidate the mutable memory derived from one Session.
  *
- * The summary lives on disk while deep facts live in SQLite. FactStore deletes
- * one Session with a single SQLite statement, so a thrown delete leaves facts
- * unchanged; in that case we compensate the preceding summary mutation from a
- * durable snapshot. Scoped provenance is compensated first with a compare-and-
- * restore fence; legacy compiled aggregates remain intentionally outside it.
+ * Source/summary/pin writes are reversible and precede the final atomic SQLite
+ * fact transaction. A failed fact transaction leaves facts unchanged, and we
+ * compensate the preceding file mutations. Scoped provenance keeps its compare-
+ * and-restore fence; legacy compiled aggregates remain intentionally outside it.
  */
 export function invalidateSessionDerivedStateSync(input: any = {}) {
   const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
@@ -33,35 +35,48 @@ export function invalidateSessionDerivedStateSync(input: any = {}) {
   const hasScopedSource = Boolean(scopedStore?.getSourceDependency?.(sessionId))
     || Boolean(summarySnapshot?.memoryScope && summarySnapshot.memoryScope.realm !== "legacy");
   const scopedCheckpoint = hasScopedSource ? scopedStore?.createRollbackCheckpoint?.() : null;
-  let expectedScopedFingerprint = scopedCheckpoint?.fingerprint;
+  const scopedExpectation: ScopedWriteExpectation = scopedCheckpoint ? { fingerprint: scopedCheckpoint.fingerprint } : null;
+  // Pin reads can migrate two files. Prepare a side-effect-free snapshot before
+  // touching any derived state, then include both writes in this compensation.
+  const pinnedInvalidation = input.agentDir
+    ? preparePinnedMemoryInvalidation(input.agentDir, sessionId,
+      input.preserveSourceEntries ? { sourceMessages: input.sourceMessages } : {})
+    : null;
+  let summaryAttempted = false;
   let summaryInvalidated = false;
   let factsDeleted = 0;
   try {
     if (scopedCheckpoint) {
-      scopedStore.invalidateSource(sessionId, { reason: input.reason || "session source invalidated", preserveEntries: input.preserveSourceEntries === true });
-      expectedScopedFingerprint = scopedStore.getStateFingerprint();
+      scopedStore.invalidateSource(sessionId, { reason: input.reason || "session source invalidated", preserveEntries: input.preserveSourceEntries === true,
+        expectation: scopedExpectation });
     }
     const summaryOptions = {
       ...(Number.isInteger(retainedMessageCount) && retainedMessageCount >= 0 ? { retainedMessageCount } : {}),
       ...(input.preserveSourceEntries ? { preserveSourceEntries: true } : {}),
       ...(scopedCheckpoint ? { skipScopedInvalidation: true } : {}),
     };
+    summaryAttempted = true;
     summaryInvalidated = Object.keys(summaryOptions).length
       ? summaryManager.invalidateSession(sessionId, summaryOptions)
       : summaryManager.invalidateSession(sessionId);
-    if (input.preserveSourceEntries && Array.isArray(input.sourceMessages) && scopedStore
-      && typeof factStore.invalidateSourceEntries === "function") {
-      scopedStore.syncSessionSourceSnapshot(sessionId, input.memoryScope, input.sourceMessages);
-      expectedScopedFingerprint = scopedStore.getStateFingerprint();
+    const preserveEntries = input.preserveSourceEntries && Array.isArray(input.sourceMessages) && scopedStore;
+    if (preserveEntries) {
+      scopedStore.syncSessionSourceSnapshot(sessionId, input.memoryScope, input.sourceMessages, scopedExpectation);
+    }
+    pinnedInvalidation?.apply();
+    // Nothing fallible may follow this atomic fact mutation inside the commit.
+    if (preserveEntries && typeof factStore.invalidateSourceEntries === "function") {
       factsDeleted = factStore.invalidateSourceEntries(sessionId,
         scopedStore.getSessionDependencies(sessionId, input.memoryScope));
     } else {
       factsDeleted = factStore.deleteBySession(sessionId);
     }
   } catch (error) {
+    const rollbackErrors = [];
     try {
+      let scopedRestored = false;
       if (scopedCheckpoint) {
-        scopedStore.restoreRollbackCheckpoint(scopedCheckpoint, expectedScopedFingerprint);
+        scopedRestored = scopedStore.restoreRollbackCheckpoint(scopedCheckpoint, scopedExpectation);
         if (summarySnapshot?.sourceDependencies) {
           summarySnapshot.sourceDependencies = scopedStore.rebaseRollbackDependencies(summarySnapshot.sourceDependencies);
         }
@@ -69,11 +84,19 @@ export function invalidateSessionDerivedStateSync(input: any = {}) {
           summarySnapshot.snapshotSourceDependencies = scopedStore.rebaseRollbackDependencies(summarySnapshot.snapshotSourceDependencies);
         }
       }
-      if (summarySnapshot) summaryManager.saveSummary(sessionId, summarySnapshot);
-      else summaryManager.invalidateSession(sessionId, scopedCheckpoint ? { skipScopedInvalidation: true } : undefined);
-    } catch (rollbackError) {
+      // Even the first source write may have committed before throwing. Restore
+      // the summary's rebased fences although summary invalidation never began.
+      if (summaryAttempted || scopedRestored) {
+        if (summarySnapshot) summaryManager.saveSummary(sessionId, summarySnapshot);
+        else summaryManager.invalidateSession(sessionId, scopedCheckpoint ? { skipScopedInvalidation: true } : undefined);
+      }
+    } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    // A failed provenance/summary restore must not prevent independent pin repair.
+    try { pinnedInvalidation?.rollback(); }
+    catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    if (rollbackErrors.length) {
       const rollbackFailure: any = new Error(
-        `session memory invalidation failed and summary rollback was incomplete (${rollbackError?.message || rollbackError})`,
+        `session memory invalidation failed and rollback was incomplete (${rollbackErrors.map(error => error?.message || error).join("; ")})`,
         { cause: error },
       );
       rollbackFailure.code = "session_memory_rollback_failed";
