@@ -14,7 +14,7 @@ import WebSocket from "ws";
 import { createModuleLogger, debugLog } from "../debug-log.ts";
 import { webSocketOptionsForUrl } from "../net/outbound-proxy.ts";
 import { formatSecretFingerprintComparison, redactSecretsFromText } from "../secret-fingerprint.ts";
-import { BridgeHttpRedirectError, createBridgeOutboundHttp } from "./outbound-http.ts";
+import { BridgeHttpError, BridgeHttpRedirectError, createBridgeOutboundHttp } from "./outbound-http.ts";
 import { createStreamingCapabilities } from "./streaming-capabilities.ts";
 import {
   DINGTALK_BOT_CALLBACK_TOPIC,
@@ -90,10 +90,21 @@ function dingTalkApiError(stage: string, data: any, status?: number, secrets: un
   return new Error(`[dingtalk:${stage}] ${message || "request failed"} (code=${code})`);
 }
 
-function validateDingTalkApiResponse(stage: string, res: any, data: any, secrets: unknown[] = []) {
+function validateDingTalkApiResponse(stage: string, res: { ok?: boolean; status?: number }, data: Record<string, unknown> | null, secrets: unknown[] = [], sendReceipt = false) {
   const code = data?.code ?? data?.errcode ?? data?.errorCode;
-  if (!res?.ok) throw dingTalkApiError(stage, data, res?.status, secrets);
+  if (!res?.ok) throw dingTalkApiError(stage, sendReceipt && res?.status >= 500 ? null : data, res?.status, secrets);
+  if (sendReceipt && code !== undefined && !validDingTalkCode(code)) throw new Error(`DingTalk ${stage} response has invalid code`);
   if (code !== undefined && code !== 0 && code !== "0") throw dingTalkApiError(stage, data, res?.status, secrets);
+  // Both robot send endpoints acknowledge with processQueryKey, without a
+  // required code field. Empty/non-JSON bodies are not delivery receipts.
+  if (sendReceipt && (!data || typeof data !== "object" || Array.isArray(data)
+    || typeof data.processQueryKey !== "string" || !data.processQueryKey.trim())) {
+    throw new Error(`DingTalk ${stage} response missing valid processQueryKey`);
+  }
+}
+
+function validDingTalkCode(code: unknown) {
+  return (typeof code === "number" && Number.isFinite(code)) || (typeof code === "string" && code.trim() !== "");
 }
 
 function appendTicket(endpoint: string, ticket: string) {
@@ -513,10 +524,16 @@ export function createDingTalkAdapter({
 
   async function requestRobotApi(stage: string, url: string, body: Record<string, any>) {
     let token: string | null = null;
+    let requesting = false;
+    let received = false;
+    let rejected = false;
     try {
       signal.throwIfAborted();
       token = await getAccessToken();
       signal.throwIfAborted();
+      const payload = JSON.stringify(body);
+      signal.throwIfAborted();
+      requesting = true;
       const res = await http.request({
         stage,
         url,
@@ -525,29 +542,43 @@ export function createDingTalkAdapter({
           "Content-Type": "application/json",
           "x-acs-dingtalk-access-token": token,
         },
-        body: JSON.stringify(body),
+        body: payload,
         idempotent: false,
         signal,
       });
+      received = true;
+      rejected = res.status >= 400 && res.status < 500;
       const data = await readDingTalkResponse(res, { stage, signal });
       signal.throwIfAborted();
-      validateDingTalkApiResponse(stage, res, data, [contract.clientSecret, token]);
+      const code = data?.code ?? data?.errcode ?? data?.errorCode;
+      if (res.ok && validDingTalkCode(code) && code !== 0 && code !== "0") rejected = true;
+      validateDingTalkApiResponse(stage, res, data, [contract.clientSecret, token], true);
       const shouldRestoreConnected = outboundError !== null && streamConnected;
       outboundError = null;
       if (shouldRestoreConnected) onStatus?.("connected");
       return data;
     } catch (err: any) {
-      signal.throwIfAborted();
+      const unknown = requesting && !rejected && !(err instanceof BridgeHttpRedirectError)
+        && (received || err instanceof BridgeHttpError || signal.aborted || err?.name === "AbortError");
       const message = redactSecretsFromText(
-        err?.message || String(err),
+        unknown && err instanceof BridgeHttpError ? `DingTalk ${stage} transport failed` : err?.message || String(err),
         [contract.clientSecret, token, accessToken],
       );
-      outboundError = message;
-      onStatus?.("error", message);
+      if (!signal.aborted) {
+        outboundError = message;
+        onStatus?.("error", message);
+      }
       if (err instanceof BridgeHttpRedirectError) {
         err.message = message;
         throw err;
       }
+      if (unknown) {
+        throw Object.assign(new Error(`DingTalk delivery outcome unknown; not automatically resent. ${message}`), {
+          name: err?.name === "AbortError" ? "AbortError" : "Error",
+          deliveryUnknown: true, retryable: false,
+        });
+      }
+      if (!requesting) signal.throwIfAborted();
       if (err instanceof Error && err.message === message) throw err;
       throw new Error(message);
     }
@@ -564,24 +595,34 @@ export function createDingTalkAdapter({
       const scope = dingTalkTargetScope(options);
       const chunks = splitTextByUtf8Bytes(content);
       const results = [];
-      for (let i = 0; i < chunks.length; i += 1) {
-        signal.throwIfAborted();
-        const msgParam = markdownPayload(chunks[i], i, chunks.length);
-        if (scope === "group") {
-          results.push(await requestRobotApi("send_group", buildDingTalkUrl(contract.apiBaseUrl, DINGTALK_GROUP_SEND_PATH), {
-            robotCode: contract.robotCode,
-            openConversationId: String(chatId),
-            msgKey: "sampleMarkdown",
-            msgParam,
-          }));
-        } else {
-          results.push(await requestRobotApi("send_dm", buildDingTalkUrl(contract.apiBaseUrl, DINGTALK_DM_SEND_PATH), {
-            robotCode: contract.robotCode,
-            userIds: [String(chatId)],
-            msgKey: "sampleMarkdown",
-            msgParam,
-          }));
+      try {
+        for (let i = 0; i < chunks.length; i += 1) {
+          signal.throwIfAborted();
+          const msgParam = markdownPayload(chunks[i], i, chunks.length);
+          if (scope === "group") {
+            results.push(await requestRobotApi("send_group", buildDingTalkUrl(contract.apiBaseUrl, DINGTALK_GROUP_SEND_PATH), {
+              robotCode: contract.robotCode,
+              openConversationId: String(chatId),
+              msgKey: "sampleMarkdown",
+              msgParam,
+            }));
+          } else {
+            results.push(await requestRobotApi("send_dm", buildDingTalkUrl(contract.apiBaseUrl, DINGTALK_DM_SEND_PATH), {
+              robotCode: contract.robotCode,
+              userIds: [String(chatId)],
+              msgKey: "sampleMarkdown",
+              msgParam,
+            }));
+          }
         }
+      } catch (error) {
+        // A later chunk's definite failure must not replay earlier accepted chunks.
+        if (results.length && !error?.deliveryUnknown) {
+          throw Object.assign(new Error("DingTalk delivery incomplete after an acknowledged chunk; not automatically resent."), {
+            deliveryUnknown: true, retryable: false,
+          });
+        }
+        throw error;
       }
       return results.length === 1 ? results[0] : results;
     },

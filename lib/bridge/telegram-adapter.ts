@@ -10,6 +10,7 @@ import { loadTelegramSdk } from "./optional-sdks.ts";
 import { debugLog } from "../debug-log.ts";
 import { telegramApiOptions, telegramFetch } from "../net/telegram-fetch.ts";
 import { createHash } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import { detectMime } from "../file-metadata.ts";
 import { redactSecretsFromText } from "../secret-fingerprint.ts";
@@ -131,7 +132,19 @@ export function createTelegramAdapter({ token, agentId, onMessage, onStatus, fet
   fetch?: typeof fetch;
 }) {
   const { Bot, InputFile } = loadTelegramSdk();
-  const bot = new Bot(token, telegramApiOptions(fetchImpl));
+  // The SDK awaits parameter encoding before fetch. Track each call separately
+  // so cancellation in that preparation window is still a definite non-send.
+  const requests = new AsyncLocalStorage<{ dispatched: boolean; httpStatus: number }>();
+  const bot = new Bot(token, telegramApiOptions(async (input, init) => {
+    init?.signal?.throwIfAborted();
+    const request = requests.getStore();
+    if (request) request.dispatched = true;
+    const response = await fetchImpl(input, init);
+    // The SDK drops HTTP status when the response body cannot supply an error
+    // code. Keep the observed headers even if reading/parsing that body fails.
+    if (request) request.httpStatus = response.status;
+    return response;
+  }));
   const lifetime = new AbortController();
   const key = agentId;
   const tokenHash = createHash("sha256").update(token).digest("hex");
@@ -169,21 +182,31 @@ export function createTelegramAdapter({ token, agentId, onMessage, onStatus, fet
     void work.finally(() => inFlight.delete(work)).catch(() => {});
     return work;
   }
+  function unknownSendError(error: unknown) {
+    const safe = safeError(error);
+    safe.message = "Telegram delivery outcome unknown; not automatically resent.";
+    return Object.assign(safe, { deliveryUnknown: true, retryable: false });
+  }
   async function call(method: string, params?: Record<string, unknown>): Promise<unknown> {
     assertActive();
+    const persistent = ["sendMessage", "sendRichMessage", "sendPhoto", "sendVideo", "sendAudio", "sendDocument"].includes(method);
+    const request = { dispatched: false, httpStatus: 0 };
     try {
       const args = params === undefined ? [lifetime.signal] : [params, lifetime.signal];
-      const result = await track(bot.api[method](...args));
-      assertActive();
+      const result = await requests.run(request, () => track(bot.api[method](...args)));
+      // A validated persistent acknowledgement remains sent even if stop races
+      // with completion; stale reads still obey the adapter lifetime fence.
+      if (!persistent) assertActive();
       return result;
     } catch (error) {
-      if (lifetime.signal.aborted) throw lifetime.signal.reason;
       const safe = safeError(error);
-      if (["sendMessage", "sendRichMessage", "sendPhoto", "sendVideo", "sendAudio", "sendDocument"].includes(method)
-        && (["EFETCH", "ETIMEOUT", "EPARSE"].includes(safe.code) || safe.errorCode >= 500)) {
-        safe.message = `Telegram delivery outcome unknown; not automatically resent. ${safe.message}`;
-        throw Object.assign(safe, { deliveryUnknown: true });
-      }
+      // Request/access/rate-limit rejection is definite without a valid body.
+      // Other 4xx (e.g. timeout) need a business rejection; 5xx stays uncertain
+      // even if a contradictory body supplies a client-side error code.
+      const rejected = [400, 401, 403, 404, 429].includes(request.httpStatus)
+        || (request.httpStatus < 500 && Number.isInteger(safe.errorCode) && safe.errorCode >= 400 && safe.errorCode < 500);
+      if (persistent && request.dispatched && !rejected) throw unknownSendError(error);
+      if (lifetime.signal.aborted && !rejected) throw lifetime.signal.reason;
       throw safe;
     }
   }
@@ -369,8 +392,15 @@ export function createTelegramAdapter({ token, agentId, onMessage, onStatus, fet
       catch { /* Typing is best-effort; never retry it or fail the reply. */ }
     },
     async sendReply(chatId, text, options = {}) {
-      for (const chunk of formatTelegramMessageChunks(text)) {
-        await call("sendMessage", { chat_id: chatId, text: chunk, ...telegramMessageOptions(options, "html") });
+      let sent = false;
+      try {
+        for (const chunk of formatTelegramMessageChunks(text)) {
+          await call("sendMessage", { chat_id: chatId, text: chunk, ...telegramMessageOptions(options, "html") });
+          sent = true;
+        }
+      } catch (error) {
+        if (sent && !error?.deliveryUnknown) throw unknownSendError(error);
+        throw error;
       }
     },
     async sendBlockReply(chatId, text, options = {}) {

@@ -123,17 +123,26 @@ async function apiPost(baseUrl, endpoint, body, token, timeoutMs, parentSignal) 
   const url = new URL(endpoint, baseUrl.endsWith("/") ? baseUrl : baseUrl + "/");
   return withWechatDeadline(parentSignal, timeoutMs || 15_000, async signal => {
     let res: Response | undefined;
+    const init = { method: "POST", headers: buildHeaders(token), body: JSON.stringify(body), signal, redirect: "manual" as const };
+    signal.throwIfAborted();
     try {
-      const request = fetch(url.toString(), {
-        method: "POST", headers: buildHeaders(token), body: JSON.stringify(body),
-        signal, redirect: "manual",
-      });
+      const request = fetch(url.toString(), init);
       void request.then(late => { if (signal.aborted) cancelWechatBody(late.body); }, () => {});
       res = await awaitWechatAbort(request, signal);
       signal.throwIfAborted();
       if (res.status >= 300 && res.status < 400) throw new WechatTransferError("api_redirect_rejected");
       return await readWechatApiResponse(endpoint, res, signal);
     } catch (err) {
+      const rejected = (res?.status >= 400 && res?.status < 500)
+        || (res?.ok && err instanceof WechatApiError && err.code !== "WECHAT_PROTOCOL_ERROR")
+        || (err instanceof WechatTransferError && err.code === "api_redirect_rejected");
+      if (endpoint === "ilink/bot/sendmessage" && !rejected) {
+        // No request body, context token, transport cause or arbitrary server
+        // response may escape in the diagnostic for an uncertain persistent send.
+        throw Object.assign(new Error("WeChat delivery outcome unknown; not automatically resent."), {
+          deliveryUnknown: true, retryable: false,
+        });
+      }
       if (err instanceof WechatApiError || err instanceof WechatTransferError) throw err;
       const safeError = new Error(redactLogText(err?.message || String(err)));
       if (err?.name === "AbortError") safeError.name = "AbortError";
@@ -291,9 +300,12 @@ export function createWechatAdapter({ botToken, baseUrl: configuredBaseUrl = und
     assertActive(myGen);
     try {
       const response = await apiPost(baseUrl, endpoint, body, botToken, timeoutMs, abortController.signal);
-      assertActive(myGen);
+      if (endpoint !== "ilink/bot/sendmessage") assertActive(myGen);
       return response;
     } catch (err) {
+      // Preserve the send outcome before the stale-generation fence can replace
+      // it with an ordinary stopped/expired error and enable another delivery.
+      if (err?.deliveryUnknown) throw err;
       // A response from a stopped/expired generation cannot change its state.
       assertActive(myGen);
       if (err instanceof WechatApiError && err.sessionExpired) {
@@ -672,8 +684,19 @@ export function createWechatAdapter({ botToken, baseUrl: configuredBaseUrl = und
       const ctx = getContextToken(chatId);
       if (!ctx) throw new Error("微信: 需要对方最近发过消息才能回复");
       // 长文本分段
-      for (let i = 0; i < text.length; i += MSG_CHUNK_LIMIT) {
-        await sendText(chatId, text.slice(i, i + MSG_CHUNK_LIMIT), ctx, myGen);
+      let sent = false;
+      try {
+        for (let i = 0; i < text.length; i += MSG_CHUNK_LIMIT) {
+          await sendText(chatId, text.slice(i, i + MSG_CHUNK_LIMIT), ctx, myGen);
+          sent = true;
+        }
+      } catch (error) {
+        if (sent && !error?.deliveryUnknown) {
+          throw Object.assign(new Error("WeChat delivery incomplete after an acknowledged chunk; not automatically resent."), {
+            deliveryUnknown: true, retryable: false,
+          });
+        }
+        throw error;
       }
     },
 

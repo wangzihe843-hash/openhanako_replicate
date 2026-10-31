@@ -126,7 +126,7 @@ describe("DingTalk adapter lifetime and production HTTP cancellation", () => {
 
   it("single-flights concurrent token refresh without retrying sends", async () => {
     const held = deferred<Response>(); releases.push(() => held.resolve(token()));
-    const fetchImpl = vi.fn(async (url: string) => url.includes("/connections/open") ? registration() : url.includes("/oauth2/") ? held.promise : Response.json({ ok: true }));
+    const fetchImpl = vi.fn(async (url: string) => url.includes("/connections/open") ? registration() : url.includes("/oauth2/") ? held.promise : Response.json({ processQueryKey: "synthetic-receipt" }));
     const { adapter } = fixture(fetchImpl); await tick();
     const one = adapter.sendReply("one", "hello"); const two = adapter.sendReply("two", "hello"); await tick();
     expect(fetchImpl.mock.calls.filter(([url]) => url.includes("/oauth2/"))).toHaveLength(1);
@@ -221,7 +221,7 @@ it("retries ordinary registration faults but does not retry a non-idempotent sen
   });
   const { adapter } = fixture(fetchImpl); await vi.advanceTimersByTimeAsync(3000);
   expect(registrationCalls).toBe(3); expect(Socket.instances).toHaveLength(1);
-  await expect(adapter.sendReply("synthetic-user", "hello")).rejects.toThrow("synthetic send ECONNRESET");
+  await expect(adapter.sendReply("synthetic-user", "hello")).rejects.toMatchObject({ deliveryUnknown: true, retryable: false });
   expect(fetchImpl.mock.calls.filter(([url]) => url.includes("/robot/"))).toHaveLength(1);
 });
 

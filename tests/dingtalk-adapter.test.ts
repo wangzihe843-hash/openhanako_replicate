@@ -646,7 +646,7 @@ describe("DingTalk response body budgets", () => {
   }
 
   it.each(["dm", "group"])("accepts exactly 64KiB of JSON for %s despite a false Content-Length", async targetScope => {
-    const text = JSON.stringify({ result: "你😀", pad: "" });
+    const text = JSON.stringify({ processQueryKey: "synthetic-receipt", result: "你😀", pad: "" });
     const data = JSON.parse(text);
     data.pad = " ".repeat(65_536 - new TextEncoder().encode(text).length);
     const { response, body } = streamedResponse(JSON.stringify(data), 200, "999999");
@@ -714,8 +714,8 @@ describe("DingTalk response body budgets", () => {
     expect(JSON.stringify(onStatus.mock.calls)).not.toMatch(/token-1|dt-secret|arbitrary upstream dump/);
   });
 
-  it("keeps a successful non-JSON send response as bounded text", async () => {
+  it("keeps a non-JSON send response unknown instead of claiming success", async () => {
     const { adapter } = await fixture(streamedResponse("accepted").response);
-    await expect(adapter.sendReply("synthetic-target", "hello")).resolves.toBe("accepted");
+    await expect(adapter.sendReply("synthetic-target", "hello")).rejects.toMatchObject({ deliveryUnknown: true, retryable: false });
   });
 });

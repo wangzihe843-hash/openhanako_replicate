@@ -16,7 +16,7 @@ import WebSocket from "ws";
 import { debugLog } from "../debug-log.ts";
 import { webSocketOptionsForUrl } from "../net/outbound-proxy.ts";
 import { createMediaCapabilities } from "./media-capabilities.ts";
-import { BridgeHttpRedirectError, createBridgeOutboundHttp } from "./outbound-http.ts";
+import { BridgeHttpError, BridgeHttpRedirectError, createBridgeOutboundHttp } from "./outbound-http.ts";
 import { QQApiError, QQ_FILE_TYPE, QQ_UPLOAD_SIZE_LIMITS, uploadQQLocalFile } from "./qq-local-upload.ts";
 import { createModuleLogger } from "../debug-log.ts";
 import { redactSecretsFromText } from "../secret-fingerprint.ts";
@@ -327,6 +327,13 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
     return redactSecretsFromText((error as Error)?.message || String(error), [appSecret, accessToken, sessionId, ws?.url]);
   }
 
+  function unknownSendError(error: unknown) {
+    return Object.assign(new Error("QQ delivery outcome unknown; not automatically resent."), {
+      name: (error as Error)?.name === "AbortError" ? "AbortError" : "Error",
+      deliveryUnknown: true, retryable: false,
+    });
+  }
+
   const userGuildMap = new Map(Object.entries(dmGuildMap || {}));
   const passiveReplySeq = new Map();
 
@@ -418,45 +425,55 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
     const signal = requestSignal(opts?.signal);
     const token = await getToken(signal);
     signal.throwIfAborted();
-    const res = await http.request({
-      stage,
-      url: `${API_BASE}${path}`,
-      method,
-      headers: {
-        Authorization: `QQBot ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      idempotent: opts?.idempotent === true,
-      signal,
-    });
-    const text = await readResponseText(res, signal).catch(() => {
-      signal.throwIfAborted();
-      throw new QQApiError(`QQ ${stage} response body failed`, { path });
-    });
+    const payload = body ? JSON.stringify(body) : undefined;
     signal.throwIfAborted();
-    if (!res.ok) {
-      let bizCode;
-      let message = text;
-      try {
-        const parsed = JSON.parse(text);
-        bizCode = parsed.code ?? parsed.err_code;
-        message = parsed.message || parsed.msg || text;
-      } catch {}
-      throw new QQApiError(`QQ API [${stage} ${path}] ${res.status}: ${String(message).slice(0, 200)}`, {
-        status: res.status,
-        path,
-        bizCode,
-      });
-    }
-    if (!text.trim()) return {};
+    // Upload preparation and reads do not deliver a chat message.
+    const persistent = stage === "send_reply" || stage === "send_media_message";
+    let received = false;
+    let rejected = false;
     try {
-      return JSON.parse(text);
-    } catch {
-      throw new QQApiError(`QQ API [${stage} ${path}] returned invalid JSON: ${text.slice(0, 200)}`, {
-        status: res.status,
-        path,
+      const res = await http.request({
+        stage,
+        url: `${API_BASE}${path}`,
+        method,
+        headers: {
+          Authorization: `QQBot ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: payload,
+        idempotent: opts?.idempotent === true,
+        signal,
       });
+      received = true;
+      rejected = res.status >= 400 && res.status < 500;
+      const text = await readResponseText(res, signal).catch(() => {
+        signal.throwIfAborted();
+        throw new QQApiError(`QQ ${stage} response body failed`, { path });
+      });
+      signal.throwIfAborted();
+      let data: Record<string, unknown> | null;
+      try { data = JSON.parse(text); } catch { /* Validate below without reflecting the body. */ }
+      const bizCode = data?.code ?? data?.err_code;
+      const validCode = (typeof bizCode === "number" && Number.isFinite(bizCode)) || (typeof bizCode === "string" && bizCode.trim() !== "");
+      if (!res.ok || (persistent && bizCode !== undefined && bizCode !== 0 && bizCode !== "0")) {
+        if (res.ok && validCode) rejected = true;
+        throw new QQApiError(`QQ API [${stage} ${path}] ${res.status}: ${safeError(data?.message || data?.msg || "request failed").slice(0, 200)}`, {
+          status: res.status, path, bizCode,
+        });
+      }
+      if (!text.trim() && !persistent) return {};
+      if (data === undefined || (persistent && (!data || typeof data !== "object" || Array.isArray(data)))) {
+        throw new QQApiError(`QQ API [${stage} ${path}] returned invalid JSON response`, { status: res.status, path });
+      }
+      return data;
+    } catch (error) {
+      // Plain helper setup errors precede fetch. Transport errors, body errors
+      // and cancellation after entering the request cannot prove non-delivery.
+      if (persistent && !rejected && !(error instanceof BridgeHttpRedirectError)
+        && (received || error instanceof BridgeHttpError || signal.aborted || error?.name === "AbortError")) {
+        throw unknownSendError(error);
+      }
+      throw error;
     }
   }
 
@@ -850,6 +867,7 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
         await apiRequest("POST", endpoint, msgBody, { stage: "send_media_message", signal });
         return;
       } catch (err) {
+        if (err?.deliveryUnknown) throw err;
         signal.throwIfAborted();
         if (!canTryNextTarget(err)) throw err;
         if (endpoint === messageEndpoints.at(-1)) {
@@ -870,30 +888,38 @@ export function createQQAdapter({ appID, appSecret, agentId, onMessage, dmGuildM
       const context = normalizeQQReplyContext(replyContext);
       const messageEndpoints = qqMessageEndpoints(chatId, context);
       const MAX = 2000;
-      for (let i = 0; i < text.length; i += MAX) {
-        signal.throwIfAborted();
-        const chunk = text.slice(i, i + MAX);
-        let lastError = null;
-        const errors = [];
-        for (const endpoint of messageEndpoints) {
-          const body = buildMarkdownReplyBody(endpoint, chunk);
-          attachPassiveReplyFields(body, context);
-          try {
-            // 发送有副作用：网络层绝不自动重试，避免重复发消息
-            await apiRequest("POST", endpoint.path, body, { stage: "send_reply", signal });
-            lastError = null;
-            break;
-          } catch (err) {
-            signal.throwIfAborted();
-            if (!canTryNextTarget(err)) throw err;
-            lastError = err;
-            errors.push(`${endpoint.label}=${err.message}`);
+      let sent = false;
+      try {
+        for (let i = 0; i < text.length; i += MAX) {
+          signal.throwIfAborted();
+          const chunk = text.slice(i, i + MAX);
+          let lastError = null;
+          const errors = [];
+          for (const endpoint of messageEndpoints) {
+            const body = buildMarkdownReplyBody(endpoint, chunk);
+            attachPassiveReplyFields(body, context);
+            try {
+              // 发送有副作用：网络层绝不自动重试，避免重复发消息
+              await apiRequest("POST", endpoint.path, body, { stage: "send_reply", signal });
+              lastError = null;
+              break;
+            } catch (err) {
+              if (sent || err?.deliveryUnknown) throw err;
+              signal.throwIfAborted();
+              if (!canTryNextTarget(err)) throw err;
+              lastError = err;
+              errors.push(`${endpoint.label}=${err.message}`);
+            }
           }
+          if (lastError) {
+            debugLog()?.error("bridge", `[qq] 消息发送全部失败 chatId=${chatId}: ${errors.join(", ")}`);
+            throw lastError;
+          }
+          sent = true;
         }
-        if (lastError) {
-          debugLog()?.error("bridge", `[qq] 消息发送全部失败 chatId=${chatId}: ${errors.join(", ")}`);
-          throw lastError;
-        }
+      } catch (error) {
+        if (sent && !error?.deliveryUnknown) throw unknownSendError(error);
+        throw error;
       }
     },
 

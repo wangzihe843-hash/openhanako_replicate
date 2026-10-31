@@ -3,7 +3,7 @@ import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import type { BridgeOutboundRequestOptions } from "../lib/bridge/outbound-http.ts";
+import { BridgeHttpError, type BridgeOutboundRequestOptions } from "../lib/bridge/outbound-http.ts";
 
 vi.mock("ws", async () => {
   const { EventEmitter } = await import("node:events");
@@ -364,14 +364,20 @@ describe("createQQAdapter media delivery", () => {
     await vi.advanceTimersByTimeAsync(0);
     vi.mocked(fetch).mockClear();
     vi.mocked(fetch).mockImplementation(async () => {
-      if (failure === "network") throw new TypeError("synthetic unknown send result");
+      // This file stubs the helper, so retain its production transport-error contract.
+      if (failure === "network") throw new BridgeHttpError("synthetic unknown send result", {
+        platform: "qq", stage: "send_reply", method: "POST", host: "api.bot.qq.com",
+        proxied: false, proxyUrl: "", attempts: 1, timedOut: false,
+      });
       return new Response('{"message":"synthetic rejection"}', { status: Number(failure) });
     });
 
-    await expect(adapter.sendReply("target-id", "x".repeat(2001), {
+    const sending = adapter.sendReply("target-id", "x".repeat(2001), {
       messageId: "qq-failed-mid",
       targetType,
-    })).rejects.toThrow(failure === "network" ? /unknown send result/ : /synthetic rejection/);
+    });
+    if (failure === 403) await expect(sending).rejects.toThrow(/synthetic rejection/);
+    else await expect(sending).rejects.toMatchObject({ deliveryUnknown: true, retryable: false });
     await vi.advanceTimersByTimeAsync(60_000);
 
     expect(fetch).toHaveBeenCalledTimes(1);
