@@ -25,6 +25,7 @@ import {
 } from './xingye-files-store';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import { listLoreEntries } from './xingye-lore-store';
+import { collectXingyeLoreRuntimeContext, formatXingyeLoreRuntimeContextBlock } from './xingye-lore-runtime-context';
 // 已确认条目：待「新的朋友」通过的候选不参与密码素材/隐藏种子上下文。
 import { getConfirmedVirtualContacts } from './xingye-phone-store';
 import { getXingyePersistenceStorage } from './xingye-persistence';
@@ -933,10 +934,18 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
     setHiddenSeedError(null);
     try {
       const storage = getXingyePersistenceStorage();
+      const stableLore = collectXingyeLoreRuntimeContext(ownerAgentId, {
+        includeAlways: true,
+        includeKeyword: false,
+        maxChars: 2_000,
+      }, storage);
+      // 人物标题与正文共用本次允许的有界选择，避免从原始列表绕过来源/范围过滤。
+      const selectedLoreIds = new Set(stableLore.entries.map((entry) => entry.id));
       const drafts = await generateHiddenSeedsWithAI({
         agent: ownerAgent,
         profile: ownerProfile,
-        loreEntries: listLoreEntries(ownerAgentId, storage),
+        stableLoreBlock: formatXingyeLoreRuntimeContextBlock(stableLore),
+        loreEntries: listLoreEntries(ownerAgentId, storage).filter((entry) => selectedLoreIds.has(entry.id)),
         virtualContacts: getConfirmedVirtualContacts(ownerAgentId, storage),
         // 反重复 anchor + 入库前兜底用——首次解锁通常为空，但 markHiddenFolderSeedGenerated
         // 之外的再次触发（例如未来的「再生成几条」按钮）会有历史条目要避开。
