@@ -8,6 +8,7 @@ import { URL } from "node:url";
 import { setImmediate } from "node:timers";
 import { createHook } from "node:async_hooks";
 import { appendFileSync } from "node:fs";
+import { markFeishuWorkerPhase } from "./feishu-worker-phases.mjs";
 
 if (!isMainThread) {
   const domain = process.env.HANA_FEISHU_TEST_DOMAIN;
@@ -29,6 +30,7 @@ if (!isMainThread) {
     } }).enable();
   }
   const sdk = require("@larksuiteoapi/node-sdk");
+  markFeishuWorkerPhase("preload:sdk-loaded");
   const RealClient = sdk.Client;
   const RealWSClient = sdk.WSClient;
   sdk.Client = class extends RealClient {
