@@ -245,7 +245,7 @@ describe('PhoneFilesApp · hidden folder', () => {
     });
     expect(screen.getByText('偷偷喜欢甜的')).toBeInTheDocument();
     expect(secretAiMock.generateHiddenSeedsWithAI).toHaveBeenCalled();
-    expect(secretStoreMock.markHiddenFolderSeedGenerated).toHaveBeenCalledWith('linwu');
+    expect(secretStoreMock.markHiddenFolderSeedGenerated).toHaveBeenCalledWith('linwu', undefined);
   });
 
   it('「去和 TA 聊聊」把抽屉 entry 暂存到 stagedChatQuote, sourceKind=secret-drawer', async () => {

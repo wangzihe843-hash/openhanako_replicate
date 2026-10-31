@@ -1,10 +1,12 @@
 import { hanaFetch } from '../hooks/use-hana-fetch';
+import type { ServerConnection } from '../services/server-connection';
 
-export async function postXingyeStorage(body: Record<string, unknown>): Promise<any> {
+export async function postXingyeStorage(body: Record<string, unknown>, connection?: ServerConnection) {
   if (typeof body.agentId !== 'string' || !body.agentId) {
     throw new Error('agentId is required');
   }
   const res = await hanaFetch('/api/xingye/storage', {
+    connection,
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

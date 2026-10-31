@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Agent } from '../types';
 import { useStore } from '../stores';
+import { resolveServerConnection } from '../services/server-connection';
 import styles from './XingyeShell.module.css';
 import { generateFilesDraftWithAI } from './xingye-files-ai';
 import { runFilesBatchAdd, runFilesInit, type FilesBatchSummary } from './xingye-files-batch-ai';
@@ -406,6 +407,48 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
    */
   const reloadSeqRef = useRef(0);
 
+  const hiddenContextSeqRef = useRef(0);
+  const hiddenReloadSeqRef = useRef(0);
+  const hiddenSeedOperationRef = useRef<object | null>(null);
+  const [hiddenConnectionRevision, setHiddenConnectionRevision] = useState(0);
+
+  // A→B→A is still a new context. Subscribe synchronously so a batched connection
+  // round trip cannot revive an old operation; cleanup also invalidates unmounts.
+  useLayoutEffect(() => {
+    const resetHiddenContext = () => {
+      hiddenContextSeqRef.current += 1;
+      hiddenReloadSeqRef.current += 1;
+      hiddenSeedOperationRef.current = null;
+      setHiddenState(null);
+      setHiddenEntries([]);
+      setHiddenSeedBusy(false);
+      setHiddenSeedError(null);
+      setHiddenPwModalOpen(false);
+      setHiddenAttemptCount(0);
+      setHiddenReaction(null);
+      setHiddenShake(false);
+      setHiddenPwError(null);
+      setInHiddenView(false);
+      setHiddenManualOpen(false);
+      setHiddenManualError(null);
+    };
+    let connectionKey = JSON.stringify(resolveServerConnection(useStore.getState()) ?? undefined);
+    resetHiddenContext();
+    const unsubscribe = useStore.subscribe(() => {
+      const nextKey = JSON.stringify(resolveServerConnection(useStore.getState()) ?? undefined);
+      if (nextKey === connectionKey) return;
+      connectionKey = nextKey;
+      resetHiddenContext();
+      setHiddenConnectionRevision((revision) => revision + 1);
+    });
+    return () => {
+      hiddenContextSeqRef.current += 1;
+      hiddenReloadSeqRef.current += 1;
+      hiddenSeedOperationRef.current = null;
+      unsubscribe();
+    };
+  }, [ownerAgentId]);
+
   const reload = useCallback(async () => {
     const seq = ++reloadSeqRef.current;
     if (!ownerAgentId) {
@@ -444,6 +487,15 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
    * 让 UI 显示一个 disabled 的"暂无可用候选密码"提示。
    */
   const reloadHidden = useCallback(async () => {
+    if (hiddenSeedOperationRef.current) return;
+    const seq = ++hiddenReloadSeqRef.current;
+    const contextSeq = hiddenContextSeqRef.current;
+    const resolvedConnection = resolveServerConnection(useStore.getState());
+    const connection = resolvedConnection ? { ...resolvedConnection } : undefined;
+    const connectionKey = JSON.stringify(connection);
+    const isCurrent = () => seq === hiddenReloadSeqRef.current
+      && contextSeq === hiddenContextSeqRef.current
+      && JSON.stringify(resolveServerConnection(useStore.getState()) ?? undefined) === connectionKey;
     if (!ownerAgentId) {
       setHiddenState(null);
       setHiddenEntries([]);
@@ -452,9 +504,10 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
     }
     try {
       const [state, entries] = await Promise.all([
-        readHiddenFolderState(ownerAgentId),
-        listHiddenEntries(ownerAgentId),
+        readHiddenFolderState(ownerAgentId, connection),
+        listHiddenEntries(ownerAgentId, connection),
       ]);
+      if (!isCurrent()) return;
       let stateOut = state;
       if (!state.passwordHash) {
         const storage = getXingyePersistenceStorage();
@@ -471,12 +524,13 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
             stateOut = await setHiddenFolderPassword(ownerAgentId, {
               password: picked.value,
               candidateLabel: picked.label,
-            });
+            }, connection);
           } catch (err) {
             console.warn('[PhoneFilesApp] init hidden lock failed:', err);
           }
         }
       }
+      if (!isCurrent()) return;
       setHiddenState(stateOut);
       setHiddenEntries(entries);
     } catch (err) {
@@ -624,20 +678,8 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
 
   useEffect(() => {
     void reloadHidden();
-  }, [reloadHidden]);
+  }, [reloadHidden, hiddenConnectionRevision]);
 
-  /** 切换 agent 时也要重置隐藏文件夹 UI 状态。 */
-  useEffect(() => {
-    setHiddenPwModalOpen(false);
-    setHiddenAttemptCount(0);
-    setHiddenReaction(null);
-    setHiddenShake(false);
-    setHiddenPwError(null);
-    setInHiddenView(false);
-    setHiddenSeedError(null);
-    setHiddenManualOpen(false);
-    setHiddenManualError(null);
-  }, [ownerAgentId]);
 
   const selectedFolder = useMemo(
     () => (selectedFolderId ? folders.find((f) => f.id === selectedFolderId) ?? null : null),
@@ -929,7 +971,18 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
   };
 
   const handleGenerateHiddenSeeds = async () => {
-    if (!ownerAgentId || !ownerAgent || hiddenSeedBusy) return;
+    if (!ownerAgentId || !ownerAgent || hiddenSeedOperationRef.current) return;
+    const operation = {};
+    hiddenSeedOperationRef.current = operation;
+    const contextSeq = hiddenContextSeqRef.current;
+    const resolvedConnection = resolveServerConnection(useStore.getState());
+    const connection = resolvedConnection ? { ...resolvedConnection } : undefined;
+    const connectionKey = JSON.stringify(connection);
+    const isCurrent = () => hiddenSeedOperationRef.current === operation
+      && contextSeq === hiddenContextSeqRef.current
+      && JSON.stringify(resolveServerConnection(useStore.getState()) ?? undefined) === connectionKey;
+    // A load started before this generation cannot overwrite its saved results.
+    hiddenReloadSeqRef.current += 1;
     setHiddenSeedBusy(true);
     setHiddenSeedError(null);
     try {
@@ -942,6 +995,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
       // 人物标题与正文共用本次允许的有界选择，避免从原始列表绕过来源/范围过滤。
       const selectedLoreIds = new Set(stableLore.entries.map((entry) => entry.id));
       const drafts = await generateHiddenSeedsWithAI({
+        connection,
         agent: ownerAgent,
         profile: ownerProfile,
         stableLoreBlock: formatXingyeLoreRuntimeContextBlock(stableLore),
@@ -952,23 +1006,33 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
         existingEntries: hiddenEntries,
         count: 3,
       });
+      if (!isCurrent()) return;
       const appended: XingyeHiddenFileEntry[] = [];
       for (const draft of drafts) {
+        if (!isCurrent()) return;
         const entry = await appendHiddenEntry(ownerAgentId, {
           kind: draft.kind,
           title: draft.title,
           body: draft.body,
           source: 'ai_seed',
-        });
+        }, connection);
+        // Do not cancel an already-started save; only its current UI may update.
+        if (!isCurrent()) return;
         appended.push(entry);
+        const saved = appended.slice();
+        const ids = new Set(saved.map((item) => item.id));
+        setHiddenEntries((prev) => [...saved, ...prev.filter((item) => !ids.has(item.id))]);
       }
-      const next = await markHiddenFolderSeedGenerated(ownerAgentId);
-      setHiddenState(next);
-      setHiddenEntries((prev) => [...appended, ...prev]);
+      if (!isCurrent()) return;
+      const next = await markHiddenFolderSeedGenerated(ownerAgentId, connection);
+      if (isCurrent()) setHiddenState(next);
     } catch (err) {
-      setHiddenSeedError(err instanceof Error ? err.message : String(err));
+      if (isCurrent()) setHiddenSeedError(err instanceof Error ? err.message : String(err));
     } finally {
-      setHiddenSeedBusy(false);
+      if (isCurrent()) {
+        hiddenSeedOperationRef.current = null;
+        setHiddenSeedBusy(false);
+      }
     }
   };
 

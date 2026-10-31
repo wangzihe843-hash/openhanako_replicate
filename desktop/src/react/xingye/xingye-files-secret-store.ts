@@ -1,8 +1,16 @@
+import type { ServerConnection } from '../services/server-connection';
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 
 const backend = createAgentXingyeStorageBackend(postXingyeStorage);
+
+// Seed operations retain their original transport across every awaited read/write.
+function hiddenBackend(connection?: ServerConnection) {
+  return connection
+    ? createAgentXingyeStorageBackend((body) => postXingyeStorage(body, connection))
+    : backend;
+}
 
 /** HANA_HOME/agents/{agentId}/xingye/ 下的相对路径。 */
 export const XINGYE_FILES_HIDDEN_STATE_JSON = 'files/hidden.json';
@@ -104,11 +112,11 @@ function normalizeState(value: unknown, expectedAgentId: string): XingyeHiddenFo
   return { agentId, locked, passwordHash, candidateLabel, lastUnlockedAt, lockedAt, seedGenerated, updatedAt };
 }
 
-export async function readHiddenFolderState(agentId: string): Promise<XingyeHiddenFolderState> {
+export async function readHiddenFolderState(agentId: string, connection?: ServerConnection): Promise<XingyeHiddenFolderState> {
   const aid = agentId.trim();
   if (!aid) return defaultState('');
   try {
-    const raw = await backend.readJson<unknown>(aid, XINGYE_FILES_HIDDEN_STATE_JSON);
+    const raw = await hiddenBackend(connection).readJson<unknown>(aid, XINGYE_FILES_HIDDEN_STATE_JSON);
     if (raw == null) return defaultState(aid);
     return normalizeState(raw, aid) ?? defaultState(aid);
   } catch {
@@ -116,8 +124,8 @@ export async function readHiddenFolderState(agentId: string): Promise<XingyeHidd
   }
 }
 
-async function persistHiddenFolderState(agentId: string, state: XingyeHiddenFolderState): Promise<void> {
-  await backend.writeJson(agentId, XINGYE_FILES_HIDDEN_STATE_JSON, state);
+async function persistHiddenFolderState(agentId: string, state: XingyeHiddenFolderState, connection?: ServerConnection): Promise<void> {
+  await hiddenBackend(connection).writeJson(agentId, XINGYE_FILES_HIDDEN_STATE_JSON, state);
 }
 
 /**
@@ -159,13 +167,14 @@ export type SetHiddenFolderPasswordInput = {
 export async function setHiddenFolderPassword(
   agentId: string,
   input: SetHiddenFolderPasswordInput,
+  connection?: ServerConnection,
 ): Promise<XingyeHiddenFolderState> {
   const aid = assertAgentId(agentId, '锁定隐藏文件夹');
   const password = input.password.trim();
   if (!password) throw new Error('锁定失败：候选密码为空。');
   const passwordHash = await hashPassword(password);
   const nowIso = new Date().toISOString();
-  const previous = await readHiddenFolderState(aid);
+  const previous = await readHiddenFolderState(aid, connection);
   const next: XingyeHiddenFolderState = {
     ...previous,
     agentId: aid,
@@ -175,7 +184,7 @@ export async function setHiddenFolderPassword(
     lockedAt: nowIso,
     updatedAt: nowIso,
   };
-  await persistHiddenFolderState(aid, next);
+  await persistHiddenFolderState(aid, next, connection);
   return next;
 }
 
@@ -224,16 +233,16 @@ export async function attemptUnlock(
   return { ok: true, state: next };
 }
 
-export async function markHiddenFolderSeedGenerated(agentId: string): Promise<XingyeHiddenFolderState> {
+export async function markHiddenFolderSeedGenerated(agentId: string, connection?: ServerConnection): Promise<XingyeHiddenFolderState> {
   const aid = assertAgentId(agentId, '标记种子已生成');
-  const state = await readHiddenFolderState(aid);
+  const state = await readHiddenFolderState(aid, connection);
   const next: XingyeHiddenFolderState = {
     ...state,
     agentId: aid,
     seedGenerated: true,
     updatedAt: new Date().toISOString(),
   };
-  await persistHiddenFolderState(aid, next);
+  await persistHiddenFolderState(aid, next, connection);
   return next;
 }
 
@@ -330,11 +339,11 @@ function normalizeEntryRow(value: unknown, expectedAgentId: string): XingyeHidde
   };
 }
 
-export async function listHiddenEntries(agentId: string): Promise<XingyeHiddenFileEntry[]> {
+export async function listHiddenEntries(agentId: string, connection?: ServerConnection): Promise<XingyeHiddenFileEntry[]> {
   const aid = agentId.trim();
   if (!aid) return [];
   try {
-    const rows = await backend.listJsonl<unknown>(aid, XINGYE_FILES_HIDDEN_ENTRIES_JSONL);
+    const rows = await hiddenBackend(connection).listJsonl<unknown>(aid, XINGYE_FILES_HIDDEN_ENTRIES_JSONL);
     return rows
       .map((row) => normalizeEntryRow(row, aid))
       .filter((row): row is XingyeHiddenFileEntry => Boolean(row))
@@ -352,6 +361,7 @@ export async function listHiddenEntries(agentId: string): Promise<XingyeHiddenFi
 export async function appendHiddenEntry(
   agentId: string,
   input: XingyeHiddenFileEntryDraft,
+  connection?: ServerConnection,
 ): Promise<XingyeHiddenFileEntry> {
   const aid = assertAgentId(agentId, '保存隐藏条目');
   const title = input.title.trim().slice(0, 160);
@@ -370,7 +380,7 @@ export async function appendHiddenEntry(
     createdAt: nowIso,
     updatedAt: nowIso,
   };
-  await backend.appendJsonl(aid, XINGYE_FILES_HIDDEN_ENTRIES_JSONL, entry);
+  await hiddenBackend(connection).appendJsonl(aid, XINGYE_FILES_HIDDEN_ENTRIES_JSONL, entry);
   return entry;
 }
 

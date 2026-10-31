@@ -1,4 +1,5 @@
 import { hanaFetch } from '../hooks/use-hana-fetch';
+import type { ServerConnection } from '../services/server-connection';
 import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import type { XingyeLoreEntry } from './xingye-lore-store';
@@ -103,6 +104,7 @@ export async function generateHiddenSeedsWithAI(params: {
   existingEntries?: XingyeHiddenFileEntry[] | null;
   count?: number;
   timeoutMs?: number;
+  connection?: ServerConnection;
 }): Promise<XingyeHiddenSeedDraft[]> {
   const { agent, profile } = params;
   const count = params.count ?? 3;
@@ -122,6 +124,7 @@ export async function generateHiddenSeedsWithAI(params: {
   });
 
   const response = await hanaFetch('/api/xingye/phone-generate', {
+    connection: params.connection,
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     timeout: timeoutMs,

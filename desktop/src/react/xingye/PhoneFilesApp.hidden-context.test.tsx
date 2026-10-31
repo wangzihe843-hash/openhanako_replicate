@@ -44,11 +44,13 @@ vi.mock('./xingye-persistence', () => ({
     setItem: (key: string, value: string) => { mocks.storage.set(key, value); },
   }),
 }));
-vi.mock('../stores', () => ({
-  useStore: (selector: (state: { userName: string; stagedChatQuote: null; stageChatQuote: () => void }) => unknown) => selector({
-    userName: '测试用户', stagedChatQuote: null, stageChatQuote: () => undefined,
-  }),
-}));
+vi.mock('../stores', () => {
+  const state = { userName: '测试用户', stagedChatQuote: null, stageChatQuote: () => undefined };
+  return { useStore: Object.assign(
+    (selector: (value: typeof state) => unknown) => selector(state),
+    { getState: () => state, subscribe: () => () => undefined },
+  ) };
+});
 
 import { PhoneFilesApp } from './PhoneFilesApp';
 import { XINGYE_LORE_ENTRIES_STORAGE_KEY } from './xingye-lore-store';
@@ -115,7 +117,7 @@ describe('hidden drawer lore reaches the real phone-generate prompt', () => {
     expect(prompt).toContain(constraint);
     expect(prompt).toContain('TITLE_npc');
     expect(prompt).toContain('CONFIRMED_CONTACT');
-    expect(mocks.appendHiddenEntry).toHaveBeenCalledWith(agent.id, expect.objectContaining({ title: '夜航计划', source: 'ai_seed' }));
+    expect(mocks.appendHiddenEntry).toHaveBeenCalledWith(agent.id, expect.objectContaining({ title: '夜航计划', source: 'ai_seed' }), undefined);
   });
 
   it('excludes forbidden lore titles and bodies from every final prompt block', async () => {
