@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '../types';
 import styles from './XingyeShell.module.css';
 import {
@@ -93,6 +93,9 @@ type DiscoveryResult = BookSearchResult & {
 };
 
 type AppMode = 'list' | 'book_form' | 'note_form' | 'discover' | 'annotation';
+
+// 每次进入 owner 都创建新标识；A → B → A 不能复用第一次 A 的异步回调。
+type ReadingOwnerLifetime = { ownerAgentId: string };
 
 type AnnotationStatus = 'idle' | 'suggestion_loading' | 'generating' | 'preview' | 'error';
 
@@ -333,14 +336,19 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
   const [initNotice, setInitNotice] = useState<string | null>(null);
   /** 跨角色 stale-write 守卫：AgentPhonePanel 原地换角色（无 key），异步 reload 必须带序号守卫。 */
   const reloadSeqRef = useRef(0);
+  const ownerLifetimeRef = useRef<ReadingOwnerLifetime | null>(null);
+  const loadedLifetimeRef = useRef<ReadingOwnerLifetime | null>(null);
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (lifetime = ownerLifetimeRef.current) => {
+    // 旧业务回调不能借新 reload 序号重新取得当前页面的写入权。
+    if (!lifetime || lifetime !== ownerLifetimeRef.current || lifetime.ownerAgentId !== ownerAgentId) return;
     const seq = ++reloadSeqRef.current;
     if (!ownerAgentId) {
       setBooks([]);
       setNotes([]);
       setPendingDrafts([]);
       setDraftEdits({});
+      setLoading(false);
       return;
     }
     setLoading(true);
@@ -351,7 +359,8 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
         listAppEntries(ownerAgentId, READING_NOTES_APP_ID),
         listReadingNoteDrafts(ownerAgentId),
       ]);
-      if (seq !== reloadSeqRef.current) return; // 被更晚一轮 reload / 换角色取代，丢弃本次结果
+      if (lifetime !== ownerLifetimeRef.current || seq !== reloadSeqRef.current) return;
+      loadedLifetimeRef.current = lifetime;
       setBooks(bookRows.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)));
       setNotes(noteRows
         .map(normalizeReadingNote)
@@ -359,10 +368,10 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
         .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)));
       setPendingDrafts(draftRows);
     } catch (err) {
-      if (seq !== reloadSeqRef.current) return;
+      if (lifetime !== ownerLifetimeRef.current || seq !== reloadSeqRef.current) return;
       setMessage(`加载失败：${err instanceof Error ? err.message : String(err)}`);
     } finally {
-      if (seq === reloadSeqRef.current) setLoading(false);
+      if (lifetime === ownerLifetimeRef.current && seq === reloadSeqRef.current) setLoading(false);
     }
   }, [ownerAgentId]);
 
@@ -476,7 +485,18 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
     }
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const lifetime: ReadingOwnerLifetime = { ownerAgentId };
+    ownerLifetimeRef.current = lifetime;
+    loadedLifetimeRef.current = null;
+    setBooks([]);
+    setNotes([]);
+    setPendingDrafts([]);
+    setDraftEdits({});
+    setDraftBusyId(null);
+    setDraftError(null);
+    setBookDraft(emptyBookDraft());
+    setNoteDraft(emptyNoteDraft());
     setSelectedBookId(null);
     setSelectedNoteId(null);
     setMode('list');
@@ -496,10 +516,13 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
     setAnnotationSuggestionError(null);
     setAnnotationSaving(false);
     initialBootstrapTriedRef.current = null;
+    setInitBusy(false);
     setInitError(null);
     setInitNotice(null);
-    void reload();
+    void reload(lifetime);
     return () => {
+      ownerLifetimeRef.current = null;
+      loadedLifetimeRef.current = null;
       reloadSeqRef.current += 1; // 卸载 / 换 agent 时作废在途 reload
     };
     // ownerProfile/agent-name changes don't need to reset discovery; only the agent identity does.
@@ -514,9 +537,9 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
    *    散布到过去），让列表呈现真实读书史的时间感，而不是清一色「刚刚」。
    *  - 成功才写 initializedAt——失败不写，用户下次打开会重试（同一 mount 周期不反复触发）。
    */
-  const runInitialBootstrap = useCallback(async () => {
-    if (!ownerAgent || !ownerAgentId) return;
-    const aid = ownerAgentId;
+  const runInitialBootstrap = useCallback(async (lifetime: ReadingOwnerLifetime) => {
+    if (!ownerAgent || !ownerAgentId || lifetime !== ownerLifetimeRef.current) return;
+    const aid = lifetime.ownerAgentId;
     setInitBusy(true);
     setInitError(null);
     setInitNotice(null);
@@ -527,7 +550,7 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
         ownerProfile: ownerProfile ?? null,
         desiredBookCount,
       });
-      if (aid !== ownerAgentId) return; // 换角色了，丢弃
+      if (lifetime !== ownerLifetimeRef.current) return; // 已离开这次 owner 生命周期，丢弃未落盘结果
       let bookCount = 0;
       let noteCount = 0;
       for (const { book, annotations } of result) {
@@ -572,19 +595,22 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
         }
       }
       await saveHistoryState(aid, 'reading_notes', { initializedAt: new Date().toISOString() });
-      if (aid !== ownerAgentId) return;
+      if (lifetime !== ownerLifetimeRef.current) return;
       setInitNotice(`已为 TA 铺好 ${bookCount} 本书、${noteCount} 条批注`);
-      await reload();
+      await reload(lifetime);
     } catch (e) {
-      if (aid !== ownerAgentId) return;
+      if (lifetime !== ownerLifetimeRef.current) return;
       setInitError(`初始化阅读笔记失败：${e instanceof Error ? e.message : String(e)}（下次打开会重试）`);
     } finally {
-      if (aid === ownerAgentId) setInitBusy(false);
+      if (lifetime === ownerLifetimeRef.current) setInitBusy(false);
     }
   }, [ownerAgent, ownerAgentId, ownerProfile, reload]);
 
   useEffect(() => {
-    if (!ownerAgent || !ownerAgentId) return;
+    const lifetime = ownerLifetimeRef.current;
+    if (!ownerAgent || !ownerAgentId || !lifetime || lifetime.ownerAgentId !== ownerAgentId) return;
+    // 只用本次 owner 成功读到的列表决定是否初始化，不能读取换角色前的快照。
+    if (loadedLifetimeRef.current !== lifetime) return;
     if (loading) return;
     if (initBusy) return;
     if (initialBootstrapTriedRef.current === ownerAgentId) return;
@@ -597,6 +623,7 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
     (async () => {
       try {
         const state = await loadHistoryState(ownerAgentId, 'reading_notes');
+        if (lifetime !== ownerLifetimeRef.current) return;
         if (state.initializedAt) return;
         // 二次确认（首挂载时 reload 可能还没跑完，外层计数不能当真）：直接落盘问一次。
         // 也覆盖老用户——加这功能前已有书/批注但没 marker：只补 marker、不真跑生成。
@@ -605,14 +632,16 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
           listAppEntries(ownerAgentId, READING_NOTES_APP_ID),
           listReadingNoteDrafts(ownerAgentId),
         ]);
+        if (lifetime !== ownerLifetimeRef.current) return;
         if (freshBooks.length > 0 || freshNotes.length > 0 || freshDrafts.length > 0) {
           await saveHistoryState(ownerAgentId, 'reading_notes', {
             initializedAt: new Date().toISOString(),
           });
           return;
         }
-        await runInitialBootstrap();
+        await runInitialBootstrap(lifetime);
       } catch (err) {
+        if (lifetime !== ownerLifetimeRef.current) return;
         console.warn('[PhoneReadingNotesApp] init bootstrap failed:', err);
       }
     })();
