@@ -210,8 +210,8 @@ beforeEach(() => {
     const gate = h.gates.find(item => !item.used && item.matches(request));
     if (gate) { gate.used = true; gate.enter(); await gate.promise; }
     let data: unknown;
-    if (body.action === 'readJson') data = { data: snapshot };
-    else if (body.action === 'listJsonl') data = { records: snapshot };
+    if (body.action === 'readJson') data = { ok: true, data: snapshot };
+    else if (body.action === 'listJsonl') data = { ok: true, records: snapshot };
     else if (body.action === 'appendJsonl') { h.rows.set(key, [...(h.rows.get(key) ?? []), body.data as XingyeHiddenFileEntry]); data = { ok: true }; }
     else if (body.action === 'writeJson') { h.states.set(key, structuredClone(body.data) as XingyeHiddenFolderState); data = { ok: true }; }
     else throw Error(`unexpected storage ${body.action}`);

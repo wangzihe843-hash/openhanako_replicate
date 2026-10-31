@@ -379,6 +379,8 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
   const [inHiddenView, setInHiddenView] = useState(false);
   const [hiddenSeedBusy, setHiddenSeedBusy] = useState(false);
   const [hiddenSeedError, setHiddenSeedError] = useState<string | null>(null);
+  const [hiddenSeedNeedsMark, setHiddenSeedNeedsMark] = useState(false);
+  const [hiddenLoadError, setHiddenLoadError] = useState<string | null>(null);
   /** 「我也想加一条」弹窗状态。 */
   const [hiddenManualOpen, setHiddenManualOpen] = useState(false);
   const [hiddenManualTitle, setHiddenManualTitle] = useState('');
@@ -420,9 +422,11 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
       hiddenReloadSeqRef.current += 1;
       hiddenSeedOperationRef.current = null;
       setHiddenState(null);
+      setHiddenLoadError(null);
       setHiddenEntries([]);
       setHiddenSeedBusy(false);
       setHiddenSeedError(null);
+      setHiddenSeedNeedsMark(false);
       setHiddenPwModalOpen(false);
       setHiddenAttemptCount(0);
       setHiddenReaction(null);
@@ -505,7 +509,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
     try {
       const [state, entries] = await Promise.all([
         readHiddenFolderState(ownerAgentId, connection),
-        listHiddenEntries(ownerAgentId, connection),
+        listHiddenEntries(ownerAgentId, connection, true),
       ]);
       if (!isCurrent()) return;
       let stateOut = state;
@@ -531,9 +535,17 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
         }
       }
       if (!isCurrent()) return;
+      setHiddenLoadError(null);
       setHiddenState(stateOut);
       setHiddenEntries(entries);
+      setHiddenSeedNeedsMark((pending) => !stateOut.seedGenerated
+        && (pending || entries.some((entry) => entry.source === 'ai_seed')));
     } catch (err) {
+      if (!isCurrent()) return;
+      setHiddenState(null);
+      setHiddenEntries([]);
+      setInHiddenView(false);
+      setHiddenLoadError(err instanceof Error ? err.message : String(err));
       console.warn('[PhoneFilesApp] reloadHidden failed:', err);
     }
   }, [ownerAgentId, ownerAgent, ownerProfile, userName]);
@@ -985,49 +997,79 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
     hiddenReloadSeqRef.current += 1;
     setHiddenSeedBusy(true);
     setHiddenSeedError(null);
+    let savingStarted = hiddenSeedNeedsMark;
     try {
-      const storage = getXingyePersistenceStorage();
-      const stableLore = collectXingyeLoreRuntimeContext(ownerAgentId, {
-        includeAlways: true,
-        includeKeyword: false,
-        maxChars: 2_000,
-      }, storage);
-      // 人物标题与正文共用本次允许的有界选择，避免从原始列表绕过来源/范围过滤。
-      const selectedLoreIds = new Set(stableLore.entries.map((entry) => entry.id));
-      const drafts = await generateHiddenSeedsWithAI({
-        connection,
-        agent: ownerAgent,
-        profile: ownerProfile,
-        stableLoreBlock: formatXingyeLoreRuntimeContextBlock(stableLore),
-        loreEntries: listLoreEntries(ownerAgentId, storage).filter((entry) => selectedLoreIds.has(entry.id)),
-        virtualContacts: getConfirmedVirtualContacts(ownerAgentId, storage),
-        // 反重复 anchor + 入库前兜底用——首次解锁通常为空，但 markHiddenFolderSeedGenerated
-        // 之外的再次触发（例如未来的「再生成几条」按钮）会有历史条目要避开。
-        existingEntries: hiddenEntries,
-        count: 3,
-      });
-      if (!isCurrent()) return;
-      const appended: XingyeHiddenFileEntry[] = [];
-      for (const draft of drafts) {
+      if (hiddenSeedNeedsMark) {
+        // An uncertain save is read back before any retry; never generate or append twice.
+        const saved = await listHiddenEntries(ownerAgentId, connection, true);
         if (!isCurrent()) return;
-        const entry = await appendHiddenEntry(ownerAgentId, {
-          kind: draft.kind,
-          title: draft.title,
-          body: draft.body,
-          source: 'ai_seed',
-        }, connection);
-        // Do not cancel an already-started save; only its current UI may update.
+        setHiddenEntries(saved);
+        if (!saved.some((entry) => entry.source === 'ai_seed')) {
+          throw new Error('尚未确认保存结果，请稍后再次核对。');
+        }
+      } else {
+        const storage = getXingyePersistenceStorage();
+        const stableLore = collectXingyeLoreRuntimeContext(ownerAgentId, {
+          includeAlways: true,
+          includeKeyword: false,
+          maxChars: 2_000,
+        }, storage);
+        // 人物标题与正文共用本次允许的有界选择，避免从原始列表绕过来源/范围过滤。
+        const selectedLoreIds = new Set(stableLore.entries.map((entry) => entry.id));
+        const drafts = await generateHiddenSeedsWithAI({
+          connection,
+          agent: ownerAgent,
+          profile: ownerProfile,
+          stableLoreBlock: formatXingyeLoreRuntimeContextBlock(stableLore),
+          loreEntries: listLoreEntries(ownerAgentId, storage).filter((entry) => selectedLoreIds.has(entry.id)),
+          virtualContacts: getConfirmedVirtualContacts(ownerAgentId, storage),
+          // 反重复 anchor + 入库前兜底用——首次解锁通常为空，但 markHiddenFolderSeedGenerated
+          // 之外的再次触发（例如未来的「再生成几条」按钮）会有历史条目要避开。
+          existingEntries: hiddenEntries,
+          count: 3,
+        });
         if (!isCurrent()) return;
-        appended.push(entry);
-        const saved = appended.slice();
-        const ids = new Set(saved.map((item) => item.id));
-        setHiddenEntries((prev) => [...saved, ...prev.filter((item) => !ids.has(item.id))]);
+        const appended: XingyeHiddenFileEntry[] = [];
+        for (const draft of drafts) {
+          if (!isCurrent()) return;
+          savingStarted = true;
+          const entry = await appendHiddenEntry(ownerAgentId, {
+            kind: draft.kind,
+            title: draft.title,
+            body: draft.body,
+            source: 'ai_seed',
+          }, connection);
+          // Do not cancel an already-started save; only its current UI may update.
+          if (!isCurrent()) return;
+          appended.push(entry);
+          const saved = appended.slice();
+          const ids = new Set(saved.map((item) => item.id));
+          setHiddenEntries((prev) => [...saved, ...prev.filter((item) => !ids.has(item.id))]);
+        }
       }
       if (!isCurrent()) return;
-      const next = await markHiddenFolderSeedGenerated(ownerAgentId, connection);
-      if (isCurrent()) setHiddenState(next);
+      setHiddenSeedNeedsMark(true);
+      const next = await markHiddenFolderSeedGenerated(ownerAgentId, connection, isCurrent);
+      if (isCurrent()) {
+        setHiddenState(next);
+        setHiddenSeedNeedsMark(false);
+      }
     } catch (err) {
-      if (isCurrent()) setHiddenSeedError(err instanceof Error ? err.message : String(err));
+      if (savingStarted && isCurrent()) {
+        setHiddenSeedNeedsMark(true);
+        try {
+          const saved = await listHiddenEntries(ownerAgentId, connection, true);
+          if (!isCurrent()) return;
+          setHiddenEntries(saved);
+          // Even an empty snapshot cannot prove a rejected append will never commit.
+          setHiddenSeedNeedsMark(true);
+        } catch {
+          // Unknown outcome: keep the read-only recovery action until it can be verified.
+        }
+      }
+      if (isCurrent()) {
+        setHiddenSeedError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       if (isCurrent()) {
         hiddenSeedOperationRef.current = null;
@@ -1636,6 +1678,12 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
                       </button>
                     );
                   })}
+                  {hiddenLoadError ? (
+                    <div role="alert" data-testid="phone-files-hidden-load-error">
+                      <p>{hiddenLoadError}</p>
+                      <button type="button" onClick={() => void reloadHidden()}>重试读取抽屉</button>
+                    </div>
+                  ) : null}
                   {hiddenState ? (
                     <HiddenFolderRow
                       hiddenState={hiddenState}
@@ -1854,6 +1902,7 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
             hiddenState={hiddenState}
             seedBusy={hiddenSeedBusy}
             seedError={hiddenSeedError}
+            seedNeedsMark={hiddenSeedNeedsMark}
             onGenerateSeeds={() => void handleGenerateHiddenSeeds()}
             onAddManual={openHiddenManual}
             onDelete={(entry) => void handleDeleteHiddenEntry(entry)}

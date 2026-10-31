@@ -3,12 +3,33 @@ import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
 import { appendXingyeEvent, type XingyeEventInput } from './xingye-event-log';
 
-const backend = createAgentXingyeStorageBackend(postXingyeStorage);
+// A failed or malformed read is not proof that the drawer is uninitialized.
+// Keep this stricter acknowledgement contract local to hidden-folder storage.
+async function postHiddenStorage(body: Record<string, unknown>, connection?: ServerConnection) {
+  const response = await postXingyeStorage(body, connection);
+  if (response?.ok !== true) throw new Error('隐藏抽屉存储响应无效，请重试。');
+  if (body.action === 'readJson') {
+    if (response.missing !== undefined && typeof response.missing !== 'boolean') {
+      throw new Error('隐藏抽屉缺失状态响应无效。');
+    }
+    if (response.missing === true) {
+      if (response.data !== null) throw new Error('隐藏抽屉缺失状态响应无效。');
+    } else if (!Object.prototype.hasOwnProperty.call(response, 'data') || response.data == null) {
+      throw new Error('隐藏抽屉状态读取不完整。');
+    }
+  }
+  if (body.action === 'listJsonl' && !Array.isArray(response.records)) {
+    throw new Error('隐藏抽屉条目读取不完整。');
+  }
+  return response;
+}
+
+const backend = createAgentXingyeStorageBackend(postHiddenStorage);
 
 // Seed operations retain their original transport across every awaited read/write.
 function hiddenBackend(connection?: ServerConnection) {
   return connection
-    ? createAgentXingyeStorageBackend((body) => postXingyeStorage(body, connection))
+    ? createAgentXingyeStorageBackend((body) => postHiddenStorage(body, connection))
     : backend;
 }
 
@@ -102,6 +123,11 @@ function normalizeState(value: unknown, expectedAgentId: string): XingyeHiddenFo
   const raw = value as Record<string, unknown>;
   const agentId = typeof raw.agentId === 'string' ? raw.agentId.trim() : '';
   if (agentId !== expectedAgentId) return null;
+  if (typeof raw.locked !== 'boolean' || typeof raw.passwordHash !== 'string'
+    || typeof raw.candidateLabel !== 'string' || typeof raw.seedGenerated !== 'boolean'
+    || typeof raw.updatedAt !== 'string' || !raw.updatedAt
+    || (raw.lastUnlockedAt !== undefined && typeof raw.lastUnlockedAt !== 'string')
+    || (raw.lockedAt !== undefined && typeof raw.lockedAt !== 'string')) return null;
   const locked = typeof raw.locked === 'boolean' ? raw.locked : true;
   const passwordHash = typeof raw.passwordHash === 'string' ? raw.passwordHash.trim() : '';
   const candidateLabel = typeof raw.candidateLabel === 'string' ? raw.candidateLabel.trim().slice(0, 120) : '';
@@ -115,13 +141,11 @@ function normalizeState(value: unknown, expectedAgentId: string): XingyeHiddenFo
 export async function readHiddenFolderState(agentId: string, connection?: ServerConnection): Promise<XingyeHiddenFolderState> {
   const aid = agentId.trim();
   if (!aid) return defaultState('');
-  try {
-    const raw = await hiddenBackend(connection).readJson<unknown>(aid, XINGYE_FILES_HIDDEN_STATE_JSON);
-    if (raw == null) return defaultState(aid);
-    return normalizeState(raw, aid) ?? defaultState(aid);
-  } catch {
-    return defaultState(aid);
-  }
+  const raw = await hiddenBackend(connection).readJson<unknown>(aid, XINGYE_FILES_HIDDEN_STATE_JSON);
+  if (raw == null) return defaultState(aid);
+  const state = normalizeState(raw, aid);
+  if (!state) throw new Error('隐藏抽屉状态损坏，已保留原数据。');
+  return state;
 }
 
 async function persistHiddenFolderState(agentId: string, state: XingyeHiddenFolderState, connection?: ServerConnection): Promise<void> {
@@ -233,9 +257,15 @@ export async function attemptUnlock(
   return { ok: true, state: next };
 }
 
-export async function markHiddenFolderSeedGenerated(agentId: string, connection?: ServerConnection): Promise<XingyeHiddenFolderState> {
+export async function markHiddenFolderSeedGenerated(
+  agentId: string,
+  connection?: ServerConnection,
+  isCurrent: () => boolean = () => true,
+): Promise<XingyeHiddenFolderState> {
   const aid = assertAgentId(agentId, '标记种子已生成');
   const state = await readHiddenFolderState(aid, connection);
+  if (!isCurrent()) throw new Error('隐藏抽屉操作已失效。');
+  if (state.seedGenerated) return state;
   const next: XingyeHiddenFolderState = {
     ...state,
     agentId: aid,
@@ -339,13 +369,18 @@ function normalizeEntryRow(value: unknown, expectedAgentId: string): XingyeHidde
   };
 }
 
-export async function listHiddenEntries(agentId: string, connection?: ServerConnection): Promise<XingyeHiddenFileEntry[]> {
+export async function listHiddenEntries(
+  agentId: string,
+  connection?: ServerConnection,
+  strict = false,
+): Promise<XingyeHiddenFileEntry[]> {
   const aid = agentId.trim();
   if (!aid) return [];
   try {
     const rows = await hiddenBackend(connection).listJsonl<unknown>(aid, XINGYE_FILES_HIDDEN_ENTRIES_JSONL);
-    return rows
-      .map((row) => normalizeEntryRow(row, aid))
+    const entries = rows.map((row) => normalizeEntryRow(row, aid));
+    if (strict && entries.some((row) => !row)) throw new Error('隐藏抽屉条目损坏，无法确认保存结果。');
+    return entries
       .filter((row): row is XingyeHiddenFileEntry => Boolean(row))
       .sort((a, b) => {
         const ta = Date.parse(a.updatedAt ?? a.createdAt);
@@ -353,7 +388,8 @@ export async function listHiddenEntries(agentId: string, connection?: ServerConn
         if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return tb - ta;
         return a.id.localeCompare(b.id);
       });
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     return [];
   }
 }

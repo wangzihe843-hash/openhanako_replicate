@@ -316,6 +316,7 @@ export interface HiddenFolderViewProps {
   hiddenState: XingyeHiddenFolderState | null;
   seedBusy: boolean;
   seedError: string | null;
+  seedNeedsMark?: boolean;
   onGenerateSeeds: () => void;
   onAddManual: () => void;
   onDelete: (entry: XingyeHiddenFileEntry) => void;
@@ -351,6 +352,7 @@ export function HiddenFolderView(props: HiddenFolderViewProps) {
     hiddenState,
     seedBusy,
     seedError,
+    seedNeedsMark = false,
     onGenerateSeeds,
     onAddManual,
     onDelete,
@@ -430,7 +432,7 @@ export function HiddenFolderView(props: HiddenFolderViewProps) {
       {entries.length === 0 && !seedBusy ? (
         <div className={emptyClassName} data-testid="phone-files-hidden-empty">
           <p>这里还是空的——但 TA 看起来本来想放东西的。</p>
-          {!seedGenerated ? (
+          {!seedGenerated && !seedNeedsMark ? (
             <button
               type="button"
               onClick={onGenerateSeeds}
@@ -448,17 +450,25 @@ export function HiddenFolderView(props: HiddenFolderViewProps) {
             >
               让 TA 自己写几条
             </button>
-          ) : (
+          ) : seedGenerated ? (
             <p style={{ marginTop: 8, fontSize: 12, color: '#8a8a92' }}>
               TA 已经写过一次了，剩下的请你自己加。
             </p>
-          )}
-          {seedError ? (
-            <p style={{ marginTop: 8, fontSize: 12, color: '#a13b3b' }} role="alert">
-              {seedError}
-            </p>
           ) : null}
+
         </div>
+      ) : null}
+
+      {seedError ? (
+        <p style={{ margin: '8px 14px', fontSize: 12, color: '#a13b3b' }} role="alert">
+          {seedError}
+        </p>
+      ) : null}
+      {seedNeedsMark && !seedBusy ? (
+        <button type="button" onClick={onGenerateSeeds} data-testid="phone-files-hidden-seed-retry"
+          style={{ margin: '8px 14px' }}>
+          核对已保存内容并补记
+        </button>
       ) : null}
 
       {seedBusy ? (
@@ -467,7 +477,7 @@ export function HiddenFolderView(props: HiddenFolderViewProps) {
           data-testid="phone-files-hidden-seed-busy"
           style={{ color: '#5b5b66' }}
         >
-          TA 正在写……
+          {seedNeedsMark ? '正在核对保存结果……' : 'TA 正在写……'}
         </p>
       ) : null}
 
