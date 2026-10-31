@@ -538,7 +538,7 @@ export class DeferredResultStore {
       let migrated = false;
       for (const [k, v] of Object.entries(raw)) {
         const sessionRef = normalizeSessionRef(v, this._getSessionIdForPath);
-        const attemptId = textOrNull((v as any)?.attemptId);
+        const attemptId = textOrNull(v !== null && typeof v === "object" && "attemptId" in v ? v.attemptId : null);
         if (!attemptId) migrated = true;
         this._tasks.set(k, {
           delivered: false,

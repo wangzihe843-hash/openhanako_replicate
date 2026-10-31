@@ -17,6 +17,15 @@ import { readPinnedMemoryForContext, writePinnedMemoryItems } from '../lib/memor
 import { normalizeMemoryScope } from '../shared/memory-scope.ts';
 
 const cleanups: Array<() => Promise<void>> = [];
+type AssistantFixture = Extract<Parameters<SessionManager['appendMessage']>[0], { role: 'assistant' }>;
+function assistantMessage(text: string): AssistantFixture {
+  return {
+    role: 'assistant', content: [{ type: 'text', text }], api: 'openai-completions', provider: 'fixture', model: 'fixture',
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    stopReason: 'stop', timestamp: Date.now(),
+  };
+}
 beforeEach(() => vi.stubGlobal('fetch', () => { throw new Error('network forbidden in retry fixtures'); }));
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -32,9 +41,9 @@ function fixture(realm: 'legacy' | 'story' = 'story') {
   const manager = SessionManager.create(root, path.join(agentDir, 'sessions'));
   if (realm === 'story') manager.appendCustomEntry(SESSION_MEMORY_SCOPE_RECORD, { memoryScope });
   const retainedId = manager.appendMessage({ role: 'user', content: 'RETAINED QUESTION', timestamp: Date.now() });
-  manager.appendMessage({ role: 'assistant', content: [{ type: 'text', text: 'RETAINED ANSWER' }] } as any);
+  manager.appendMessage(assistantMessage('RETAINED ANSWER'));
   const inputId = manager.appendMessage({ role: 'user', content: 'RETRIED QUESTION', timestamp: Date.now() });
-  manager.appendMessage({ role: 'assistant', content: [{ type: 'text', text: 'OLD ANSWER' }] } as any);
+  manager.appendMessage(assistantMessage('OLD ANSWER'));
   const sessionPath = manager.getSessionFile()!;
   const manifestStore = new SessionManifestStore({ dbPath: path.join(root, 'manifest.db') });
   const manifest = manifestStore.createForPath({ sessionPath, ownerAgentId: agentId, domain: 'home' });
@@ -85,7 +94,8 @@ function fixture(realm: 'legacy' | 'story' = 'story') {
     resolveSessionOwnership: () => ({ agentId }), getAgent: () => ({ memoryTicker: ticker, summaryManager, factStore }),
     setSessionBranchHead: vi.fn((_file, head) => persistHead(head)), emitEvent: vi.fn(),
   };
-  const retry = (submit?: any) => retrySessionTurn(engine, { sessionId, target: { role: 'user', entryId: inputId } }, {
+  type RetrySubmit = (_engine: typeof engine, input: { beforeInputSideEffects: () => void }) => Promise<unknown>;
+  const retry = (submit?: RetrySubmit) => retrySessionTurn(engine, { sessionId, target: { role: 'user', entryId: inputId } }, {
     submit: submit || (async (_engine, input) => {
       input.beforeInputSideEffects();
       state.accepted++;
@@ -133,16 +143,18 @@ function fixture(realm: 'legacy' | 'story' = 'story') {
 
 function failWrite(file: string, { afterRename = false, persistent = false } = {}) {
   let failures = 0;
-  const name = afterRename ? 'renameSync' : 'writeFileSync';
-  const original = fs[name];
-  const spy = vi.spyOn(fs, name).mockImplementation(((source, ...args) => {
-    if (String(source) === `${file}.tmp` && (persistent || failures === 0)) {
-      failures++;
-      if (afterRename) (original as any)(source, ...args);
-      throw Object.assign(new Error('SYNTHETIC_PIN_WRITE_EIO'), { code: 'EIO' });
-    }
-    return (original as any)(source, ...args);
-  }) as any);
+  const rename = fs.renameSync, write = fs.writeFileSync;
+  const shouldFail = (source: fs.PathLike | number) => String(source) === `${file}.tmp` && (persistent || failures === 0);
+  const fail = () => { throw Object.assign(new Error('SYNTHETIC_PIN_WRITE_EIO'), { code: 'EIO' }); };
+  const spy = afterRename
+    ? vi.spyOn(fs, 'renameSync').mockImplementation((source, destination) => {
+      if (shouldFail(source)) { failures++; rename(source, destination); fail(); }
+      return rename(source, destination);
+    })
+    : vi.spyOn(fs, 'writeFileSync').mockImplementation((source, ...args) => {
+      if (shouldFail(source)) { failures++; fail(); }
+      return write(source, ...args);
+    });
   return { spy, failures: () => failures };
 }
 function rejectFacts(f) {
@@ -189,17 +201,23 @@ describe('Retry source write ownership and uncertain rename completion', () => {
   for (const step of [1, 2]) for (const phase of ['temp', 'rename-before', 'rename-after'] as const) {
     it(`restores source write ${step} at ${phase}, including fresh-process dependency fences`, async () => {
       const f = fixture(), before = fs.readFileSync(f.sources.manifestPath), old = f.sources.getSourceDependency(f.sessionId);
-      const method = phase === 'temp' ? 'writeFileSync' : 'renameSync', original = fs[method];
+      const write = fs.writeFileSync, rename = fs.renameSync;
       const failure = Object.assign(new Error(`SOURCE_${step}_${phase}`), { code: 'EIO' });
       let calls = 0, failed = false;
-      const spy = vi.spyOn(fs, method).mockImplementation(((file, ...args) => {
-        if (String(file) === `${f.sources.manifestPath}.tmp` && ++calls === step) {
-          failed = true;
-          if (phase === 'rename-after') (original as any)(file, ...args);
-          throw failure;
-        }
-        return (original as any)(file, ...args);
-      }) as any);
+      const shouldFail = (file: fs.PathLike | number) => String(file) === `${f.sources.manifestPath}.tmp` && ++calls === step;
+      const spy = phase === 'temp'
+        ? vi.spyOn(fs, 'writeFileSync').mockImplementation((file, ...args) => {
+          if (shouldFail(file)) { failed = true; throw failure; }
+          return write(file, ...args);
+        })
+        : vi.spyOn(fs, 'renameSync').mockImplementation((file, destination) => {
+          if (shouldFail(file)) {
+            failed = true;
+            if (phase === 'rename-after') rename(file, destination);
+            throw failure;
+          }
+          return rename(file, destination);
+        });
       await expect(f.retry()).rejects.toBe(failure);
       spy.mockRestore();
       expect(failed).toBe(true);
@@ -306,10 +324,10 @@ describe('Retry source write ownership and uncertain rename completion', () => {
       }
       return rename(src, dst);
     });
-    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation(((file, ...args) => {
+    const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation((file, ...args) => {
       if (blockRead && String(file) === f.sources.manifestPath) { readFailures++; throw new Error('SOURCE_REREAD_EIO'); }
-      return (read as any)(file, ...args);
-    }) as any);
+      return read(file, ...args);
+    });
     await expect(f.retry()).rejects.toMatchObject({ code: 'session_memory_rollback_failed', cause: failure,
       message: expect.stringContaining('SOURCE_REREAD_EIO') });
     readSpy.mockRestore(); renameSpy.mockRestore();
@@ -366,10 +384,10 @@ describe('Retry memory/pin compensation with real ticker, JSONL and SQLite', () 
   it.each(['legacy', 'story'] as const)('leaves all memory untouched when %s pin preparation cannot read JSON', async realm => {
     const f = fixture(realm), originalRead = fs.readFileSync;
     const invalidate = vi.spyOn(f.summaryManager, 'invalidateSession');
-    const spy = vi.spyOn(fs, 'readFileSync').mockImplementation(((file, ...args) => {
+    const spy = vi.spyOn(fs, 'readFileSync').mockImplementation((file, ...args) => {
       if (String(file) === f.files.json) throw Object.assign(new Error('SYNTHETIC_PIN_READ_EIO'), { code: 'EIO' });
-      return (originalRead as any)(file, ...args);
-    }) as any);
+      return originalRead(file, ...args);
+    });
     await expect(f.retry()).rejects.toThrow('SYNTHETIC_PIN_READ_EIO');
     expect(invalidate).not.toHaveBeenCalled();
     spy.mockRestore();
@@ -408,14 +426,14 @@ describe('Retry memory/pin compensation with real ticker, JSONL and SQLite', () 
   it('keeps partially written temporary pin bytes out of the authoritative state', async () => {
     const f = fixture(), write = fs.writeFileSync;
     let failed = false;
-    const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation(((file, ...args) => {
+    const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation((file, ...args) => {
       if (String(file) === `${f.files.json}.tmp` && !failed) {
         failed = true;
         write(file, '{partial');
         throw new Error('PARTIAL_TEMP_WRITE');
       }
-      return (write as any)(file, ...args);
-    }) as any);
+      return write(file, ...args);
+    });
     await expect(f.retry()).rejects.toThrow('PARTIAL_TEMP_WRITE');
     spy.mockRestore();
     f.assertRestored();
@@ -454,12 +472,14 @@ describe('Retry memory/pin compensation with real ticker, JSONL and SQLite', () 
 
   it.each(['legacy', 'story'] as const)('restores pins after the final %s fact transaction aborts', async realm => {
     const f = fixture(realm), beforeToken = f.sources.getSourceDependency(f.sessionId);
-    const original = realm === 'story' ? f.factStore.invalidateSourceEntries.bind(f.factStore) : f.factStore.deleteBySession.bind(f.factStore);
+    const invalidate = f.factStore.invalidateSourceEntries.bind(f.factStore), deleteBySession = f.factStore.deleteBySession.bind(f.factStore);
     let pinStateAtCommit;
-    const factSpy = vi.spyOn(f.factStore, realm === 'story' ? 'invalidateSourceEntries' : 'deleteBySession').mockImplementation(((...args) => {
-      if (realm === 'story') pinStateAtCommit = JSON.parse(fs.readFileSync(f.files.json, 'utf8')).items.find(pin => pin.id === 'retried').sourceStatus;
-      return (original as any)(...args);
-    }) as any);
+    const factSpy = realm === 'story'
+      ? vi.spyOn(f.factStore, 'invalidateSourceEntries').mockImplementation((...args) => {
+        pinStateAtCommit = JSON.parse(fs.readFileSync(f.files.json, 'utf8')).items.find(pin => pin.id === 'retried').sourceStatus;
+        return invalidate(...args);
+      })
+      : vi.spyOn(f.factStore, 'deleteBySession').mockImplementation((...args) => deleteBySession(...args));
     rejectFacts(f);
     await expect(f.retry()).rejects.toThrow('SYNTHETIC_FACT_FAILURE');
     expect(factSpy).toHaveBeenCalledTimes(1);
@@ -518,10 +538,10 @@ describe('Retry memory/pin compensation with real ticker, JSONL and SQLite', () 
     rejectFacts(f);
     const write = fs.writeFileSync;
     let jsonWrites = 0;
-    const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation(((file, ...args) => {
+    const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation((file, ...args) => {
       if (String(file) === `${f.files.json}.tmp` && ++jsonWrites === 2) throw new Error('PIN_RESTORE_FAILED');
-      return (write as any)(file, ...args);
-    }) as any);
+      return write(file, ...args);
+    });
     await expect(f.retry()).rejects.toMatchObject({ code: 'session_memory_rollback_failed', message: expect.stringContaining('PIN_RESTORE_FAILED') });
     spy.mockRestore();
     expect(f.summaryManager.getSummary(f.sessionId)?.summary).toBe('TRUSTED_OLD_SUMMARY');
@@ -546,8 +566,8 @@ describe('Retry memory/pin compensation with real ticker, JSONL and SQLite', () 
   it('keeps restored memory and cold history when both rollback marker and head writes fail', async () => {
     const f = fixture(), append = f.session.sessionManager.appendCustomEntry.bind(f.session.sessionManager);
     const fault = failWrite(f.files.json);
-    vi.spyOn(f.session.sessionManager, 'appendCustomEntry').mockImplementation((type, data: any) => {
-      if (type === SESSION_BRANCH_RESET_RECORD_TYPE && data.rolledBack) throw new Error('ROLLBACK_APPEND_FAILED');
+    vi.spyOn(f.session.sessionManager, 'appendCustomEntry').mockImplementation((type, data: unknown) => {
+      if (type === SESSION_BRANCH_RESET_RECORD_TYPE && data !== null && typeof data === 'object' && 'rolledBack' in data && data.rolledBack) throw new Error('ROLLBACK_APPEND_FAILED');
       return append(type, data);
     });
     const persist = f.engine.setSessionBranchHead.getMockImplementation()!;

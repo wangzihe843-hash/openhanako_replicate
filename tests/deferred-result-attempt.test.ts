@@ -17,30 +17,32 @@ afterEach(() => {
 });
 
 function gate() {
-  let resolve: (value: any) => void;
+  let resolve: (value: { ok: true }) => void;
   let reject: (error: Error) => void;
-  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  const promise = new Promise<{ ok: true }>((res, rej) => { resolve = res; reject = rej; });
   return { promise, succeed: () => resolve({ ok: true }), fail: () => reject(new Error("late receipt failed")) };
 }
 
 function harness() {
   const store = new DeferredResultStore(null, null);
-  const deliveries: { payload: any; options?: any; receipt: ReturnType<typeof gate> }[] = [];
+  type Payload = { result?: unknown; content?: string };
+  type Options = { shouldDeliver: () => boolean };
+  const deliveries: { payload: Payload; options?: Options; receipt: ReturnType<typeof gate> }[] = [];
   const sessionCoordinator = {
     isRunnableSessionPath: () => true,
-    deliverCustomMessage: vi.fn((_path, message, options) => {
+    deliverCustomMessage: vi.fn((_path: string, message: Payload, options: Options) => {
       const receipt = gate();
       deliveries.push({ payload: message, options, receipt });
       return receipt.promise;
     }),
-    recordCustomEntry: vi.fn((_path, _type, record) => {
+    recordCustomEntry: vi.fn((_path: string, _type: string, record: Payload) => {
       const receipt = gate();
       deliveries.push({ payload: record, receipt });
       return receipt.promise;
     }),
   };
   const coordinator = new DeferredResultCoordinator({
-    store, sessionCoordinator, retryIntervalMs: 0, log: { warn: vi.fn() } as any,
+    store, sessionCoordinator, retryIntervalMs: 0, log: { ...console, warn: vi.fn() },
   });
   disposables.push(store, coordinator);
   coordinator.start();

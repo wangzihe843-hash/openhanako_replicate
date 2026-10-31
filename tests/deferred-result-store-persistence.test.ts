@@ -52,7 +52,11 @@ it.each(["write", "rename"] as const)("retries a failed %s during shutdown and r
 it("normalizes legacy attempts without resetting delivered or suppression state and preserves current tokens", () => {
   const persistPath = path.join(dir, "legacy.json");
   const task = { status: "resolved", sessionPath: "/s/a", deferredAt: Date.now(), meta: {}, result: "legacy" };
-  const legacy = {
+  type LegacyTask = {
+    status: string; sessionPath: string; deferredAt: number; meta: Record<string, unknown>; result: unknown;
+    attemptId?: string; reason?: string; delivered?: boolean; deliverySuppressed?: boolean; suppressionReason?: string;
+  };
+  const legacy: Record<string, LegacyTask> = {
     pending: { ...task, status: "pending", result: null },
     resolved: { ...task, delivered: false },
     failed: { ...task, status: "failed", reason: "old failure", attemptId: "" },
@@ -63,10 +67,10 @@ it("normalizes legacy attempts without resetting delivered or suppression state 
   fs.writeFileSync(persistPath, JSON.stringify(legacy));
   const store = new DeferredResultStore(null, persistPath);
   stores.push(store);
-  const snapshots = Object.fromEntries(Object.keys(legacy).map((id) => [id, store.query(id)]));
-  expect(new Set(Object.values(snapshots).map((record: any) => record.attemptId)).size).toBe(6);
+  const snapshots: Record<string, LegacyTask & { attemptId: string }> = Object.fromEntries(Object.keys(legacy).map((id) => [id, store.query(id)]));
+  expect(new Set(Object.values(snapshots).map((record) => record.attemptId)).size).toBe(6);
   for (const [id, original] of Object.entries(legacy)) {
-    const { attemptId: _oldId, ...rest } = original as any;
+    const { attemptId: _oldId, ...rest } = original;
     expect(snapshots[id]).toMatchObject(rest);
     expect(snapshots[id].attemptId).toEqual(expect.any(String));
     expect(snapshots[id].attemptId.length).toBeGreaterThan(0);
