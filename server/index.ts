@@ -861,15 +861,17 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
   let bridgeManagerInitError = null;
   let bridgeAutoStartRequested = false;
   let bridgeAutoStartDone = false;
+  let bridgeStopping = false;
 
   function runBridgeAutoStart(manager: any) {
-    if (!manager || bridgeAutoStartDone) return;
+    if (!manager || bridgeAutoStartDone || bridgeStopping) return;
     bridgeAutoStartDone = true;
     manager.autoStart(engine.agents);
     dlog.log("server", "bridge autoStart done");
   }
 
   async function startBridgeManager({ autoStart = false } = {}) {
+    if (bridgeStopping) return null;
     if (autoStart) bridgeAutoStartRequested = true;
     if (bridgeManager) {
       if (autoStart) runBridgeAutoStart(bridgeManager);
@@ -881,6 +883,7 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
     bridgeManagerInitPromise = (async () => {
       log.log("Bridge manager 初始化...");
       const { BridgeManager } = await import("../lib/bridge/bridge-manager.ts");
+      if (bridgeStopping) return null;
       const manager = new BridgeManager({ engine, hub });
       bridgeManager = manager;
       hub.bridgeManager = manager;
@@ -901,11 +904,12 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
   }
 
   const bridgeManagerRef = {
-    get: () => bridgeManager,
+    get: () => bridgeStopping ? null : bridgeManager,
     ensureReady: () => startBridgeManager(),
     getState: () => ({
-      ready: !!bridgeManager,
-      initializing: !!bridgeManagerInitPromise,
+      ready: !bridgeStopping && !!bridgeManager,
+      initializing: !bridgeStopping && !!bridgeManagerInitPromise,
+      shuttingDown: bridgeStopping,
       error: bridgeManagerInitError?.message || null,
     }),
   };
@@ -1298,6 +1302,7 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
   async function gracefulShutdown() {
     if (_shutting) return;
     _shutting = true;
+    bridgeStopping = true;
     log.log("\n正在关闭...");
     dlog.log("server", "shutting down...");
 
@@ -1308,50 +1313,66 @@ export async function startServer(root: CompositionRoot = {}): Promise<void> {
     }, 15000);
     forceTimer.unref();
 
+    let exitCode = 0;
+    const recordShutdownError = (stage, err) => {
+      exitCode = 1;
+      log.error(`${stage}: ${err.message}`);
+      dlog.error("server", `${stage}: ${err.message}`);
+    };
+
+    // Each cleanup owns its error path so a failed bridge exit cannot skip DB
+    // disposal. All phases share forceTimer's original 15-second total budget.
     try {
-      // 1. 先停止接受新请求
       server.close();
       log.log("HTTP server 已关闭");
       dlog.log("server", "HTTP server closed");
+    } catch (err) { recordShutdownError("HTTP server close failed", err); }
 
-      // 2. 挂起浏览器（保留冷保存，重启后可恢复卡片）
-      try {
-        const { BrowserManager } = await import("../lib/browser/browser-manager.ts");
-        const bm = BrowserManager.instance();
-        for (const sp of bm.runningSessions) {
-          if (await bm.suspendForSession(sp)) {
-            log.log(`浏览器已挂起: ${sp}`);
-          } else {
-            log.warn(`浏览器挂起未完成: ${sp}`);
-          }
+    // Stop known bindings before the first await. A slow browser suspension
+    // must not leave bridge callbacks or network operations live until exit.
+    let bridgeStop;
+    try { bridgeStop = bridgeManager?.shutdown(); }
+    catch (err) { bridgeStop = Promise.reject(err); }
+    const bridgeDrain = Promise.allSettled([bridgeStop, bridgeManagerInitPromise]).then(results => {
+      let stopped = true;
+      for (const result of results) {
+        if (result.status === "rejected") {
+          stopped = false;
+          recordShutdownError("Bridge teardown failed", result.reason);
         }
-      } catch (e) {
-        log.error(`浏览器挂起失败: ${e.message}`);
       }
+      return stopped;
+    });
 
-      // 3. 停止外部平台
-      bridgeManager?.stopAll();
-      dlog.log("server", "bridge stopped");
+    try {
+      const { BrowserManager } = await import("../lib/browser/browser-manager.ts");
+      const bm = BrowserManager.instance();
+      for (const sp of bm.runningSessions) {
+        if (await bm.suspendForSession(sp)) log.log(`浏览器已挂起: ${sp}`);
+        else log.warn(`浏览器挂起未完成: ${sp}`);
+      }
+    } catch (err) { recordShutdownError("Browser suspension failed", err); }
 
-      // 4. flush deferred result store（debounce 可能有未写盘的脏数据）
-      engine.deferredResults?.dispose?.();
-    // Persist debounced workflow progress before the process exits.
-    try { workflowActivityStore.flush(); } catch (err) { log.error("activity store flush failed: " + err.message); }
+    try {
+      if (await bridgeDrain) dlog.log("server", "bridge stopped");
+    } catch (err) { recordShutdownError("Bridge teardown failed", err); }
 
-      // 5. 清理 Hub + 引擎（停 ticker → 等 tick 完成 → 关 DB → 清理 session）
+    try { engine.deferredResults?.dispose?.(); }
+    catch (err) { recordShutdownError("Deferred results flush failed", err); }
+    try { workflowActivityStore.flush(); }
+    catch (err) { recordShutdownError("Activity store flush failed", err); }
+
+    try {
       await hub.dispose();
       log.log("Hub + Engine 已清理");
       dlog.log("server", "hub + engine disposed");
-    } catch (err) {
-      log.error(`关闭出错: ${err.message}`);
-      dlog.error("server", `shutdown error: ${err.message}`);
-    }
+    } catch (err) { recordShutdownError("Hub + Engine disposal failed", err); }
 
     clearTimeout(forceTimer);
     try { fs.unlinkSync(path.join(hanakoHome, "server-info.json")); } catch (error) {
-      if (error.code !== "ENOENT") log.error(`Server discovery cleanup failed during shutdown: ${error.message}`);
+      if (error.code !== "ENOENT") recordShutdownError("Server discovery cleanup failed", error);
     }
-    process.exit(0);
+    process.exit(exitCode);
   }
 
   process.on("SIGINT", gracefulShutdown);

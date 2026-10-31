@@ -25,6 +25,7 @@
  *     bundle/                 ← Vite bundle 产出
  *       index.js              ← 入口（~750KB）
  *       cli.js                ← server-first CLI 入口
+ *       feishu-worker.js      ← 飞书绑定的独立 Node Worker
  *     lib/                    ← 数据文件（非源码，运行时 fromRoot() 读取）
  *       known-models.json
  *       known-model-fallbacks.json
@@ -51,10 +52,12 @@ import { fileURLToPath } from "url";
 import {
   applyPlatformPackageTrim,
   buildCliBundle,
+  buildFeishuWorkerBundle,
   buildViteServerBundle,
   copyServerBootstrap,
   copyServerDataFiles,
   finalizeServerPackageJsonVersion,
+  FEISHU_WORKER_BUNDLE,
   prepareNodeRuntime,
   pruneServerNodeModulesViaNft,
   resolveAndInstallExternalServerDeps,
@@ -95,6 +98,7 @@ const viteBundleDir = path.join(ROOT, "dist-server-bundle");
 const bundleOutDir = path.join(outDir, "bundle");
 buildViteServerBundle({ rootDir: ROOT, viteBundleDir, bundleOutDir });
 buildCliBundle({ rootDir: ROOT, bundleOutDir });
+await buildFeishuWorkerBundle({ rootDir: ROOT, bundleOutDir });
 copyServerBootstrap({ rootDir: ROOT, outDir });
 
 // ── 3. 复制运行时数据文件 ──
@@ -175,6 +179,7 @@ const { externalPkg, rootPkg } = await resolveAndInstallExternalServerDeps({
   runWithTargetNode,
   cachedNpmCli,
   extraPackageNames: pluginPackageDeps,
+  bundleFiles: ["index.js", "feishu-worker.js"],
 });
 
 // ── 7. @vercel/nft 追踪：只保留运行时实际需要的文件 ──
@@ -185,7 +190,7 @@ await pruneServerNodeModulesViaNft({
   // every plugin/host runtime source an nft root preserves the dependency
   // closure of packages such as markdown-it without protecting all of
   // node_modules from pruning.
-  nftRoots: ["bundle/index.js", ...pluginNftRoots],
+  nftRoots: ["bundle/index.js", FEISHU_WORKER_BUNDLE, ...pluginNftRoots],
   externalPackageNames: Object.keys(externalPkg.dependencies),
   runWithTargetNode,
 });

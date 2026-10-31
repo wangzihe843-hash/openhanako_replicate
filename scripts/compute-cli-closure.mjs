@@ -77,7 +77,7 @@
  * Fail-closed behaviors (never silently shrink the closure):
  *   - a declared root or runtime asset that does not exist on disk is a
  *     hard error;
- *   - any `import()`/`require()`/child_process spawn-family call whose
+ *   - any `import()`/`require()`/child_process spawn-family/Worker call whose
  *     first argument is not a plain string literal is a hard error unless
  *     it exactly matches an entry in DYNAMIC_CALL_ALLOWLIST (file + callee
  *     + argument text) -- matching is by call-site text, not line number,
@@ -170,6 +170,16 @@ export const CLOSURE_ROOTS = Object.freeze([
       + "server-bootstrap root's compiled output -- see DYNAMIC_CALL_ALLOWLIST.",
   },
   {
+    id: "feishu-worker",
+    path: "lib/bridge/feishu-worker.ts",
+    inputType: "dynamic-process-root",
+    reason:
+      "Feishu bindings start this fixed Worker entry by URL, not by import. "
+      + "Source mode uses lib/bridge/feishu-worker.ts; full/open builds compile "
+      + "it separately to bundle/feishu-worker.js beside the main server bundle. "
+      + "Trace the worker's own graph independently of the parent facade.",
+  },
+  {
     id: "nft-cli-bundle",
     path: "cli/entry.ts",
     inputType: "nft-runtime-trace",
@@ -180,6 +190,16 @@ export const CLOSURE_ROOTS = Object.freeze([
       + "transitive files. Same nft usage pattern as the server build's "
       + "pruneServerNodeModulesViaNft() in scripts/build-server-phases.mjs (read-only "
       + "precedent).",
+  },
+  {
+    id: "nft-feishu-worker",
+    path: "lib/bridge/feishu-worker.ts",
+    inputType: "nft-runtime-trace",
+    deferredPackages: ["@larksuiteoapi/node-sdk"],
+    reason:
+      "Runtime dependency closure of the separately compiled Feishu Worker. "
+      + "Its official SDK remains lazy via createRequire, so trace the locked "
+      + "SDK entry explicitly as well as the worker bundle before pruning.",
   },
   {
     id: "nft-server-bundle",
@@ -222,6 +242,25 @@ export const NFT_TRACE_ROOTS = CLOSURE_ROOTS.filter((root) => root.inputType ===
 // ---------------------------------------------------------------------------
 
 export const DYNAMIC_CALL_ALLOWLIST = Object.freeze([
+  {
+    file: "lib/bridge/feishu-worker-adapter.ts",
+    callee: "Worker",
+    argText: "resolveFeishuWorkerUrl()",
+    reason:
+      "Application-owned fixed source/bundle URL: ./feishu-worker.ts from the "
+      + "source facade, or ./feishu-worker.js beside bundle/index.js/cli.js. "
+      + "The source and compiled runtime are declared as independent closure "
+      + "roots; no configuration or RPC can select a Worker script.",
+  },
+  {
+    file: "server/bootstrap.ts",
+    callee: "Worker",
+    argText: '"const fs = require(\'fs\');" + "setInterval(() => { try { fs.writeSync(1, \'[server-bootstrap] keepalive\\\\n\'); } catch {} }, 5000);"',
+    reason:
+      "Existing fixed eval-only bootstrap keepalive uses only the Node fs "
+      + "builtin. It is independent of Feishu, has no external script dependency "
+      + "and is terminated after server import.",
+  },
   {
     file: "node_modules/@earendil-works/pi-coding-agent/dist/utils/shell.js",
     callee: "spawn",
@@ -682,10 +721,13 @@ export function scanDynamicCallSites({ relPath, sourceText }) {
   const hits = [];
 
   const visit = (node) => {
-    if (ts.isCallExpression(node)) {
+    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
       let callee = null;
       let kind = null;
-      if (ts.isImportCall(node)) {
+      if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Worker") {
+        callee = "Worker";
+        kind = "worker-spawn";
+      } else if (ts.isImportCall(node)) {
         callee = "import";
         kind = "dynamic-import";
       } else if (ts.isIdentifier(node.expression) && node.expression.text === "require") {
@@ -696,7 +738,7 @@ export function scanDynamicCallSites({ relPath, sourceText }) {
         kind = "process-spawn";
       }
       if (callee) {
-        const firstArg = node.arguments[0];
+        const firstArg = node.arguments?.[0];
         if (!isLiteralArgument(firstArg)) {
           const line = source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
           // The match key is the FIRST argument only (the actual spawn/import
@@ -704,7 +746,7 @@ export function scanDynamicCallSites({ relPath, sourceText }) {
           // list, which for spawn-family calls includes an options bag that
           // legitimately varies call-site to call-site (stdio, env, detached,
           // ...) without changing what's being classified.
-          const argText = node.arguments.length === 0
+          const argText = !node.arguments?.length
             ? "<no arguments>"
             : argumentSourceText(firstArg, source);
           hits.push({
@@ -760,7 +802,7 @@ export function scanAndValidateDynamicCallSites({
       .map((h) => `  ${h.file}:${h.line} ${h.callee}(${h.argText}) -- ${h.excerpt}`)
       .join("\n");
     throw new Error(
-      "[compute-cli-closure] non-literal dynamic import()/require()/spawn call(s) with no "
+      "[compute-cli-closure] non-literal dynamic import()/require()/spawn/Worker call(s) with no "
       + "DYNAMIC_CALL_ALLOWLIST entry (fail-closed -- register a named reason or fix the call):\n"
       + details,
     );

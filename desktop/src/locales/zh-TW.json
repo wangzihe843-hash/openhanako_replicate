@@ -2866,6 +2866,7 @@
       "bridgeLoadFailed": "載入 Bridge 對話失敗：{error}",
       "sendSuccess": "已傳送到 {target}",
       "sendFailed": "傳送到 {target} 失敗：{error}",
+      "sendUnknown": "傳送到 {target} 的交付結果不明，檔案可能已經送達。請先核對，不要重複傳送。",
       "list": "對話檔案列表",
       "sort": {
         "label": "對話檔案排序",
@@ -3130,6 +3131,7 @@
     "cronDisabled": "已停用",
     "notifySent": "已傳送通知: {title}",
     "notifyFailed": "通知傳送失敗: {msg}",
+    "notifyDeliveryUnknown": "通知「{title}」的交付結果不明，可能已經送達。請先核對，不要自動重複傳送。",
     "artifactCreated": "已建立預覽: {title}",
     "pinnedAlreadyExists": "這條已經在置頂記憶裡了。",
     "pinnedAdded": "已記住：{content}",

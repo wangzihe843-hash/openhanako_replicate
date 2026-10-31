@@ -13,6 +13,7 @@ import { parseSessionKey, collectKnownUsers, KNOWN_PLATFORMS, resolveBridgeSessi
 import { isBridgeOwner, resolveBridgeOwnerUserId } from "../../lib/bridge/owner-policy.ts";
 import { collectBridgeMediaAllowedRoots, isInsideBridgeMediaRoot } from "../../lib/bridge/media-roots.ts";
 import { sanitizeBridgeVisibleText } from "../../shared/bridge-visible-text.ts";
+import { unknownDeliveryFailure } from "../../shared/errors.ts";
 import { t } from "../../lib/i18n.ts";
 import { AgentNotFoundError, resolveAgentStrict } from "../utils/resolve-agent.ts";
 import { telegramApiOptions } from "../../lib/net/telegram-fetch.ts";
@@ -172,8 +173,10 @@ function normalizeBridgeManagerRef(ref: any) {
   };
 }
 
-function bridgeUnavailable(c: any, state: { error?: any; initializing?: any } = {}) {
-  const error = state.error
+function bridgeUnavailable(c: Context, state: { error?: unknown; initializing?: boolean; shuttingDown?: boolean } = {}) {
+  const error = state.shuttingDown
+    ? "bridge manager is shutting down"
+    : state.error
     ? `bridge manager unavailable: ${state.error}`
     : "bridge manager is still starting";
   return c.json({
@@ -181,7 +184,7 @@ function bridgeUnavailable(c: any, state: { error?: any; initializing?: any } = 
     error,
     bridge: {
       ready: false,
-      initializing: state.initializing !== false,
+      initializing: !state.shuttingDown && state.initializing !== false,
       error: state.error || null,
     },
   }, 503);
@@ -342,17 +345,25 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
     return new WechatLoginSessions();
   })();
 
+  function isBridgeShuttingDown(manager = bridgeRef.get?.()) {
+    return bridgeRef.getState?.()?.shuttingDown === true || manager?.isShuttingDown?.() === true;
+  }
+
   function resolveBridgeManager() {
-    return bridgeRef.get?.() || null;
+    const manager = bridgeRef.get?.() || null;
+    return isBridgeShuttingDown(manager) ? null : manager;
   }
 
   async function ensureBridgeManager() {
-    const existing = resolveBridgeManager();
-    if (existing) return existing;
+    const existing = bridgeRef.get?.() || null;
+    if (isBridgeShuttingDown(existing)) return { manager: null, shuttingDown: true };
+    if (existing) return { manager: existing, shuttingDown: false };
     try {
-      return await bridgeRef.ensureReady?.() || null;
+      const manager = await bridgeRef.ensureReady?.() || null;
+      const shuttingDown = isBridgeShuttingDown(manager);
+      return { manager: shuttingDown ? null : manager, shuttingDown };
     } catch {
-      return null;
+      return { manager: null, shuttingDown: isBridgeShuttingDown() };
     }
   }
 
@@ -466,6 +477,15 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
       }
     }
 
+    // Availability can await a lazy import. Finish that wait before persisting
+    // so an accepted request cannot resume and save/start during shutdown.
+    const { manager, shuttingDown } = patch.enabled
+      ? await ensureBridgeManager()
+      : { manager: resolveBridgeManager(), shuttingDown: isBridgeShuttingDown() };
+    if (shuttingDown || isBridgeShuttingDown()) {
+      return bridgeUnavailable(c, { ...bridgeRef.getState?.(), shuttingDown: true });
+    }
+
     agent.updateConfig({ bridge: { [platform]: patch } });
 
     let persistedPatch = agent.config?.bridge?.[platform] || patch;
@@ -505,9 +525,14 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
 
     // Start/stop
     if (persistedPatch.enabled) {
-      const manager = await ensureBridgeManager();
       if (!manager) return bridgeUnavailable(c, bridgeRef.getState?.() || {});
-      manager.startPlatformFromConfig(platform, persistedPatch, agentId);
+      try { manager.startPlatformFromConfig(platform, persistedPatch, agentId); }
+      catch (error) {
+        if (error?.code === "BRIDGE_MANAGER_SHUTTING_DOWN") {
+          return bridgeUnavailable(c, { shuttingDown: true });
+        }
+        throw error;
+      }
     } else {
       resolveBridgeManager()?.stopPlatform(platform, agentId);
     }
@@ -774,8 +799,9 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
     } catch { return c.json({ error: "file not found" }, 404); }
 
     try {
-      const manager = await ensureBridgeManager();
-      if (!manager) return bridgeUnavailable(c, bridgeRef.getState?.() || {});
+      const { manager, shuttingDown } = await ensureBridgeManager();
+      const closing = shuttingDown || isBridgeShuttingDown(manager);
+      if (!manager || closing) return bridgeUnavailable(c, { ...bridgeRef.getState?.(), shuttingDown: closing });
       if (typeof engine.registerSessionFile !== "function") {
         return c.json({ ok: false, error: "session file registry unavailable" }, 500);
       }
@@ -805,6 +831,13 @@ export function createBridgeRoute(engine: any, bridgeManagerRef: any) {
       );
       return c.json({ ok: true, fileId: sessionFile.id });
     } catch (err) {
+      const failure = unknownDeliveryFailure(err);
+      if (failure) {
+        return c.json({
+          ok: false, error: "delivery_unknown", deliveryUnknown: true, retryable: false,
+          message: failure.message, failure,
+        }, 500);
+      }
       return c.json(
         { ok: false, error: err.message },
         isUnsupportedMediaDeliveryError(err) ? 422 : 500,

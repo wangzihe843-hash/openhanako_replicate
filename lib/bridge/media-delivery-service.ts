@@ -1,5 +1,6 @@
 import path from "path";
 import { redactLogText } from "../../shared/log-redactor.ts";
+import { unknownDeliveryFailure } from "../../shared/errors.ts";
 import { debugLog } from "../debug-log.ts";
 import { extOfName, inferFileKind } from "../file-metadata.ts";
 import { downloadMedia, detectMime, resolveAllowedLocalPath } from "./media-utils.ts";
@@ -45,6 +46,11 @@ export class MediaDeliveryService {
   }
 
   async sendFailureNotice(adapter, chatId, err, replyContext = null) {
+    const failure = unknownDeliveryFailure(err);
+    if (failure) {
+      debugLog()?.warn("bridge", `media delivery outcome unknown; verify before retry: ${failure.message}`);
+      return { ok: false, status: "unknown", error: "delivery_unknown", deliveryUnknown: true, failure };
+    }
     if (err instanceof BridgeHttpRedirectError) return;
     if (!adapter?.sendReply) return;
     try {
@@ -55,7 +61,13 @@ export class MediaDeliveryService {
       } else {
         await adapter.sendReply(chatId, message);
       }
-    } catch {}
+    } catch (error) {
+      const noticeFailure = unknownDeliveryFailure(error);
+      if (noticeFailure) {
+        debugLog()?.warn("bridge", `media notice delivery outcome unknown; verify before retry: ${noticeFailure.message}`);
+        return { ok: false, status: "unknown", error: "delivery_unknown", deliveryUnknown: true, failure: noticeFailure };
+      }
+    }
   }
 
   async _sendSessionFile(adapter, chatId, source, platform, targetMetadata: any = {}) {

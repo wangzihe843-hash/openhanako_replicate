@@ -13,6 +13,7 @@
  */
 import { buildLoopKickoffMessage, buildLoopWakeupMessage, buildLoopNoticeMessage } from "./loop-messages.ts";
 import { loopKeyForTarget } from "./loop-store.ts";
+import { unknownDeliveryFailure } from "../../shared/errors.ts";
 
 const FALLBACK_ALARM_REASON = "loop invariant fallback: the previous turn scheduled no alarm and left no live background work";
 const BOOT_RECOVERY_REASON = "loop recovery after restart";
@@ -304,9 +305,10 @@ export class LoopController {
     const loop = this._store.update(key, { status: "stopped", pausedReason: "session_reset" });
     // 尽力通知：桥接目标发到聊天；桌面目标会话已换代，通知投递失败仅记日志
     try {
-      await this._recordNotice(loop.target, buildLoopNoticeMessage("（会话已重置，循环终止。需要的话在新会话里重新 /loop）"));
+      const delivery = await this._recordNotice(loop.target, buildLoopNoticeMessage("（会话已重置，循环终止。需要的话在新会话里重新 /loop）"));
+      this._observeUnknownNotice(key, "reset", delivery);
     } catch (err) {
-      this._log.warn?.(`[loop] reset notice failed for ${key}: ${err?.message}`);
+      if (!this._observeUnknownNotice(key, "reset", err)) this._log.warn?.(`[loop] reset notice failed for ${key}: ${err?.message}`);
     }
   }
 
@@ -317,12 +319,20 @@ export class LoopController {
     if (noticeText) {
       const loop = this._store.get(key);
       try {
-        await this._recordNotice(loop.target, buildLoopNoticeMessage(noticeText));
+        const delivery = await this._recordNotice(loop.target, buildLoopNoticeMessage(noticeText));
+        this._observeUnknownNotice(key, "pause", delivery);
       } catch (err) {
-        this._log.warn?.(`[loop] pause notice failed for ${key}: ${err?.message}`);
+        if (!this._observeUnknownNotice(key, "pause", err)) this._log.warn?.(`[loop] pause notice failed for ${key}: ${err?.message}`);
       }
     }
     return this._store.get(key);
+  }
+
+  _observeUnknownNotice(key, kind, value) {
+    const failure = unknownDeliveryFailure(value?.failure) || unknownDeliveryFailure(value);
+    if (!failure) return false;
+    this._log.warn?.(`[loop] ${kind} notice delivery outcome unknown for ${key}; verify before retry: ${failure.message}`);
+    return true;
   }
 
   async _injectLoopTurn(key, target, message) {

@@ -522,6 +522,7 @@ export function SessionRegistryFilesPanel() {
       for (const file of sendableFiles) {
         const res = await hanaFetch(`/api/bridge/send-media?agentId=${encodeURIComponent(target.agentId)}`, {
           method: 'POST',
+          throwOnHttpError: false,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             platform: target.platform,
@@ -532,8 +533,15 @@ export function SessionRegistryFilesPanel() {
           }),
         });
         const data = await res.json().catch(() => null);
-        if (data && data.ok === false) {
-          throw new Error(data.error || 'bridge media send failed');
+        if (data?.deliveryUnknown === true) {
+          useStore.getState().addToast(
+            tr('rightWorkspace.sessionFiles.sendUnknown', { target: targetLabel }),
+            'warning',
+          );
+          return;
+        }
+        if (!res.ok || data?.ok === false) {
+          throw new Error(data?.error || 'bridge media send failed');
         }
       }
       useStore.getState().addToast(

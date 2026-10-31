@@ -29,10 +29,10 @@ vi.mock("../lib/bridge/optional-sdks.ts", () => {
   }
 
   class MockWSClient {
-    declare wsConfig: { wsInstance: { readyState: number } };
+    getConnectionStatus() { return { state: this.connectionState }; }
+    connectionState = "connected";
     constructor(args) {
       mockWsConstructorArgs.push(args);
-      this.wsConfig = { wsInstance: { readyState: 1 } };
       mockWsInstances.push(this);
     }
 
@@ -243,7 +243,7 @@ describe("createFeishuAdapter", () => {
     expect(onStatus).toHaveBeenCalledWith("connected");
 
     const wsClient = latestWsClient();
-    wsClient.wsConfig.wsInstance.readyState = 3;
+    wsClient.connectionState = "closed";
     onStatus.mockClear();
 
     await vi.advanceTimersByTimeAsync(30_000);
@@ -268,16 +268,98 @@ describe("createFeishuAdapter", () => {
     expect(mockWsStart).toHaveBeenCalledTimes(1);
 
     const wsClient = latestWsClient();
-    wsClient.wsConfig.wsInstance.readyState = 3;
+    wsClient.connectionState = "closed";
 
     await vi.advanceTimersByTimeAsync(30_000);
     expect(mockWsStart).toHaveBeenCalledTimes(2);
 
     await flushPromises();
-    wsClient.wsConfig.wsInstance.readyState = 1;
+    wsClient.connectionState = "connected";
     await vi.advanceTimersByTimeAsync(500);
 
     expect(onStatus).toHaveBeenLastCalledWith("connected");
+    adapter.stop();
+  });
+
+  it.each(["connecting", "reconnecting"])("does not overlap SDK start while %s", async state => {
+    vi.useFakeTimers();
+    const adapter = createFeishuAdapter({ appId: "app-id", appSecret: "app-secret", agentId: "hana", onMessage: vi.fn() });
+    vi.spyOn(latestWsClient(), "getConnectionStatus").mockReturnValue({ state });
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(70_000);
+    expect(mockWsStart).toHaveBeenCalledTimes(1);
+    adapter.stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("redacts SDK diagnostics before forwarding them to application logs/status", () => {
+    const secret = "synthetic-app-secret-sentinel";
+    const adapter = createFeishuAdapter({ appId: "app-id", appSecret: secret, agentId: "hana", onMessage: vi.fn() });
+    const logger = mockWsConstructorArgs[0].logger;
+    logger.error(["connection failed", new Error(`app_secret=${secret} Authorization: Bearer synthetic-token-sentinel`)]);
+    const logged = moduleLoggerMock.error.mock.calls.flat().join(" ");
+    expect(logged).not.toContain(secret);
+    expect(logged).not.toContain("synthetic-token-sentinel");
+    adapter.stop();
+  });
+
+  it("routes sanitized SDK and inbound diagnostics only to the owning instance sink", async () => {
+    const onDiagnostic = vi.fn();
+    const secret = "synthetic-instance-secret";
+    const adapter = createFeishuAdapter({ appId: "app-id", appSecret: secret, agentId: "hana", onMessage: vi.fn(), onDiagnostic });
+    const logger = mockWsConstructorArgs[0].logger;
+    logger.error([`app_secret=${secret}`, "Authorization: Bearer synthetic-token", "socks5://synthetic-user:synthetic-password@127.0.0.1:9"]);
+    await registeredHandlers["im.message.receive_v1"]({
+      message: { message_id: "synthetic", message_type: `unknown-${secret}`, chat_id: "synthetic", chat_type: "p2p", content: "{}" },
+      sender: { sender_type: "bot", sender_id: { app_id: "other-app" } },
+    });
+    const diagnostics = JSON.stringify(onDiagnostic.mock.calls);
+    for (const sentinel of [secret, "synthetic-token", "synthetic-user", "synthetic-password"]) expect(diagnostics).not.toContain(sentinel);
+    expect(onDiagnostic).toHaveBeenCalledWith("error", expect.any(String));
+    expect(onDiagnostic).toHaveBeenCalledWith("warn", expect.any(String));
+    expect(moduleLoggerMock.log).not.toHaveBeenCalled();
+    expect(moduleLoggerMock.warn).not.toHaveBeenCalled();
+    expect(moduleLoggerMock.error).not.toHaveBeenCalled();
+    adapter.stop();
+    const count = onDiagnostic.mock.calls.length;
+    logger.error("late diagnostic");
+    expect(onDiagnostic).toHaveBeenCalledTimes(count);
+  });
+
+  it("preserves delivery uncertainty and safe error fields through API wrappers", async () => {
+    const adapter = createFeishuAdapter({ appId: "app-id", appSecret: "synthetic-secret", agentId: "hana", onMessage: vi.fn() });
+    mockMessageCreate.mockRejectedValueOnce(Object.assign(new Error("response lost"), { code: "ECONNRESET", deliveryUnknown: true, status: 503 }));
+    await expect(adapter.sendReply("synthetic-chat", "hello")).rejects.toMatchObject({ code: "ECONNRESET", deliveryUnknown: true, status: 503 });
+    mockMessageCreate.mockResolvedValueOnce({ code: 112, msg: "explicit rejection", log_id: "synthetic-log" });
+    const rejected = await adapter.sendReply("synthetic-chat", "hello").catch(error => error);
+    expect(rejected).toMatchObject({ code: 112, log_id: "synthetic-log" });
+    expect(rejected.deliveryUnknown).toBeUndefined();
+    adapter.stop();
+  });
+
+  it.each(["image", "file"])("bounds the SDK %s resource stream before returning a copied Buffer", async kind => {
+    const adapter = createFeishuAdapter({ appId: "app-id", appSecret: "synthetic-secret", agentId: "hana", onMessage: vi.fn() });
+    const maxBytes = 50 * 1024 * 1024;
+    const chunk = Buffer.alloc(1024 * 1024);
+    const stream = Readable.from([...Array(50).fill(chunk), Buffer.from("!")]);
+    mockMessageResourceGet.mockResolvedValueOnce({ getReadableStream: () => stream });
+    const result = kind === "image" ? adapter.downloadImage("synthetic-key", "synthetic-message") : adapter.downloadFile("synthetic-message", "synthetic-key");
+    const failure = await result.then(() => ({ unexpectedSuccess: true }), error => ({ code: error.code, maxBytes: error.maxBytes, actualBytes: error.actualBytes }));
+    expect(failure).toMatchObject({ code: "FEISHU_MEDIA_TOO_LARGE", maxBytes, actualBytes: maxBytes + 1 });
+    expect(stream.destroyed).toBe(true);
+    adapter.stop();
+  });
+
+  it("bounds remote media before uploading it", async () => {
+    const adapter = createFeishuAdapter({ appId: "app-id", appSecret: "synthetic-secret", agentId: "hana", onMessage: vi.fn() });
+    const maxBytes = 30 * 1024 * 1024;
+    const stream = Readable.from([...Array(30).fill(Buffer.alloc(1024 * 1024)), Buffer.from("!")]);
+    vi.spyOn(mockClientConstructorArgs[0].httpInstance, "get").mockResolvedValueOnce(stream);
+    const failure = await adapter.sendMedia("synthetic-chat", "https://feishu.invalid/synthetic.pdf")
+      .then(() => ({ unexpectedSuccess: true }), error => ({ code: error.code, maxBytes: error.maxBytes, actualBytes: error.actualBytes }));
+    expect(failure).toMatchObject({ code: "FEISHU_MEDIA_TOO_LARGE", maxBytes, actualBytes: maxBytes + 1 });
+    expect(stream.destroyed).toBe(true);
+    expect(mockFileCreate).not.toHaveBeenCalled();
     adapter.stop();
   });
 

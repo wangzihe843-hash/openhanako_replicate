@@ -1,4 +1,5 @@
 import { normalizeBridgePlatforms } from "../bridge/bridge-context.ts";
+import { unknownDeliveryFailure } from "../../shared/errors.ts";
 
 const CHANNEL_DESKTOP = "desktop";
 const CHANNEL_BRIDGE_OWNER = "bridge_owner";
@@ -108,7 +109,19 @@ export class NotificationService {
     if (idempotencyKey) {
       const existing = this._getIdempotentDelivery(idempotencyKey);
       if (existing) return existing;
-      const promise = this._notifyOnce(normalized, deliveryContext, idempotencyKey);
+      const promise = Promise.resolve()
+        .then(() => this._notifyOnce({ ...normalized, idempotencyKey }, deliveryContext, idempotencyKey))
+        .then((result) => {
+          if (result.deliveryUnknown || result.deliveries.some((delivery) => delivery.status === "sent")) {
+            this._idempotency.set(idempotencyKey, { promise: null, createdAt: Date.now(), result });
+          } else {
+            this._idempotency.delete(idempotencyKey);
+          }
+          return result;
+        }, (error) => {
+          this._idempotency.delete(idempotencyKey);
+          throw error;
+        });
       this._idempotency.set(idempotencyKey, { promise, createdAt: Date.now(), result: null });
       return promise;
     }
@@ -121,6 +134,9 @@ export class NotificationService {
     const existing = this._idempotency.get(idempotencyKey);
     if (!existing) return null;
     if (existing.promise) return existing.promise;
+    if (existing.result?.deliveryUnknown === true) {
+      return { ...existing.result, idempotencyKey, skipped: true };
+    }
     return {
       ...(existing.result || {}),
       ok: true,
@@ -136,7 +152,7 @@ export class NotificationService {
 
   _pruneIdempotency(now = Date.now()) {
     for (const [key, entry] of this._idempotency) {
-      if (now - entry.createdAt > IDEMPOTENCY_TTL_MS) this._idempotency.delete(key);
+      if (!entry.promise && now - entry.createdAt > IDEMPOTENCY_TTL_MS) this._idempotency.delete(key);
     }
   }
 
@@ -167,26 +183,16 @@ export class NotificationService {
       }
     }
 
+    const uncertain = deliveries.find((delivery) => delivery.deliveryUnknown === true);
     const result = {
       ok: deliveries.length > 0 && deliveries.every((d) => d.status === "sent"),
       title: normalized.title,
       body: normalized.body,
       channels: normalized.channels,
       ...(idempotencyKey ? { idempotencyKey } : {}),
+      ...(uncertain ? { deliveryUnknown: true, error: "delivery_unknown", failure: uncertain.failure } : {}),
       deliveries,
     };
-    if (idempotencyKey) {
-      const delivered = deliveries.some((d) => d.status === "sent");
-      if (delivered) {
-        this._idempotency.set(idempotencyKey, {
-          promise: null,
-          createdAt: Date.now(),
-          result,
-        });
-      } else {
-        this._idempotency.delete(idempotencyKey);
-      }
-    }
     return result;
   }
 
@@ -236,6 +242,14 @@ export class NotificationService {
       if (!result) {
         return { channel: CHANNEL_BRIDGE_OWNER, status: "failed", error: "target_missing" };
       }
+      if (result.deliveryUnknown === true) {
+        const failure = unknownDeliveryFailure(result.failure) || unknownDeliveryFailure(result);
+        return {
+          channel: CHANNEL_BRIDGE_OWNER, status: "unknown", error: "delivery_unknown", deliveryUnknown: true,
+          failure, message: failure?.message || "Delivery outcome is unknown",
+          ...(Array.isArray(result.deliveries) ? { bridgeDeliveries: result.deliveries } : {}),
+        };
+      }
       if (result.ok === false) {
         return {
           channel: CHANNEL_BRIDGE_OWNER,
@@ -255,6 +269,10 @@ export class NotificationService {
         ...(Array.isArray(result.deliveries) ? { bridgeDeliveries: result.deliveries } : {}),
       };
     } catch (err) {
+      const failure = unknownDeliveryFailure(err);
+      if (failure) {
+        return { channel: CHANNEL_BRIDGE_OWNER, status: "unknown", error: "delivery_unknown", deliveryUnknown: true, failure, message: failure.message };
+      }
       return { channel: CHANNEL_BRIDGE_OWNER, status: "failed", error: err.message };
     }
   }

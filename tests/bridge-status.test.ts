@@ -10,8 +10,8 @@ const createWechatAdapter = vi.fn();
 vi.mock("../lib/bridge/telegram-adapter.js", () => ({
   createTelegramAdapter: (...args) => createTelegramAdapter(...args),
 }));
-vi.mock("../lib/bridge/feishu-adapter.js", () => ({
-  createFeishuAdapter: (...args) => createFeishuAdapter(...args),
+vi.mock("../lib/bridge/feishu-worker-adapter.ts", () => ({
+  createFeishuWorkerAdapter: (...args) => createFeishuAdapter(...args),
 }));
 vi.mock("../lib/bridge/dingtalk-adapter.js", () => ({
   createDingTalkAdapter: (...args) => createDingTalkAdapter(...args),

@@ -15,7 +15,7 @@ vi.mock("ws", async () => {
   return { default: Socket };
 });
 vi.mock("../lib/bridge/telegram-adapter.ts", () => ({ createTelegramAdapter: vi.fn() }));
-vi.mock("../lib/bridge/feishu-adapter.ts", () => ({ createFeishuAdapter: vi.fn() }));
+vi.mock("../lib/bridge/feishu-worker-adapter.ts", () => ({ createFeishuWorkerAdapter: vi.fn() }));
 vi.mock("../lib/bridge/qq-adapter.ts", () => ({ createQQAdapter: vi.fn() }));
 vi.mock("../lib/bridge/wechat-adapter.ts", () => ({ createWechatAdapter: vi.fn() }));
 import { BridgeManager } from "../lib/bridge/bridge-manager.ts";

@@ -2866,6 +2866,7 @@
       "bridgeLoadFailed": "Bridge 会話の読み込みに失敗しました：{error}",
       "sendSuccess": "{target} に送信しました",
       "sendFailed": "{target} への送信に失敗しました：{error}",
+      "sendUnknown": "{target} への配信結果は不明です。ファイルはすでに届いている可能性があります。再送する前に確認してください。",
       "list": "会話ファイル一覧",
       "sort": {
         "label": "会話ファイルを並べ替え",
@@ -3130,6 +3131,7 @@
     "cronDisabled": "無効化しました",
     "notifySent": "通知を送信しました: {title}",
     "notifyFailed": "通知の送信に失敗しました: {msg}",
+    "notifyDeliveryUnknown": "通知「{title}」の配信結果は不明です。すでに届いている可能性があります。自動で再送せず、先に確認してください。",
     "artifactCreated": "プレビューを作成しました: {title}",
     "pinnedAlreadyExists": "これは既にピン留めメモリにあります。",
     "pinnedAdded": "記憶しました：{content}",

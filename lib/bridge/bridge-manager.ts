@@ -9,7 +9,7 @@ import fs from "fs";
 import path from "path";
 import { debugLog } from "../debug-log.ts";
 import { createTelegramAdapter } from "./telegram-adapter.ts";
-import { createFeishuAdapter } from "./feishu-adapter.ts";
+import { createFeishuWorkerAdapter as createFeishuAdapter } from "./feishu-worker-adapter.ts";
 import { createDingTalkAdapter } from "./dingtalk-adapter.ts";
 import { normalizeDingTalkBridgeCredentials } from "./dingtalk-contract.ts";
 import { createQQAdapter } from "./qq-adapter.ts";
@@ -20,7 +20,7 @@ import { MediaDeliveryService } from "./media-delivery-service.ts";
 import { BridgeHttpRedirectError } from "./outbound-http.ts";
 import { MediaPublisher } from "./media-publisher.ts";
 import { collectBridgeMediaAllowedRoots } from "./media-roots.ts";
-import { AppError } from "../../shared/errors.ts";
+import { AppError, unknownDeliveryFailure, type UnknownDeliveryFailure } from "../../shared/errors.ts";
 import { errorBus } from "../../shared/error-bus.ts";
 import { handleRcPendingInput } from "../../core/slash-commands/rc-pending-handler.ts";
 import { collectMediaItems } from "../tools/media-details.ts";
@@ -38,6 +38,36 @@ import { formatLogArgs } from "../log-redactor.ts";
 const log = createModuleLogger("bridge");
 const blockChunkerLog = createModuleLogger("block-chunker");
 const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+
+type ProactiveOptions = {
+  contextPolicy?: string;
+  bridgePlatforms?: unknown;
+  deliveryTarget?: unknown;
+  idempotencyKey?: string;
+};
+type ProactiveDelivery = {
+  status: "sent" | "failed" | "unknown";
+  platform: string;
+  chatId: string;
+  sessionKey?: string;
+  recorded?: boolean;
+  error?: string;
+  deliveryUnknown?: true;
+  failure?: UnknownDeliveryFailure;
+};
+type ProactiveResult = {
+  ok?: boolean;
+  error?: string;
+  message?: string;
+  platform?: string;
+  chatId?: string;
+  sessionKey?: string;
+  recorded?: boolean;
+  deliveries: ProactiveDelivery[];
+  deliveryUnknown?: true;
+  failure?: UnknownDeliveryFailure;
+  skipped?: boolean;
+};
 
 // Status is a display-only string snapshot; never alter the source error or
 // adapter credentials used for request construction and retry classification.
@@ -134,7 +164,7 @@ const ADAPTER_REGISTRY = {
     connectsAsync: true,
   },
   feishu: {
-    create: (creds, onMessage, hooks, agentId) => createFeishuAdapter({ appId: creds.appId, appSecret: creds.appSecret, region: creds.region, agentId, onMessage, onStatus: hooks?.onStatus }),
+    create: (creds, onMessage, hooks, agentId) => createFeishuAdapter({ appId: creds.appId, appSecret: creds.appSecret, region: creds.region, agentId, onMessage, onStatus: hooks?.onStatus, waitForPreviousExit: hooks?.waitForPreviousExit }),
     getCredentials: (cfg) => cfg?.enabled && cfg?.appId && cfg?.appSecret ? { appId: cfg.appId, appSecret: cfg.appSecret, region: cfg.region || "feishu_cn" } : null,
     ownerSessionKey: (userId, agentId) => `fs_dm_${userId}@${agentId}`,
     connectsAsync: true,
@@ -694,7 +724,10 @@ export class BridgeManager {
   declare _messageLogs: any;
   declare _pending: any;
   declare _platforms: any;
-  declare _proactiveIdempotency: any;
+  declare _platformTeardowns: Map<string, Promise<void>>;
+  declare _shuttingDown: boolean;
+  declare _shutdownDrain: Promise<void> | null;
+  declare _proactiveIdempotency: Map<string, { promise: Promise<ProactiveResult> | null; createdAt: number; result: ProactiveResult | null }>;
   declare _processing: any;
   declare _processingOwners: Map<string, { binding: ReturnType<BridgeManager["_captureBinding"]>; released: Promise<void>; release: () => void }>;
   declare _bindingCleanups: WeakMap<object, Set<() => Promise<void>>>;
@@ -713,6 +746,9 @@ export class BridgeManager {
     this._hub = hub;
     /** @type {Map<string, { adapter, status: string, error?: string }>} */
     this._platforms = new Map();
+    this._platformTeardowns = new Map();
+    this._shuttingDown = false;
+    this._shutdownDrain = null;
     /** per-sessionKey 消息缓冲（debounce + abort） */
     this._pending = new Map();
     /** per-sessionKey 处理锁（防止 debounce 触发和 abort 重发并发） */
@@ -921,6 +957,7 @@ export class BridgeManager {
 
   /** 遍历所有 agent 的 config.bridge，自动启动已启用的平台 */
   autoStart(agents) {
+    this._assertCanStart();
     if (!agents) return;
     for (const [agentId, agent] of agents) {
       const bridgeCfg = agent.config?.bridge;
@@ -947,6 +984,7 @@ export class BridgeManager {
    * @param {string} agentId - 绑定的 agent ID
    */
   startPlatformFromConfig(platform, cfg, agentId) {
+    this._assertCanStart();
     const spec = ADAPTER_REGISTRY[platform];
     if (!spec) return;
     if (platform === "wechat") cfg._hanaHome = this.engine.hanakoHome;
@@ -961,9 +999,11 @@ export class BridgeManager {
   }
 
   _setPlatformConfigError(platform, agentId, err) {
+    this._assertCanStart();
     const message = statusError(err);
     const key = this._getPlatformKey(platform, agentId);
     this.stopPlatform(platform, agentId);
+    this._assertCanStart();
     this._platforms.set(key, {
       adapter: null,
       status: "error",
@@ -981,8 +1021,12 @@ export class BridgeManager {
    * @param {string} [agentId] - 绑定的 agent ID（消息路由用）
    */
   startPlatform(platform, credentials, agentId) {
+    this._assertCanStart();
     const key = this._getPlatformKey(platform, agentId);
-    this.stopPlatform(platform, agentId);
+    const waitForPreviousExit = this.stopPlatform(platform, agentId);
+    // stopPlatform emits synchronously; a shutdown observer can close this
+    // manager before the replacement factory is reached.
+    this._assertCanStart();
 
     const spec = ADAPTER_REGISTRY[platform];
     if (!spec) throw new Error(`Unknown platform: ${platform}`);
@@ -992,6 +1036,7 @@ export class BridgeManager {
     try {
       const onMessage = (msg) => this._handleMessage(platform, msg, entry);
       const hooks = {
+        waitForPreviousExit,
         onEvent: (evt) => { if (isCurrent()) this._hub.eventBus.emit(evt, null); },
         onQqDmGuild: (userId, guildId) => { if (isCurrent()) this._persistQqDmGuild(userId, guildId, agentId); },
         onStatus: (status, error) => {
@@ -1045,39 +1090,84 @@ export class BridgeManager {
         this._clearPending(sessionKey);
       }
     }
-    if (!entry) return;
+    if (!entry) return this._platformTeardowns.get(key) || Promise.resolve();
     this._platforms.delete(key);
-    this._stopBindingReceipts(entry);
-
-    try {
-      entry.adapter?.stop();
-    } catch {
-      // teardown best-effort：adapter.stop() 失败也要继续移除 entry 并广播 disconnected，
-      // 否则平台会卡在「无法停止」状态。stop 的副作用（关连接）即便抛错通常也已部分完成。
-    }
-    log.log(`${platform} 已停止`);
-    debugLog()?.log("bridge", `${platform} stopped`);
-    this._emitStatus(platform, "disconnected", null, agentId);
+    return this._stopPlatformEntry(key, entry);
   }
 
-  /** 停止所有平台 */
-  stopAll() {
-    // teardown best-effort：取消 RC 镜像订阅失败也要继续清理后续状态。
+  // Invalidating a binding is synchronous; release of its sockets/Worker is not.
+  // Keep failed barriers so a later start cannot overlap an unconfirmed exit.
+  _stopPlatformEntry(key, entry): Promise<void> {
+    this._stopBindingReceipts(entry);
+    const previous = this._platformTeardowns.get(key);
+    let stopped;
+    try { stopped = entry.adapter?.stop(); } catch (err) { stopped = Promise.reject(err); }
+    const drained = Promise.allSettled([previous, stopped]).then(results => {
+      const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, "Bridge binding teardown failed");
+    });
+    this._platformTeardowns.set(key, drained);
+    // Legacy route callers may not await stop; observe errors without turning
+    // the returned promise into success or removing a failed exit barrier.
+    void drained.then(() => {
+      if (this._platformTeardowns.get(key) === drained) this._platformTeardowns.delete(key);
+    }, err => {
+      const error = statusError(err);
+      log.error(`${entry.platform} teardown failed: ${error}`);
+      debugLog()?.error("bridge", `${entry.platform} teardown failed: ${error}`);
+      if (!this._platforms.has(key)) this._emitStatus(entry.platform, "error", error, entry.agentId);
+    });
+    const name = entry.platform || key;
+    log.log(`${name} 已停用`);
+    debugLog()?.log("bridge", `${name} binding deactivated`);
+    this._emitStatus(name, "disconnected", null, entry.agentId);
+    return drained;
+  }
+
+  isShuttingDown(): boolean {
+    return this._shuttingDown;
+  }
+
+  _assertCanStart(): void {
+    if (this._shuttingDown) {
+      throw Object.assign(new Error("Bridge manager is shutting down"), { code: "BRIDGE_MANAGER_SHUTTING_DOWN" });
+    }
+  }
+
+  /** Permanently close creation before draining; ordinary stopAll stays restartable. */
+  shutdown(): Promise<void> {
+    this._shuttingDown = true;
+    if (!this._shutdownDrain) {
+      let resolve!: () => void;
+      let reject!: (reason: unknown) => void;
+      // Store the shared promise before stopAll emits any synchronous status
+      // callbacks, so reentrant shutdown also waits for every owned binding.
+      this._shutdownDrain = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+      void this._shutdownDrain.catch(() => undefined);
+      try { void this.stopAll().then(resolve, reject); }
+      catch (error) { reject(error); }
+    }
+    return this._shutdownDrain;
+  }
+
+  /** 停止所有平台；同步封住回调，等待所有已开始的退出（包括此前 stopPlatform）。 */
+  stopAll(): Promise<void> {
+    // One failed unsubscribe or stop must not skip the other owned adapters.
     try { this._rcMirrorUnsubscribe?.(); } catch {}
     this._rcMirrorUnsubscribe = null;
     this._rcMirrorStreams.clear();
     for (const sessionKey of this._pending.keys()) this._clearPending(sessionKey);
     const entries = [...this._platforms];
     this._platforms.clear();
-    for (const [key, entry] of entries) {
-      this._stopBindingReceipts(entry);
-      // teardown best-effort：单个 adapter 停止失败不能中断其余平台的清理。
-      try { entry.adapter?.stop(); } catch {}
-      const name = entry.platform || key;
-      log.log(`${name} 已停止`);
-      debugLog()?.log("bridge", `${name} stopped`);
-      this._emitStatus(name, "disconnected", null, entry.agentId);
-    }
+    for (const [key, entry] of entries) this._stopPlatformEntry(key, entry);
+    const drained = Promise.allSettled([...this._platformTeardowns.values()]).then(results => {
+      const errors = results.filter(result => result.status === "rejected").map(result => result.reason);
+      if (errors.length) throw new AggregateError(errors, "Bridge teardown failed");
+    });
+    // Each failed binding is reported above even for synchronous legacy callers.
+    void drained.catch(() => {});
+    return drained;
   }
 
   /** 获取平台状态（可按 agentId 过滤） */
@@ -1767,7 +1857,31 @@ export class BridgeManager {
     let lastSentText = "";
     let lastUpdateTs = 0;
     let failed = false;
+    let deliveryUnknown: unknown = null;
+    const rememberUnknown = (err) => {
+      if (platform === "feishu" && err?.deliveryUnknown === true) deliveryUnknown = err;
+    };
+    const assertKnownDelivery = () => { if (deliveryUnknown) throw deliveryUnknown; };
+    const sendFallback = async (args) => {
+      assertKnownDelivery();
+      try { await this._sendStreamFallbackReply(args); } catch (err) {
+        rememberUnknown(err);
+        throw err;
+      }
+    };
     let chain = Promise.resolve();
+    const finishOwnedStream = async <T>(work: () => Promise<T>): Promise<T> => {
+      try { return await work(); }
+      finally {
+        // A terminal empty reply can arrive while its initial snapshot is still
+        // pending. Wait for the owned chain before releasing the local handle.
+        await chain;
+        if (streamState) {
+          try { adapter.releaseStreamReply?.(streamState); }
+          catch (err) { this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: "release", err }); }
+        }
+      }
+    };
     let createdWithoutMessageId = false;
     let sizeFailure: { text: string; err: unknown } | null = null;
 
@@ -1791,7 +1905,7 @@ export class BridgeManager {
       lastSentText = next;
       chain = chain.then(async () => {
         // These snapshots may have been queued before an earlier size rejection.
-        if (sizeFailure) return;
+        if (sizeFailure || deliveryUnknown) return;
         const stage = !streamState ? "start" : "update";
         try {
           if (!streamState) {
@@ -1800,6 +1914,7 @@ export class BridgeManager {
             await adapter.updateStreamReply(chatId, streamState, next, context);
           }
         } catch (err) {
+          rememberUnknown(err);
           failed = true;
           if (isFeishuMessageTooLargeError(platform, err)) sizeFailure = { text: next, err };
           this._recordStreamDeliveryFailure({ platform, mode, chatId, stage, err });
@@ -1819,6 +1934,7 @@ export class BridgeManager {
         try {
           await startMessage(next);
         } catch (err) {
+          rememberUnknown(err);
           if (isFeishuMessageTooLargeError(platform, err)) sizeFailure = { text: next, err };
           this._recordStreamDeliveryFailure({
             platform,
@@ -1831,30 +1947,33 @@ export class BridgeManager {
         }
       },
       onDelta: (_delta, accumulated) => enqueueSnapshot(accumulated || _delta),
-      fail: async (message) => {
+      fail: (message) => finishOwnedStream(async () => {
         const failureText = this._truncateStreamText(String(message || t("bridge.replyFailed")).trim(), maxChars);
         if (!failureText) return;
         await chain;
+        assertKnownDelivery();
         if (!failed && streamState && !createdWithoutMessageId) {
           try {
             await adapter.finishStreamReply(chatId, streamState, failureText, context);
             return;
           } catch (err) {
+            rememberUnknown(err);
             failed = true;
             this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: "fail_finish", err });
           }
         }
-        await this._sendStreamFallbackReply({ adapter, chatId, text: failureText, context, platform, mode, stage: "fail" });
-      },
-      finish: async (cleaned) => {
+        await sendFallback({ adapter, chatId, text: failureText, context, platform, mode, stage: "fail" });
+      }),
+      finish: (cleaned) => finishOwnedStream(async () => {
         const { text, mediaUrls } = this._cleanStreamSnapshot(cleaned);
         const textOnly = text.trim();
         await chain;
+        assertKnownDelivery();
         if (!textOnly) {
           return mediaUrls;
         }
         if (createdWithoutMessageId) {
-          await this._sendStreamFallbackReply({ adapter, chatId, text: textOnly, context, platform, mode, stage: "missing_message_id" });
+          await sendFallback({ adapter, chatId, text: textOnly, context, platform, mode, stage: "missing_message_id" });
           return mediaUrls;
         }
         const finalText = this._truncateStreamText(textOnly, maxChars);
@@ -1870,14 +1989,16 @@ export class BridgeManager {
             }
             return mediaUrls;
           } catch (err) {
+            rememberUnknown(err);
             failed = true;
             this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: !streamState ? "finish_start" : "finish", err });
             if (isFeishuMessageTooLargeError(platform, err)) throw err;
+            assertKnownDelivery();
           }
         }
-        await this._sendStreamFallbackReply({ adapter, chatId, text: textOnly, context, platform, mode, stage: "finish" });
+        await sendFallback({ adapter, chatId, text: textOnly, context, platform, mode, stage: "finish" });
         return mediaUrls;
-      },
+      }),
     };
   }
 
@@ -1890,7 +2011,31 @@ export class BridgeManager {
     let lastSentText = "";
     let lastUpdateTs = 0;
     let failed = false;
+    let deliveryUnknown: unknown = null;
+    const rememberUnknown = (err) => {
+      if (platform === "feishu" && err?.deliveryUnknown === true) deliveryUnknown = err;
+    };
+    const assertKnownDelivery = () => { if (deliveryUnknown) throw deliveryUnknown; };
+    const sendFallback = async (args) => {
+      assertKnownDelivery();
+      try { await this._sendStreamFallbackReply(args); } catch (err) {
+        rememberUnknown(err);
+        throw err;
+      }
+    };
     let chain = Promise.resolve();
+    const finishOwnedStream = async <T>(work: () => Promise<T>): Promise<T> => {
+      try { return await work(); }
+      finally {
+        // A terminal empty reply can arrive while its initial snapshot is still
+        // pending. Wait for the owned chain before releasing the local handle.
+        await chain;
+        if (streamState) {
+          try { adapter.releaseStreamReply?.(streamState); }
+          catch (err) { this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: "release", err }); }
+        }
+      }
+    };
     let receiptOnly = false;
 
     const startMessage = async (text) => {
@@ -1908,6 +2053,7 @@ export class BridgeManager {
       lastUpdateTs = now;
       lastSentText = next;
       chain = chain.then(async () => {
+        if (deliveryUnknown) return;
         const stage = !streamState ? "start" : "update";
         try {
           if (!streamState) {
@@ -1916,6 +2062,7 @@ export class BridgeManager {
             await adapter.updateRichStreamReply(chatId, streamState, next, context);
           }
         } catch (err) {
+          rememberUnknown(err);
           failed = true;
           this._recordStreamDeliveryFailure({ platform, mode, chatId, stage, err });
         }
@@ -1935,40 +2082,45 @@ export class BridgeManager {
         try {
           await startMessage(next);
         } catch (err) {
+          rememberUnknown(err);
           this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: "start_receipt", err });
           failed = true;
         }
       },
       onDelta: (_delta, accumulated) => enqueueSnapshot(accumulated || _delta),
-      fail: async (message) => {
+      fail: (message) => finishOwnedStream(async () => {
         const failureText = this._truncateStreamText(String(message || t("bridge.replyFailed")).trim(), maxChars);
         if (!failureText) return;
         await chain;
+        assertKnownDelivery();
         if (!failed && streamState) {
           try {
             await adapter.finishRichStreamReply(chatId, streamState, failureText, context);
             receiptOnly = false;
             return;
           } catch (err) {
+            rememberUnknown(err);
             failed = true;
             this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: "fail_finish", err });
           }
         }
-        await this._sendStreamFallbackReply({ adapter, chatId, text: failureText, context, platform, mode, stage: "fail" });
+        await sendFallback({ adapter, chatId, text: failureText, context, platform, mode, stage: "fail" });
         receiptOnly = false;
-      },
-      finish: async (cleaned) => {
+      }),
+      finish: (cleaned) => finishOwnedStream(async () => {
         const { text, mediaUrls } = this._cleanStreamSnapshot(cleaned);
         const textOnly = text.trim();
         await chain;
+        assertKnownDelivery();
         if (!textOnly) {
           if (!failed && streamState && lastSentText && !receiptOnly) {
             try {
               await adapter.finishRichStreamReply(chatId, streamState, lastSentText, context);
             } catch (err) {
+              rememberUnknown(err);
               failed = true;
               this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: "finish_last_sent", err });
-              await this._sendStreamFallbackReply({ adapter, chatId, text: lastSentText, context, platform, mode, stage: "finish_last_sent" });
+              await sendFallback({ adapter, chatId, text: lastSentText, context, platform, mode, stage: "finish_last_sent" });
             }
           }
           receiptOnly = false;
@@ -1985,13 +2137,15 @@ export class BridgeManager {
             }
             return mediaUrls;
           } catch (err) {
+            rememberUnknown(err);
             failed = true;
             this._recordStreamDeliveryFailure({ platform, mode, chatId, stage: !streamState ? "finish_start" : "finish", err });
+            assertKnownDelivery();
           }
         }
-        await this._sendStreamFallbackReply({ adapter, chatId, text: textOnly, context, platform, mode, stage: "finish" });
+        await sendFallback({ adapter, chatId, text: textOnly, context, platform, mode, stage: "finish" });
         return mediaUrls;
-      },
+      }),
     };
   }
 
@@ -2171,7 +2325,7 @@ export class BridgeManager {
           if (!binding.isCurrent()) return;
           try { await this._sendMediaItem(adapter, chatId, item, { platform, isGroup, agentId, replyContext }); }
           catch (err) {
-            debugLog()?.warn("bridge", `media send failed: ${err.message} (${this._describeMediaSource(item)})`);
+            if (!unknownDeliveryFailure(err)) debugLog()?.warn("bridge", `media send failed: ${err.message} (${this._describeMediaSource(item)})`);
             await this._mediaDelivery.sendFailureNotice(adapter, chatId, err, replyContext);
           }
         }
@@ -2289,7 +2443,7 @@ export class BridgeManager {
           if (!binding.isCurrent()) return { mode: "triggerTurn" };
           try { await this._sendMediaItem(adapter, chatId, item, { platform, isGroup: false, agentId, replyContext: null }); }
           catch (err) {
-            debugLog()?.warn("bridge", `loop turn media send failed: ${err.message} (${this._describeMediaSource(item)})`);
+            if (!unknownDeliveryFailure(err)) debugLog()?.warn("bridge", `loop turn media send failed: ${err.message} (${this._describeMediaSource(item)})`);
             await this._mediaDelivery.sendFailureNotice(adapter, chatId, err, null);
           }
         }
@@ -2451,7 +2605,7 @@ export class BridgeManager {
           if (!binding.isCurrent()) return;
           try { await this._sendMediaItem(adapter, chatId, item, { platform, isGroup: false, agentId, replyContext }); }
           catch (err) {
-            debugLog()?.warn("bridge", `rc-attached media send failed: ${err.message}`);
+            if (!unknownDeliveryFailure(err)) debugLog()?.warn("bridge", `rc-attached media send failed: ${err.message}`);
             await this._mediaDelivery.sendFailureNotice(adapter, chatId, err, replyContext);
           }
         }
@@ -2478,7 +2632,7 @@ export class BridgeManager {
       if (binding.isCurrent() && !isAbortLikeError(err)) {
         log.error(`rc-attached prompt failed (${platform}, ${desktopSessionPath}): ${err.message}`);
         debugLog()?.error("bridge", `rc-attached failed: ${err.message}`);
-        if (adapter && !(err instanceof BridgeHttpRedirectError)) {
+        if (adapter && !(err instanceof BridgeHttpRedirectError) && !(platform === "feishu" && err?.deliveryUnknown === true)) {
           // 用户提示用人话：低层错误字符串只进日志，不作为聊天正文发出（#1607）。
           const notice = err.message === "session_busy"
             ? t("bridge.sessionBusy")
@@ -2509,15 +2663,16 @@ export class BridgeManager {
     if (taskId) {
       this._pruneDeferredMediaDeliveries();
       const existing = this._deferredMediaDeliveries.get(taskId);
-      if (existing) return existing.promise;
+      if (existing) return existing.promise || existing.result;
       const deliver = status === "success"
         ? () => this._deliverDeferredResultMediaEvent(event, sessionPath, taskId)
         : () => this._deliverDeferredResultFailureEvent(event, sessionPath, taskId);
-      const promise = deliver()
+      const promise = Promise.resolve().then(deliver)
         .then((delivered) => {
-          if (delivered) {
+          if (delivered === true || unknownDeliveryFailure(delivered)) {
             this._deferredMediaDeliveries.set(taskId, {
-              promise: Promise.resolve(true),
+              promise: null,
+              result: delivered,
               createdAt: Date.now(),
             });
           } else {
@@ -2538,7 +2693,7 @@ export class BridgeManager {
 
   _pruneDeferredMediaDeliveries(now = Date.now()) {
     for (const [taskId, entry] of this._deferredMediaDeliveries) {
-      if (now - entry.createdAt > IDEMPOTENCY_TTL_MS) this._deferredMediaDeliveries.delete(taskId);
+      if (!entry.promise && now - entry.createdAt > IDEMPOTENCY_TTL_MS) this._deferredMediaDeliveries.delete(taskId);
     }
   }
 
@@ -2550,6 +2705,7 @@ export class BridgeManager {
     if (!target) return false;
 
     let delivered = 0;
+    let unknownFailure: UnknownDeliveryFailure | null = null;
     for (const item of mediaItems) {
       try {
         await this._sendMediaItem(target.adapter, target.chatId, item, {
@@ -2560,12 +2716,18 @@ export class BridgeManager {
         });
         delivered += 1;
       } catch (err) {
-        debugLog()?.warn("bridge", `deferred result media send failed: ${err.message}`);
-        await this._mediaDelivery.sendFailureNotice(target.adapter, target.chatId, err, target.replyContext);
+        const failure = unknownDeliveryFailure(err);
+        if (failure) unknownFailure = failure;
+        else debugLog()?.warn("bridge", `deferred result media send failed: ${err.message}`);
+        const notice = await this._mediaDelivery.sendFailureNotice(target.adapter, target.chatId, err, target.replyContext);
+        if (notice?.deliveryUnknown === true) unknownFailure = notice.failure;
       }
     }
     if (delivered > 0) {
       debugLog()?.log("bridge", `→ ${target.platform} deferred media (${delivered})`);
+    }
+    if (unknownFailure) {
+      return { ok: false, error: "delivery_unknown", deliveryUnknown: true, failure: unknownFailure, delivered, total: mediaItems.length };
     }
     if (taskId && delivered === mediaItems.length) {
       this.engine?.deferredResults?.markDelivered?.(taskId);
@@ -2582,6 +2744,11 @@ export class BridgeManager {
       if (taskId) this.engine?.deferredResults?.markDelivered?.(taskId);
       return true;
     } catch (err) {
+      const failure = unknownDeliveryFailure(err);
+      if (failure) {
+        debugLog()?.warn("bridge", `deferred result notice delivery outcome unknown; verify before retry: ${failure.message}`);
+        return { ok: false, error: "delivery_unknown", deliveryUnknown: true, failure };
+      }
       debugLog()?.warn("bridge", `deferred result failure notice send failed: ${err.message}`);
       return false;
     }
@@ -2703,7 +2870,7 @@ export class BridgeManager {
       for (const item of this._mediaItemsFromDesktopAttachments(attachments, sessionPath)) {
         try { await this._sendMediaItem(target.adapter, target.chatId, item, { platform: target.platform, isGroup: false, agentId: target.agentId, replyContext }); }
         catch (err) {
-          debugLog()?.warn("bridge", `rc mirror media send failed: ${err.message}`);
+          if (!unknownDeliveryFailure(err)) debugLog()?.warn("bridge", `rc mirror media send failed: ${err.message}`);
           await this._mediaDelivery.sendFailureNotice(target.adapter, target.chatId, err, replyContext);
         }
       }
@@ -2776,7 +2943,7 @@ export class BridgeManager {
       for (const item of allMediaItems) {
         try { await this._sendMediaItem(state.adapter, state.chatId, item, { platform: state.platform, isGroup: false, agentId: state.agentId, replyContext: state.replyContext }); }
         catch (err) {
-          debugLog()?.warn("bridge", `rc mirror assistant media send failed: ${err.message}`);
+          if (!unknownDeliveryFailure(err)) debugLog()?.warn("bridge", `rc mirror assistant media send failed: ${err.message}`);
           await this._mediaDelivery.sendFailureNotice(state.adapter, state.chatId, err, state.replyContext);
         }
       }
@@ -2911,28 +3078,35 @@ export class BridgeManager {
    * @param {string} text - 要发送的文本（会自动 clean mood/pulse 标签）
    * @param {string} [targetAgentId]
    * @param {{ contextPolicy?: "none"|"record_when_delivered", bridgePlatforms?: string[], deliveryTarget?: object, idempotencyKey?: string }} [opts]
-   * @returns {Promise<
-   *   | { platform: string, chatId: string, sessionKey: string, recorded: boolean, deliveries?: Array<any>, skipped?: boolean }
-   *   | { ok: false, error: "target_missing"|"disconnected"|"reply_context_unavailable"|"send_failed", deliveries: Array<any>, message?: string }
-   *   | null
-   * >}
-   *   Success: platform delivery info (optional `skipped` when an idempotency key hits a prior success).
-   *   Failure: structured `{ ok: false, error, deliveries, message? }` — `send_failed` includes `message` from the adapter throw.
-   *   `null` only when cleaned text is empty (nothing to send).
-   *   Fan-out aggregate `error` prefers `send_failed` when any platform threw, else `reply_context_unavailable`, else connectivity/target codes.
+   * Unknown writes stop default fallback and retain their idempotency key for
+   * the same TTL as success. Explicit fan-out still visits the requested targets,
+   * but an unknown target keeps the aggregate outcome unknown even if another sent.
    */
-  async sendProactive(text, targetAgentId, opts: any = {}) {
+  async sendProactive(text, targetAgentId, opts: ProactiveOptions = {}): Promise<ProactiveResult | null> {
     const cleaned = this._cleanReplyForPlatform(text);
     if (!cleaned) return null;
     const idempotencyKey = normalizeIdempotencyKey(opts.idempotencyKey);
     if (idempotencyKey) {
       const existing = this._getProactiveIdempotentDelivery(idempotencyKey);
       if (existing) return existing;
-      const promise = this._sendProactiveOnce(cleaned, targetAgentId, opts, idempotencyKey);
+      // Install the pending entry before even a synchronous validation failure.
+      const promise = Promise.resolve()
+        .then(() => this._sendProactiveOnce(cleaned, targetAgentId, opts))
+        .then((result) => {
+          if (result.deliveryUnknown || result.deliveries.some((delivery) => delivery.status === "sent")) {
+            this._proactiveIdempotency.set(idempotencyKey, { promise: null, createdAt: Date.now(), result });
+          } else {
+            this._proactiveIdempotency.delete(idempotencyKey);
+          }
+          return result;
+        }, (error) => {
+          this._proactiveIdempotency.delete(idempotencyKey);
+          throw error;
+        });
       this._proactiveIdempotency.set(idempotencyKey, { promise, createdAt: Date.now(), result: null });
       return promise;
     }
-    return this._sendProactiveOnce(cleaned, targetAgentId, opts, null);
+    return this._sendProactiveOnce(cleaned, targetAgentId, opts);
   }
 
   _getProactiveIdempotentDelivery(idempotencyKey) {
@@ -2945,21 +3119,20 @@ export class BridgeManager {
 
   _pruneProactiveIdempotency(now = Date.now()) {
     for (const [key, entry] of this._proactiveIdempotency) {
-      if (now - entry.createdAt > IDEMPOTENCY_TTL_MS) this._proactiveIdempotency.delete(key);
+      if (!entry.promise && now - entry.createdAt > IDEMPOTENCY_TTL_MS) this._proactiveIdempotency.delete(key);
     }
   }
 
   /**
    * Single proactive attempt (caller already cleaned non-empty text).
    * Never returns null: success object, or `{ ok: false, error, deliveries, message? }`.
-   * Fan-out aggregate prefers `send_failed` over `reply_context_unavailable` when both occur.
+   * An uncertain write is observable and must never become an automatic retry.
    */
-  async _sendProactiveOnce(cleaned, targetAgentId, opts: any = {}, idempotencyKey = null) {
+  async _sendProactiveOnce(cleaned, targetAgentId, opts: ProactiveOptions = {}): Promise<ProactiveResult> {
     const contextPolicy = opts.contextPolicy || "record_when_delivered";
     const explicitTarget = normalizeProactiveBridgeDeliveryTarget(opts.deliveryTarget, targetAgentId);
     const { bridgePlatforms, invalidBridgePlatforms } = normalizeBridgePlatforms(opts.bridgePlatforms);
     if (invalidBridgePlatforms.length) {
-      if (idempotencyKey) this._proactiveIdempotency.delete(idempotencyKey);
       throw new Error(`unsupported bridge platform: ${invalidBridgePlatforms.join(", ")}`);
     }
     const platformEntries = [...this._platforms.values()];
@@ -2972,12 +3145,13 @@ export class BridgeManager {
       ? bridgePlatforms.flatMap((platform) => platformEntries.filter((entry) => entry.platform === platform))
       : platformEntries;
     const fanOut = !explicitTarget && bridgePlatforms.length > 0;
-    const deliveries = [];
+    const deliveries: ProactiveDelivery[] = [];
     let sawBoundConnected = false;
     let sawResolvedTarget = false;
     let sawReplyContextUnavailable = false;
     let sawSendFailed = false;
     let lastSendError = null;
+    let unknownFailure: UnknownDeliveryFailure | null = null;
 
     for (const entry of deliveryEntries) {
       if (entry.status !== "connected" || !entry.adapter) continue;
@@ -3047,7 +3221,7 @@ export class BridgeManager {
           isGroup: false, ts: Date.now(),
         });
 
-        const delivery = { status: "sent", platform, chatId, sessionKey, recorded };
+        const delivery: ProactiveDelivery = { status: "sent", platform, chatId, sessionKey, recorded };
         deliveries.push(delivery);
         if (!fanOut) {
           const result = {
@@ -3057,16 +3231,18 @@ export class BridgeManager {
             recorded,
             deliveries: [delivery],
           };
-          if (idempotencyKey) {
-            this._proactiveIdempotency.set(idempotencyKey, {
-              promise: null,
-              createdAt: Date.now(),
-              result,
-            });
-          }
           return result;
         }
       } catch (err) {
+        const failure = unknownDeliveryFailure(err);
+        if (failure) {
+          unknownFailure = failure;
+          deliveries.push({ status: "unknown", platform, chatId, error: "delivery_unknown", deliveryUnknown: true, failure });
+          log.warn(`proactive delivery outcome unknown (${platform}): ${failure.message}`);
+          debugLog()?.warn("bridge", `proactive delivery outcome unknown (${platform}): ${failure.message}`);
+          if (!fanOut) break;
+          continue;
+        }
         sawSendFailed = true;
         lastSendError = err.message;
         deliveries.push({
@@ -3080,6 +3256,13 @@ export class BridgeManager {
       }
     }
 
+    if (unknownFailure) {
+      return {
+        ok: false, error: "delivery_unknown", deliveryUnknown: true,
+        message: unknownFailure.message, failure: unknownFailure, deliveries,
+      };
+    }
+
     const successful = deliveries.filter((delivery) => delivery.status === "sent");
     if (successful.length) {
       const primary = successful[0];
@@ -3090,17 +3273,8 @@ export class BridgeManager {
         recorded: successful.some((delivery) => delivery.recorded === true),
         deliveries,
       };
-      if (idempotencyKey) {
-        this._proactiveIdempotency.set(idempotencyKey, {
-          promise: null,
-          createdAt: Date.now(),
-          result,
-        });
-      }
       return result;
     }
-
-    if (idempotencyKey) this._proactiveIdempotency.delete(idempotencyKey);
 
     let error = "target_missing";
     // Prefer send_failed when present: a transport throw is more actionable than a

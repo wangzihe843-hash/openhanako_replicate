@@ -22,7 +22,7 @@ import { execSync } from "child_process";
 import { builtinModules } from "module";
 import { pathToFileURL } from "url";
 import ts from "typescript";
-import { buildSync } from "esbuild";
+import { build as esbuildBuild, buildSync } from "esbuild";
 import {
   buildAnydocRuntimeSmokeScript,
   buildBetterSqliteRuntimeSmokeScript,
@@ -181,6 +181,51 @@ export function buildViteServerBundle({ rootDir, viteBundleDir, bundleOutDir, en
 
   fs.cpSync(viteBundleDir, bundleOutDir, { recursive: true });
   log("[build-server] Vite bundle copied to bundle/");
+}
+
+export const FEISHU_WORKER_SOURCE = "lib/bridge/feishu-worker.ts";
+export const FEISHU_WORKER_BUNDLE = "bundle/feishu-worker.js";
+
+/**
+ * Keep the Worker in its own Node bundle. The main Vite bundle deliberately
+ * remains a single entry with inlineDynamicImports to preserve its cycle
+ * ordering. Use that build's external rules and locked dependency installer.
+ */
+export async function buildFeishuWorkerBundle({ rootDir, bundleOutDir, log = (msg) => console.log(msg) }) {
+  const entry = path.join(rootDir, FEISHU_WORKER_SOURCE);
+  if (!fs.existsSync(entry)) throw new Error(`[build-server] required Worker source missing: ${FEISHU_WORKER_SOURCE}`);
+  const viteConfig = (await import(pathToFileURL(path.join(rootDir, "vite.config.server.js")).href)).default;
+  const externals = viteConfig.build?.rollupOptions?.external;
+  if (!Array.isArray(externals)) throw new Error("[build-server] vite.config.server.js external must be an array");
+  const built = await esbuildBuild({
+    absWorkingDir: rootDir,
+    entryPoints: [FEISHU_WORKER_SOURCE],
+    outfile: path.join(bundleOutDir, "feishu-worker.js"),
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: "node24",
+    plugins: [{
+      name: "server-externals",
+      setup(build) {
+        build.onResolve({ filter: /.*/ }, ({ path: specifier }) => {
+          const external = externals.some((rule) => {
+            if (typeof rule === "string") return rule === specifier;
+            if (!(rule instanceof RegExp)) return false;
+            rule.lastIndex = 0;
+            return rule.test(specifier);
+          });
+          return external ? { path: specifier, external: true } : undefined;
+        });
+      },
+    }],
+    banner: { js: "import { createRequire as __hanaCreateRequire } from 'node:module';\nconst require = __hanaCreateRequire(import.meta.url);" },
+    logLevel: "silent",
+  });
+  if (built.warnings.length > 0) {
+    throw new Error(`[build-server] Feishu Worker bundle warnings: ${built.warnings.map((warning) => warning.text).join("; ")}`);
+  }
+  log(`[build-server] Feishu Worker copied to ${FEISHU_WORKER_BUNDLE}`);
 }
 
 // cli/server-runner.ts and cli/bundle.ts use locally bound createRequire
@@ -375,7 +420,7 @@ function removeBinDirs(nmDir) {
  * node_modules/.bin removal).
  *
  * @param {{
- *   rootDir: string, outDir: string, bundleOutDir: string,
+ *   rootDir: string, outDir: string, bundleOutDir: string, bundleFiles?: string[],
  *   platform: string, arch: string, isWin: boolean,
  *   runWithTargetNode: (cmd: string, opts?: object) => void,
  *   cachedNpmCli: string,
@@ -395,6 +440,7 @@ export async function resolveAndInstallExternalServerDeps({
   runWithTargetNode,
   cachedNpmCli,
   extraPackageNames = [],
+  bundleFiles = ["index.js"],
   pinnedTransitiveDeps = ["lru-cache"],
   log = (msg) => console.log(msg),
 }) {
@@ -433,9 +479,9 @@ export async function resolveAndInstallExternalServerDeps({
     externalDeps[packageName] = deps[packageName];
   }
 
-  const bundleExternalImports = collectBareImportPackageNames(
-    fs.readFileSync(path.join(bundleOutDir, "index.js"), "utf-8"),
-  ).filter((packageName) => !builtinSet.has(packageName));
+  const bundleExternalImports = [...new Set(bundleFiles.flatMap((file) => collectBareImportPackageNames(
+    fs.readFileSync(path.join(bundleOutDir, file), "utf-8"),
+  )))].filter((packageName) => !builtinSet.has(packageName));
   const missingBundleExternalDeps = bundleExternalImports
     .filter((packageName) => !externalDeps[packageName]);
   if (missingBundleExternalDeps.length > 0) {
@@ -594,6 +640,13 @@ export async function pruneServerNodeModulesViaNft({
   env = process.env,
   log = (msg) => console.log(msg),
 }) {
+  // A missing runtime entry is a broken product, even when optional tracing
+  // is disabled or NFT would otherwise fall back to retaining dependencies.
+  for (const root of nftRoots) {
+    if (!fs.existsSync(path.join(outDir, root)) || !fs.statSync(path.join(outDir, root)).isFile()) {
+      throw new Error(`[build-server] required runtime root missing: ${root}`);
+    }
+  }
   const nmDir = path.join(outDir, "node_modules");
   const shouldRunNftTrace = env.HANA_BUILD_SERVER_NFT_TRACE === "1"
     || (platform !== "win32" && env.HANA_BUILD_SERVER_NFT_TRACE !== "0");

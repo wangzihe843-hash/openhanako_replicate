@@ -7,6 +7,7 @@
 
 import { Type, StringEnum } from "../pi-sdk/index.ts";
 import { t } from "../i18n.ts";
+import { unknownDeliveryFailure } from "../../shared/errors.ts";
 
 const NOTIFY_CHANNELS = new Set(["auto", "desktop", "bridge_owner"]);
 const NOTIFY_BRIDGE_PLATFORMS = new Set(["wechat", "feishu", "dingtalk", "telegram", "qq"]);
@@ -107,20 +108,30 @@ export function createNotifyTool({ onNotify }) {
             ? ctx.notificationContext
             : null,
         });
-        const sent = result?.ok !== false;
+        const uncertain = unknownDeliveryFailure(result?.failure) || unknownDeliveryFailure(result);
+        const sent = !uncertain && result?.ok !== false;
         const failure = Array.isArray(result?.deliveries)
           ? result.deliveries.find((d) => d?.status === "failed")?.error
           : null;
         return {
           content: [{
             type: "text",
-            text: sent
+            text: uncertain
+              ? t("error.notifyDeliveryUnknown", { title })
+              : sent
               ? t("error.notifySent", { title })
               : t("error.notifyFailed", { msg: failure || "delivery failed" }),
           }],
-          details: { title, body, sent, result },
+          details: { title, body, sent, result, ...(uncertain ? { deliveryUnknown: true, failure: uncertain } : {}) },
         };
       } catch (err) {
+        const uncertain = unknownDeliveryFailure(err);
+        if (uncertain) {
+          return {
+            content: [{ type: "text", text: t("error.notifyDeliveryUnknown", { title }) }],
+            details: { title, body, sent: false, deliveryUnknown: true, failure: uncertain },
+          };
+        }
         return {
           content: [{ type: "text", text: t("error.notifyFailed", { msg: err.message }) }],
           details: { title, body, sent: false, error: err.message },

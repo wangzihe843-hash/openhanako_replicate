@@ -29,6 +29,7 @@
  *     bundle/
  *       index.js              ← server/main-open.ts 的 Vite bundle
  *       cli.js                ← cli/entry.ts 的 esbuild bundle（CLI 全量开源，无需拆分）
+ *       feishu-worker.js      ← 飞书绑定的独立 Node Worker
  *     lib/                    ← 白名单覆盖的数据文件子集
  *     package.json / package-lock.json / node_modules/  ← external deps
  */
@@ -38,11 +39,14 @@ import { fileURLToPath } from "url";
 import {
   applyPlatformPackageTrim,
   buildCliBundle,
+  buildFeishuWorkerBundle,
   buildViteServerBundle,
   CLI_RUNTIME_FILES,
   copyServerBootstrap,
   copyServerDataFiles,
   finalizeServerPackageJsonVersion,
+  FEISHU_WORKER_BUNDLE,
+  FEISHU_WORKER_SOURCE,
   prepareNodeRuntime,
   pruneServerNodeModulesViaNft,
   resolveAndInstallExternalServerDeps,
@@ -87,6 +91,7 @@ export const OPEN_LIB_TEMPLATE_DIRS = [
 export function declaredOpenBuildInputPaths() {
   return [
     OPEN_BUNDLE_ENTRY,
+    FEISHU_WORKER_SOURCE,
     "cli/entry.ts",
     ...CLI_RUNTIME_FILES,
     "server/bootstrap.ts",
@@ -163,6 +168,7 @@ async function main() {
   const bundleOutDir = path.join(outDir, "bundle");
   buildViteServerBundle({ rootDir: ROOT, viteBundleDir, bundleOutDir, entry: OPEN_BUNDLE_ENTRY });
   buildCliBundle({ rootDir: ROOT, bundleOutDir });
+  await buildFeishuWorkerBundle({ rootDir: ROOT, bundleOutDir });
   copyServerBootstrap({ rootDir: ROOT, outDir });
 
   // ── 3. 复制运行时数据文件（白名单/证据覆盖的子集，不含 locales）──
@@ -186,13 +192,14 @@ async function main() {
     runWithTargetNode,
     cachedNpmCli,
     extraPackageNames: [],
+    bundleFiles: ["index.js", "feishu-worker.js"],
   });
 
   // ── 7. @vercel/nft 追踪 ──
   await pruneServerNodeModulesViaNft({
     outDir,
     platform,
-    nftRoots: ["bundle/index.js"],
+    nftRoots: ["bundle/index.js", FEISHU_WORKER_BUNDLE],
     externalPackageNames: Object.keys(externalPkg.dependencies),
     runWithTargetNode,
   });

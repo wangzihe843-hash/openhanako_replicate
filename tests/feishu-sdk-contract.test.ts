@@ -40,7 +40,7 @@ vi.mock("../lib/bridge/optional-sdks.ts", async () => {
   }
 
   class MockWSClient {
-    wsConfig = { wsInstance: { readyState: 1 } };
+    getConnectionStatus() { return { state: "connected" }; }
     async start() {}
     close() {}
   }

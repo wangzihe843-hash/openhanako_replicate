@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../lib/bridge/telegram-adapter.ts", () => ({ createTelegramAdapter: vi.fn() }));
-vi.mock("../lib/bridge/feishu-adapter.ts", () => ({ createFeishuAdapter: vi.fn() }));
+vi.mock("../lib/bridge/feishu-worker-adapter.ts", () => ({ createFeishuWorkerAdapter: vi.fn() }));
 vi.mock("../lib/bridge/dingtalk-adapter.ts", () => ({ createDingTalkAdapter: vi.fn() }));
 vi.mock("../lib/bridge/qq-adapter.ts", () => ({ createQQAdapter: vi.fn() }));
 vi.mock("../lib/bridge/wechat-adapter.ts", () => ({ createWechatAdapter: vi.fn() }));
@@ -13,7 +13,7 @@ vi.mock("../core/llm-client.ts", () => ({ callText: vi.fn() }));
 
 import { BridgeManager } from "../lib/bridge/bridge-manager.ts";
 import { createTelegramAdapter } from "../lib/bridge/telegram-adapter.ts";
-import { createFeishuAdapter } from "../lib/bridge/feishu-adapter.ts";
+import { createFeishuWorkerAdapter as createFeishuAdapter } from "../lib/bridge/feishu-worker-adapter.ts";
 import { SlashCommandDispatcher } from "../core/slash-command-dispatcher.ts";
 import { RcStateStore } from "../core/slash-commands/rc-state.ts";
 import { bridgeCommands } from "../core/slash-commands/bridge-commands.ts";

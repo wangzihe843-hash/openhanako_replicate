@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { canonicalFilesystemPathSync } from "../shared/link-aware-fs.ts";
 
 vi.mock("../lib/bridge/telegram-adapter.js", () => ({ createTelegramAdapter: vi.fn() }));
-vi.mock("../lib/bridge/feishu-adapter.js", () => ({ createFeishuAdapter: vi.fn() }));
+vi.mock("../lib/bridge/feishu-worker-adapter.ts", () => ({ createFeishuWorkerAdapter: vi.fn() }));
 vi.mock("../lib/bridge/qq-adapter.js", () => ({ createQQAdapter: vi.fn() }));
 vi.mock("../lib/bridge/wechat-adapter.js", () => ({ createWechatAdapter: vi.fn() }));
 vi.mock("../lib/debug-log.js", () => ({

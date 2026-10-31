@@ -16,6 +16,9 @@ import {
 
 const originalGlobalDispatcher = getGlobalDispatcher();
 let currentConfig = normalizeNetworkProxyConfig(undefined);
+let currentProxyEnvironment = process.env;
+let proxyConfigVersion = 0;
+const proxyConfigSubscribers = new Set<(snapshot: ReturnType<typeof getOutboundProxySnapshot>) => void>();
 let currentDispatcher: any = null;
 const nodeProxyAgentCache = new Map<NodeJS.ProcessEnv, NodeProxyAgent>();
 let undiciProxyDispatcherCache: Map<string, any> = new Map();
@@ -124,8 +127,10 @@ export function createOutboundProxyRuntime({ log = (..._args: any[]) => {}, warn
       resetNodeProxyAgentCache(true);
       resetUndiciProxyDispatcherCache();
       currentConfig = normalized;
+      currentProxyEnvironment = env;
       currentDispatcher = nextDispatcher;
       setGlobalDispatcher((nextDispatcher || originalGlobalDispatcher) as any);
+      publishProxyConfig();
       const modeDesc = describeProxyMode(normalized, env);
       log(`[proxy] outbound mode=${modeDesc}`);
       if (modeDesc === "system-env") {
@@ -146,14 +151,32 @@ export function createOutboundProxyRuntime({ log = (..._args: any[]) => {}, warn
       resetNodeProxyAgentCache();
       resetUndiciProxyDispatcherCache();
       currentConfig = normalizeNetworkProxyConfig(undefined);
+      currentProxyEnvironment = process.env;
       currentDispatcher = null;
       setGlobalDispatcher(originalGlobalDispatcher);
+      publishProxyConfig();
     },
   };
 }
 
 export function getOutboundProxyConfig() {
   return currentConfig;
+}
+
+// Worker isolates do not share module state or the runtime's environment seam.
+// Send the effective policy, without applying another global dispatcher there.
+export function getOutboundProxySnapshot() {
+  return { version: proxyConfigVersion, config: { ...buildEffectiveProxyConfig(currentConfig, currentProxyEnvironment) } };
+}
+
+export function subscribeOutboundProxyConfig(listener: (snapshot: ReturnType<typeof getOutboundProxySnapshot>) => void) {
+  proxyConfigSubscribers.add(listener);
+  return () => { proxyConfigSubscribers.delete(listener); };
+}
+
+function publishProxyConfig() {
+  proxyConfigVersion++;
+  for (const listener of proxyConfigSubscribers) listener(getOutboundProxySnapshot());
 }
 
 function getNodeProxyAgent(env = process.env) {

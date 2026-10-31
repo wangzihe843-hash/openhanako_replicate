@@ -6,8 +6,12 @@
  */
 
 import { loadFeishuSdk } from "./optional-sdks.ts";
-import { debugLog } from "../debug-log.ts";
-import { downloadMedia, detectMime, formatSize, streamToBuffer } from "./media-utils.ts";
+import { setTimeout as delay } from "node:timers/promises";
+import type { Readable } from "node:stream";
+import { redactLogText } from "../../shared/log-redactor.ts";
+import { createFeishuTransport, FEISHU_HANDSHAKE_TIMEOUT_MS } from "./feishu-transport.ts";
+import type { FeishuTransportOptions } from "./feishu-transport.ts";
+import { downloadMedia, detectMime, formatSize } from "./media-utils.ts";
 import { createMediaCapabilities } from "./media-capabilities.ts";
 import { createStreamingCapabilities } from "./streaming-capabilities.ts";
 import {
@@ -73,7 +77,6 @@ export const FEISHU_CARDKIT_STREAMING_CAPABILITIES = createStreamingCapabilities
   source: "https://open.feishu.cn/api-explorer?from=op_doc_tab&apiName=content&project=cardkit&resource=card.element&version=v1",
 });
 
-const FEISHU_WS_OPEN = 1;
 const FEISHU_WS_INITIAL_POLL_MS = 500;
 const FEISHU_WS_INITIAL_MAX_CHECKS = 20;
 const FEISHU_WS_HEALTH_INTERVAL_MS = 30_000;
@@ -269,6 +272,10 @@ function describeFeishuError(err: any) {
 function wrapFeishuError(label: any, err: any) {
   const wrapped = new Error(`飞书${label}失败：${describeFeishuError(err)}`);
   (wrapped as any).cause = err;
+  // Preserve only the fields callers use; the Worker protocol excludes cause.
+  for (const key of ["name", "code", "status", "log_id", "logId", "operation", "actualBytes", "maxBytes", "deliveryUnknown"]) {
+    if (err?.[key] !== undefined) (wrapped as Error & Record<string, unknown>)[key] = err[key];
+  }
   return wrapped;
 }
 
@@ -338,11 +345,6 @@ function parseFeishuMessageContent(message: any) {
   }
 }
 
-function warnFeishuInbound(message: any) {
-  log.warn(`${message}`);
-  debugLog()?.warn("bridge", message);
-}
-
 function diagnosticText(message: any) {
   return `[${message}]`;
 }
@@ -352,7 +354,9 @@ function normalizePostAtText(item: any) {
   return id ? `@${id}` : "@unknown";
 }
 
-function normalizeFeishuPost(message: any, content: any) {
+type FeishuInboundMessage = { message_id?: string; message_type?: string; content?: unknown };
+
+function normalizeFeishuPost(message: FeishuInboundMessage, content: ReturnType<typeof parseFeishuMessageContent>, warn: (message: string) => void) {
   const attachments = [];
   const diagnostics = [];
   const localePayload = content?.zh_cn
@@ -361,7 +365,7 @@ function normalizeFeishuPost(message: any, content: any) {
     || (Array.isArray(content?.content) ? content : null);
   if (!localePayload) {
     const detail = "Unsupported Feishu post content: missing locale content";
-    warnFeishuInbound(detail);
+    warn(detail);
     return { text: diagnosticText(detail), attachments };
   }
 
@@ -411,17 +415,17 @@ function normalizeFeishuPost(message: any, content: any) {
     if (line) lines.push(line);
   }
 
-  for (const detail of diagnostics) warnFeishuInbound(detail);
+  for (const detail of diagnostics) warn(detail);
   const textParts = [...lines, ...diagnostics.map(diagnosticText)];
   return { text: textParts.join("\n"), attachments };
 }
 
-function normalizeFeishuInboundMessage(message: any) {
+function normalizeFeishuInboundMessage(message: FeishuInboundMessage, warn: (message: string) => void) {
   let content;
   try {
     content = parseFeishuMessageContent(message);
   } catch (err) {
-    warnFeishuInbound(err.message);
+    warn(err.message);
     return { text: diagnosticText(err.message), attachments: [] };
   }
 
@@ -429,7 +433,7 @@ function normalizeFeishuInboundMessage(message: any) {
     return { text: content.text || "", attachments: [] };
   }
   if (message.message_type === "post") {
-    return normalizeFeishuPost(message, content);
+    return normalizeFeishuPost(message, content, warn);
   }
   if (message.message_type === "image") {
     return {
@@ -478,14 +482,20 @@ function normalizeFeishuInboundMessage(message: any) {
   }
 
   const detail = `Unsupported Feishu message type: ${message.message_type || "unknown"}`;
-  warnFeishuInbound(detail);
+  warn(detail);
   return { text: diagnosticText(detail), attachments: [] };
 }
 
-async function bufferFromFeishuDownload(resp: any, label: any) {
-  let stream;
+// Match the existing inbound media ceiling before materializing/copying a
+// resource across the Worker boundary. Upload input is capped at 30 MiB below.
+const FEISHU_DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024;
+const FEISHU_REMOTE_MEDIA_MAX_BYTES = 30 * 1024 * 1024;
+
+async function bufferFromFeishuDownload(resp: unknown, label: string, maxBytes = FEISHU_DOWNLOAD_MAX_BYTES) {
+  let stream: Readable;
   try {
-    stream = resp?.getReadableStream ? resp.getReadableStream() : resp;
+    const resource = resp as { getReadableStream?: () => Readable };
+    stream = resource?.getReadableStream ? resource.getReadableStream() : resp as Readable;
   } catch (err) {
     throw wrapFeishuError(label, err);
   }
@@ -493,7 +503,20 @@ async function bufferFromFeishuDownload(resp: any, label: any) {
     throw new Error(`飞书${label}失败：SDK 未返回可读流`);
   }
   try {
-    return await streamToBuffer(stream);
+    const chunks: Buffer[] = [];
+    let actualBytes = 0;
+    for await (const chunk of stream) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      actualBytes += bytes.byteLength;
+      if (actualBytes > maxBytes) {
+        stream.destroy?.();
+        throw Object.assign(new Error(`飞书${label}超出媒体大小上限`), {
+          code: "FEISHU_MEDIA_TOO_LARGE", operation: label, actualBytes, maxBytes,
+        });
+      }
+      chunks.push(bytes);
+    }
+    return Buffer.concat(chunks, actualBytes);
   } catch (err) {
     throw wrapFeishuError(label, err);
   }
@@ -507,16 +530,59 @@ async function bufferFromFeishuDownload(resp: any, label: any) {
  * @param {(status: string, error?: string) => void} [opts.onStatus]
  * @returns {{ sendReply, stop }}
  */
-export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessage, onStatus }: Record<string, any>) {
+type FeishuAdapterOptions = FeishuTransportOptions & {
+  appId: string;
+  appSecret: string;
+  region?: string;
+  agentId: string;
+  onMessage: (message: Record<string, unknown>) => void;
+  onStatus?: (status: string, error?: string) => void;
+  onDiagnostic?: (level: "info" | "warn" | "error", message: string) => void;
+};
+
+export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessage, onStatus, getProxyConfig, onDiagnostic, onFatal }: FeishuAdapterOptions) {
   const feishuDomain = resolveFeishuDomain(region);
   const lark = loadFeishuSdk();
-  const client = new lark.Client({ appId, appSecret, domain: feishuDomain.sdkDomain });
+  const transport = createFeishuTransport({
+    getProxyConfig,
+    onFatal: error => { try { stopAdapter(); } finally { onFatal?.(error); } },
+  });
+  let stopped = false;
+  const diagnostic = (...parts: unknown[]) => {
+    const message = parts.flat(2).map(part => typeof part === "string" ? part : describeFeishuError(part)).join(" ");
+    return redactLogText(appSecret ? message.split(appSecret).join("[REDACTED]") : message)
+      .replace(/\b(socks(?:4a?|5h?)?|https?):\/\/[^@\s/]+@/gi, "$1://[credentials]@");
+  };
+  const emitDiagnostic = (level: "info" | "warn" | "error", ...parts: unknown[]) => {
+    if (stopped) return;
+    const message = diagnostic(...parts);
+    if (onDiagnostic) { onDiagnostic(level, message); return; }
+    if (level === "info") log.log(message);
+    else log[level](message);
+  };
+  const warnFeishuInbound = (message: string) => emitDiagnostic("warn", message);
+  const logger = {
+    trace: (...parts: unknown[]) => emitDiagnostic("info", ...parts),
+    debug: (...parts: unknown[]) => emitDiagnostic("info", ...parts),
+    info: (...parts: unknown[]) => emitDiagnostic("info", ...parts),
+    warn: (...parts: unknown[]) => emitDiagnostic("warn", ...parts),
+    error: (...parts: unknown[]) => emitDiagnostic("error", ...parts),
+  };
+  const client = new lark.Client({ appId, appSecret, domain: feishuDomain.sdkDomain, httpInstance: transport.httpInstance, logger, loggerLevel: lark.LoggerLevel.warn });
+
+  async function perform<T>(label: string, fn: () => Promise<T>, options = {}): Promise<T> {
+    transport.assertActive();
+    const response = await callFeishu(label, fn, options);
+    transport.assertActive();
+    return response;
+  }
 
   /** 用户信息缓存 { [openId]: { name, avatarUrl } }，LRU 上限 200 */
   const userCache = new Map();
   const USER_CACHE_MAX = 200;
 
   async function getUserInfo(openId) {
+    transport.assertActive();
     const cached = userCache.get(openId);
     // 只使用成功缓存（有 name 的），失败的下次重试
     if (cached?.name) {
@@ -531,11 +597,12 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
         path: { user_id: openId },
         params: { user_id_type: "open_id" },
       });
+      transport.assertActive();
       const user = res?.data?.user;
       // 优先 nickname（用户昵称）→ en_name → name（真名，最后 fallback）
       const displayName = user?.nickname || user?.en_name || user?.name || null;
       const avatarUrl = user?.avatar?.avatar_240 || user?.avatar?.avatar_72 || null;
-      log.log(`getUserInfo succeeded (cached: ${!!cached})`);
+      emitDiagnostic("info", `getUserInfo succeeded (cached: ${!!cached})`);
       const info = { name: displayName, avatarUrl };
       if (info.name) {
         userCache.set(openId, info);
@@ -547,19 +614,20 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
       }
       return info;
     } catch {
-      log.error("getUserInfo failed");
+      if (!stopped) emitDiagnostic("error", "getUserInfo failed");
       return { name: null, avatarUrl: null };
     }
   }
 
-  const eventDispatcher = new lark.EventDispatcher({}).register({
+  const eventDispatcher = new lark.EventDispatcher({ logger, loggerLevel: lark.LoggerLevel.warn }).register({
     "im.message.receive_v1": async (data) => {
+      if (stopped) return;
       const { message, sender } = data;
 
       // 只忽略本应用自己的回声；如果飞书投递其他 bot/app 消息，让上层会话策略决定。
       if (isSelfFeishuBotSender(sender, appId)) return;
 
-      const normalized = normalizeFeishuInboundMessage(message);
+      const normalized = normalizeFeishuInboundMessage(message, warnFeishuInbound);
       let text = normalized.text || "";
       const attachments = normalized.attachments || [];
 
@@ -567,7 +635,7 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
 
       const MAX_MSG_SIZE = 100_000;
       if (text.length > MAX_MSG_SIZE) {
-        log.warn(`消息过大（${text.length} chars），已截断`);
+        emitDiagnostic("warn", `消息过大（${text.length} chars），已截断`);
         text = text.slice(0, MAX_MSG_SIZE);
       }
 
@@ -581,6 +649,8 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
       const userInfo = isFeishuBotSender(sender)
         ? { name: (sender.sender_id as any)?.app_id || "Feishu Bot", avatarUrl: null }
         : await getUserInfo(openId);
+
+      if (stopped) return;
 
       onMessage({
         platform: "feishu",
@@ -602,9 +672,12 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
     appSecret,
     domain: feishuDomain.sdkDomain,
     loggerLevel: lark.LoggerLevel.warn,
+    logger,
+    httpInstance: transport.httpInstance,
+    agent: transport.agent,
+    handshakeTimeoutMs: FEISHU_HANDSHAKE_TIMEOUT_MS,
   });
 
-  let stopped = false;
   let startPromise = null;
   let connectionPollTimer = null;
   let healthTimer = null;
@@ -612,7 +685,7 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
   let lastReportedError = null;
 
   function isWsOpen() {
-    return (wsClient as any).wsConfig?.wsInstance?.readyState === FEISHU_WS_OPEN;
+    return wsClient.getConnectionStatus().state === "connected";
   }
 
   function clearConnectionPoll() {
@@ -630,6 +703,8 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
   }
 
   function reportStatus(status: any, error?: any) {
+    if (stopped) return;
+    error = error === undefined ? undefined : diagnostic(error);
     const normalizedError = error || null;
     if (lastReportedStatus === status && lastReportedError === normalizedError) return;
     lastReportedStatus = status;
@@ -650,7 +725,7 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
         return;
       }
 
-      log.error("WSClient disconnected");
+      emitDiagnostic("error", "WSClient disconnected");
       reportStatus("error", FEISHU_WS_DISCONNECTED_ERROR);
       startWsClient();
       scheduleHealthCheck();
@@ -672,7 +747,7 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
         scheduleHealthCheck();
       } else if (checks >= FEISHU_WS_INITIAL_MAX_CHECKS) {
         clearConnectionPoll();
-        log.error("WSClient not connected after 10s");
+        emitDiagnostic("error", "WSClient not connected after 10s");
         reportStatus("error", "WebSocket connection failed");
         scheduleHealthCheck();
       }
@@ -683,17 +758,21 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
     if (stopped) return Promise.resolve();
     if (startPromise || connectionPollTimer) return startPromise || Promise.resolve();
 
+    // start() resolves before discovery/handshake completes. Starting another
+    // generation on that same client can orphan the older attempt's socket.
+    const state = wsClient.getConnectionStatus().state;
+    if (state === "connecting" || state === "reconnecting") return Promise.resolve();
+
     // start() 调用 reConnect() 后立即 resolve，不等 WebSocket 连通。
-    // SDK 内部有自动重连机制，连接成功后 wsConfig.wsInstance 会被设置。
-    // 这里仅通过公开 start() 触发恢复，用 readyState 观察状态，避免依赖私有 reConnect()。
+    // SDK 内部有自动重连机制；仅使用公开连接状态和 start() 恢复终止的连接。
     startPromise = wsClient.start({ eventDispatcher })
       .then(() => {
         if (!stopped) pollConnectionAfterStart();
       })
       .catch((err) => {
-        const message = err?.message || String(err);
-        log.error(`WSClient start failed: ${message}`);
-        debugLog()?.error("bridge", `feishu WSClient start failed: ${message}`);
+        if (stopped) return;
+        const message = diagnostic(err);
+        emitDiagnostic("error", `WSClient start failed: ${message}`);
         reportStatus("error", message);
         scheduleHealthCheck();
       })
@@ -733,7 +812,7 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
   async function createOutboundMessage(chatId: string, rendered: FeishuOutboundMessage) {
     const payload = feishuOutboundCreatePayload(chatId, rendered);
     assertFeishuMessageBody("create", payload.data);
-    return callFeishu("消息发送", () => (
+    return perform("消息发送", () => (
       client.im.message.create(payload)
     ));
   }
@@ -791,11 +870,11 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
     if (rendered.kind === "interactive") {
       const payload = { path: { message_id: messageId }, data: { content: rendered.content } };
       assertFeishuMessageBody("patch", payload.data);
-      return callFeishu("消息更新", () => client.im.message.patch(payload));
+      return perform("消息更新", () => client.im.message.patch(payload));
     }
     const payload = feishuOutboundUpdatePayload(messageId, rendered);
     assertFeishuMessageBody("update", payload.data);
-    return callFeishu("消息更新", () => (
+    return perform("消息更新", () => (
       client.im.message.update(payload)
     ));
   }
@@ -824,6 +903,17 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
     state.messageId = messageId;
   }
 
+  function stopAdapter() {
+    if (stopped) return;
+    stopped = true;
+    clearConnectionPoll();
+    clearHealthTimer();
+    // Closing discovery is necessary before abort settles its continuation.
+    // The owning Worker still must exit to reclaim hidden SOCKS resources.
+    try { wsClient.close({ force: true }); }
+    finally { transport.close(); }
+  }
+
   return {
     region: feishuDomain.region,
     domain: feishuDomain.domain,
@@ -837,12 +927,13 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
 
     /** block streaming 专用：发一条气泡，两条之间加 humanDelay */
     async sendBlockReply(chatId, text) {
+      transport.assertActive();
       const now = Date.now();
       const lastTs = lastBlockTsMap.get(chatId) || 0;
       const elapsed = now - lastTs;
-      const delay = 800 + Math.random() * 1200; // 800~2000ms
-      if (lastTs && elapsed < delay) {
-        await new Promise(r => setTimeout(r, delay - elapsed));
+      const waitMs = 800 + Math.random() * 1200; // 800~2000ms
+      if (lastTs && elapsed < waitMs) {
+        await delay(waitMs - elapsed, undefined, { signal: transport.signal });
       }
       await createOutboundMessage(chatId, renderFeishuOutbound(text));
       // LRU: delete + set 确保活跃的 chatId 移到尾部（Map.set 对已有 key 不改变顺序）
@@ -884,7 +975,7 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
     },
 
     async startRichStreamReply(chatId, text) {
-      const createRes = await callFeishu("CardKit 卡片创建", () => client.cardkit.v1.card.create(
+      const createRes = await perform("CardKit 卡片创建", () => client.cardkit.v1.card.create(
         feishuCardKitCreatePayload(text),
       ));
       const cardId = extractFeishuCardId(createRes);
@@ -896,50 +987,62 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
       };
       const messagePayload = feishuCardInstanceMessagePayload(chatId, cardId);
       assertFeishuMessageBody("create", messagePayload.data);
-      await callFeishu("CardKit 卡片发送", () => client.im.message.create(messagePayload));
-      await callFeishu("CardKit 流式设置", () => setCardKitStreamingMode(state, true));
+      await perform("CardKit 卡片发送", () => client.im.message.create(messagePayload));
+      await perform("CardKit 流式设置", () => setCardKitStreamingMode(state, true));
       return state;
     },
 
     async updateRichStreamReply(_chatId, state: FeishuCardKitStreamState, text) {
       if (!state?.cardId) throw new Error("Feishu CardKit stream update requires cardId");
       if (!state?.elementId) throw new Error("Feishu CardKit stream update requires elementId");
-      await callFeishu("CardKit 内容更新", () => updateCardKitMarkdownContent(state, text));
+      await perform("CardKit 内容更新", () => updateCardKitMarkdownContent(state, text));
     },
 
     async finishRichStreamReply(chatId, state: FeishuCardKitStreamState, text) {
       await this.updateRichStreamReply(chatId, state, text);
-      await callFeishu("CardKit 流式关闭", () => setCardKitStreamingMode(state, false));
+      await perform("CardKit 流式关闭", () => setCardKitStreamingMode(state, false));
     },
 
     /** 下载飞书图片（通过 image_key） */
     async downloadImage(imageKey, messageId) {
       // 用户发来的图片需要通过消息资源接口下载；image.get 只适用于机器人自己上传的图片。
       const resp = messageId
-        ? await callFeishu("图片下载", () => client.im.messageResource.get({
+        ? await perform("图片下载", () => client.im.messageResource.get({
           path: { message_id: messageId, file_key: imageKey },
           params: { type: "image" },
         }), { recognizableErrorsOnly: true })
-        : await callFeishu(
+        : await perform(
           "图片下载",
           () => client.im.image.get({ path: { image_key: imageKey } }),
           { recognizableErrorsOnly: true },
         );
-      return bufferFromFeishuDownload(resp, "图片下载");
+      const buffer = await bufferFromFeishuDownload(resp, "图片下载");
+      transport.assertActive();
+      return buffer;
     },
 
     /** 下载飞书文件/音频/视频（通过 message_id + file_key） */
     async downloadFile(messageId, fileKey) {
-      const resp = await callFeishu("文件下载", () => client.im.messageResource.get({
+      const resp = await perform("文件下载", () => client.im.messageResource.get({
         path: { message_id: messageId, file_key: fileKey },
         params: { type: "file" },
       }), { recognizableErrorsOnly: true });
-      return bufferFromFeishuDownload(resp, "文件下载");
+      const buffer = await bufferFromFeishuDownload(resp, "文件下载");
+      transport.assertActive();
+      return buffer;
     },
 
     /** 发送媒体（图片走 image API，其他走 file API） */
     async sendMedia(chatId: any, url: any, metadata: Record<string, any> = {}) {
-      const buffer = await downloadMedia(url);
+      transport.assertActive();
+      if (url.startsWith("//")) url = `https:${url}`;
+      const buffer = /^https?:\/\//.test(url)
+        ? await bufferFromFeishuDownload(
+          await transport.httpInstance.get(url, { responseType: "stream" }),
+          "远程媒体下载", FEISHU_REMOTE_MEDIA_MAX_BYTES,
+        )
+        : await downloadMedia(url);
+      transport.assertActive();
       const filename = metadata.filename || (() => { try { return new URL(url).pathname.split("/").pop() || "file"; } catch { return "file"; } })();
       const mime = metadata.mime || detectMime(buffer, "application/octet-stream", filename);
       await this.sendMediaBuffer(chatId, buffer, { ...metadata, mime, filename });
@@ -947,15 +1050,16 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
 
     /** 发送本地 staged file 内容：MediaDeliveryService 负责归属校验和读入 Buffer。 */
     async sendMediaBuffer(chatId: any, buffer: any, metadata: Record<string, any> = {}) {
+      transport.assertActive();
       const filename = metadata.filename || "file";
       const mime = metadata.mime || detectMime(buffer, "application/octet-stream", filename);
       if (mime.startsWith("image/")) {
         assertUploadBuffer(buffer, "图片", (FEISHU_MEDIA_CAPABILITIES.maxBytes as any).buffer.image);
-        const res = await callFeishu("图片上传", () => client.im.image.create({
+        const res = await perform("图片上传", () => client.im.image.create({
           data: { image_type: "message", image: buffer },
         }));
         const imageKey = requireUploadKey(res, "image_key", "图片");
-        await callFeishu("消息发送", () => client.im.message.create({
+        await perform("消息发送", () => client.im.message.create({
           params: { receive_id_type: "chat_id" },
           data: {
             receive_id: chatId, msg_type: "image",
@@ -965,11 +1069,11 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
       } else {
         assertUploadBuffer(buffer, "文件", (FEISHU_MEDIA_CAPABILITIES.maxBytes as any).buffer.document);
         const { fileType, msgType } = feishuFileDelivery({ mime, filename });
-        const res = await callFeishu("文件上传", () => client.im.file.create({
-          data: { file_type: fileType as any, file_name: filename, file: buffer },
+        const res = await perform("文件上传", () => client.im.file.create({
+          data: { file_type: fileType as "opus" | "mp4" | "pdf" | "doc" | "xls" | "ppt" | "stream", file_name: filename, file: buffer },
         }));
         const fileKey = requireUploadKey(res, "file_key", "文件");
-        await callFeishu("消息发送", () => client.im.message.create({
+        await perform("消息发送", () => client.im.message.create({
           params: { receive_id_type: "chat_id" },
           data: {
             receive_id: chatId,
@@ -980,11 +1084,6 @@ export function createFeishuAdapter({ appId, appSecret, region, agentId, onMessa
       }
     },
 
-    stop() {
-      stopped = true;
-      clearConnectionPoll();
-      clearHealthTimer();
-      try { wsClient.close(); } catch {}
-    },
+    stop: stopAdapter,
   };
 }

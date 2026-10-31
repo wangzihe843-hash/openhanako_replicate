@@ -2866,6 +2866,7 @@
       "bridgeLoadFailed": "Failed to load Bridge conversations: {error}",
       "sendSuccess": "Sent to {target}",
       "sendFailed": "Failed to send to {target}: {error}",
+      "sendUnknown": "Delivery to {target} is uncertain; the file may already have arrived. Verify before sending it again.",
       "list": "Conversation file list",
       "sort": {
         "label": "Sort conversation files",
@@ -3189,6 +3190,7 @@
     "cronDisabled": "disabled",
     "notifySent": "Notification sent: {title}",
     "notifyFailed": "Notification failed: {msg}",
+    "notifyDeliveryUnknown": "Delivery outcome for notification “{title}” is unknown; it may already have arrived. Verify before retrying; do not automatically resend.",
     "artifactCreated": "Preview created: {title}",
     "pinnedAlreadyExists": "This is already in pinned memory.",
     "pinnedAdded": "Remembered: {content}",

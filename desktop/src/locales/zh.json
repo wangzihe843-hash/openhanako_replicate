@@ -2865,6 +2865,7 @@
       "bridgeLoadFailed": "加载 Bridge 会话失败：{error}",
       "sendSuccess": "已发送到 {target}",
       "sendFailed": "发送到 {target} 失败：{error}",
+      "sendUnknown": "发送到 {target} 的交付结果不明，文件可能已经送达。请先核对，不要重复发送。",
       "list": "对话文件列表",
       "sort": {
         "label": "对话文件排序",
@@ -3129,6 +3130,7 @@
     "cronDisabled": "已禁用",
     "notifySent": "已发送通知: {title}",
     "notifyFailed": "通知发送失败: {msg}",
+    "notifyDeliveryUnknown": "通知“{title}”的交付结果不明，可能已经送达。请先核对，不要自动重复发送。",
     "artifactCreated": "已创建预览: {title}",
     "pinnedAlreadyExists": "这条已经在置顶记忆里了。",
     "pinnedAdded": "已记住：{content}",

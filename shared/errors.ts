@@ -1,3 +1,48 @@
+import { redactLogText } from "./log-redactor.ts";
+
+export interface UnknownDeliveryFailure {
+  name: string;
+  message: string;
+  deliveryUnknown: true;
+  retryable: false;
+  code?: string | number;
+  log_id?: string;
+  phase?: string;
+  operation?: string;
+  status?: number;
+  actualBytes?: number;
+  maxBytes?: number;
+}
+
+/** A diagnostic copy for an uncertain write, never a retry decision for other errors. */
+export function unknownDeliveryFailure(value: unknown): UnknownDeliveryFailure | null {
+  if (!value || typeof value !== "object") return null;
+  // Read data fields only. Never copy request config, credentials, causes or stacks.
+  const field = (key: string): unknown => Object.getOwnPropertyDescriptor(value, key)?.value;
+  if (field("deliveryUnknown") !== true) return null;
+  const text = (key: string, fallback: string) => {
+    const raw = field(key);
+    return typeof raw === "string" ? redactLogText(raw).slice(0, 2048) : fallback;
+  };
+  const failure: UnknownDeliveryFailure = {
+    name: text("name", "Error"),
+    message: text("message", "Delivery outcome is unknown"),
+    deliveryUnknown: true,
+    retryable: false,
+  };
+  const code = field("code");
+  if (typeof code === "string") failure.code = redactLogText(code).slice(0, 128);
+  else if (typeof code === "number" && Number.isFinite(code)) failure.code = code;
+  for (const key of ["log_id", "phase", "operation"] as const) {
+    if (typeof field(key) === "string") failure[key] = text(key, "");
+  }
+  for (const key of ["status", "actualBytes", "maxBytes"] as const) {
+    const raw = field(key);
+    if (typeof raw === "number" && Number.isFinite(raw)) failure[key] = raw;
+  }
+  return failure;
+}
+
 export const ErrorSeverity = Object.freeze({
   CRITICAL: 'critical',
   DEGRADED: 'degraded',

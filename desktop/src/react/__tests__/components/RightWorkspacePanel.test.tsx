@@ -66,6 +66,7 @@ const tMap: Record<string, string> = {
   'rightWorkspace.sessionFiles.bridgeLoadFailed': '加载 Bridge 会话失败：boom',
   'rightWorkspace.sessionFiles.sendSuccess': '已发送到 Hana：飞书 · 小群',
   'rightWorkspace.sessionFiles.sendFailed': '发送到 Hana：飞书 · 小群 失败：boom',
+  'rightWorkspace.sessionFiles.sendUnknown': '发送到 Hana：飞书 · 小群 的结果不明，请先核对再决定是否重发。',
   'rightWorkspace.sessionFiles.list': '对话文件列表',
   'rightWorkspace.sessionFiles.sort.label': '对话文件排序',
   'rightWorkspace.sessionFiles.sort.timeDesc': '时间↓',
@@ -848,6 +849,47 @@ describe('RightWorkspacePanel', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     }));
+  });
+
+  it.each([
+    { outcome: 'unknown', body: { ok: false, error: 'delivery_unknown', deliveryUnknown: true }, toast: 'warning' },
+    { outcome: 'known rejection', body: { ok: false, error: 'known rejected' }, toast: 'error' },
+    { outcome: 'malformed failure', body: null, toast: 'error' },
+  ])('preserves the $outcome media result without automatically sending again', async ({ body, toast }) => {
+    let writes = 0;
+    vi.mocked(hanaFetch).mockImplementation(async (requestPath, init) => {
+      if (requestPath.startsWith('/api/bridge/sessions?platform=feishu')) {
+        return jsonResponse({ sessions: [{ sessionKey: 'fs_1', chatId: 'oc_chat', displayName: '小群' }] });
+      }
+      if (requestPath.startsWith('/api/bridge/send-media')) {
+        writes++;
+        // Match hanaFetch's real HTTP behavior: callers must request the error envelope.
+        if (init?.throwOnHttpError !== false) throw new Error('hanaFetch: 500 Internal Server Error');
+        return jsonResponse(body, 500);
+      }
+      return jsonResponse({ sessions: [] });
+    });
+    resetStore([{
+      type: 'message',
+      data: {
+        id: 'uncertain-media', role: 'assistant', timestamp: 1700000000000,
+        blocks: [{ type: 'file', fileId: 'sf_report', filePath: '/tmp/session-files/report.pdf', label: 'report.pdf', ext: 'pdf', status: 'available' }],
+      },
+    }]);
+    useStore.setState({ toasts: [] });
+
+    render(<RightWorkspacePanel />);
+    fireEvent.click(screen.getByRole('tab', { name: '对话文件' }));
+    fireEvent.contextMenu(screen.getByTestId('session-file-row'), { clientX: 24, clientY: 48 });
+    fireEvent.mouseEnter(screen.getByText('发送到...'));
+    fireEvent.click(await screen.findByText('Hana：飞书 · 小群'));
+
+    await waitFor(() => expect(useStore.getState().toasts).toHaveLength(1));
+    expect(useStore.getState().toasts[0]).toMatchObject({
+      type: toast,
+      text: tMap[`rightWorkspace.sessionFiles.${toast === 'warning' ? 'sendUnknown' : 'sendFailed'}`],
+    });
+    expect(writes).toBe(1);
   });
 
   it('opens pathless screenshot files through MediaViewer and disables path actions', () => {
