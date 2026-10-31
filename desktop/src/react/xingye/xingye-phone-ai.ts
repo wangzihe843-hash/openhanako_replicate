@@ -24,7 +24,9 @@ import {
   getPhoneContactGenerationState,
   getPhoneContactMeta,
   getPhoneContacts,
+  getPhoneAiGenerationState,
   getSmsThreads,
+  getSmsHistoryGenerationState,
   getSmsThread,
   getUnconsumedContactChangesForSms,
   getVirtualContacts,
@@ -859,102 +861,173 @@ export async function generateSmsHistoryWithAI(params: {
   const mode = params.mode ?? 'empty_only';
   const binding = captureXingyePersistenceBinding(ownerAgent.id);
   const smsContacts = contacts.filter(item => item.targetType !== 'user');
+  const targets = [...new Map(smsContacts
+    .filter(contact => mode !== 'empty_only' || !getSmsThread(ownerAgent.id, contact.targetType, contact.targetId, binding.storage)?.messages.length)
+    .map(contact => [`${contact.targetType}:${contact.targetId}`, contact] as const)).values()];
+  // The existing opaque message ID carries a receipt alongside the SMS itself,
+  // so a lost save acknowledgement cannot separate the two. Unknown legacy AI
+  // messages, incremental updates and confirmed drafts are never inferred here.
+  const historyPrefix = (target: SmsAnchorTarget) => `from-sms-history-v1:${JSON.stringify([ownerAgent.id, target.targetType, target.targetId])}:`;
+  const readCoverage = () => new Map<string, SmsAnchorTarget>((getSmsHistoryGenerationState(ownerAgent.id, binding.storage)?.contactsIncluded ?? [])
+    .filter(target => getSmsThread(ownerAgent.id, target.targetType, target.targetId, binding.storage)?.messages.some(message => message.source === 'ai_generated'))
+    .map(target => [`${target.targetType}:${target.targetId}`, target] as const));
+  const previousCoverage = readCoverage();
+  const previousRun = getPhoneAiGenerationState(ownerAgent.id, 'sms_history', binding.storage);
+  const previousStart = Date.parse(previousRun?.startedAt ?? '');
+  let resumeStartedAt: string | undefined;
+  const retrySaved = mode === 'empty_only' ? smsContacts.filter(contact => {
+    const prefix = historyPrefix(contact);
+    return getSmsThread(ownerAgent.id, contact.targetType, contact.targetId, binding.storage)?.messages.some(message => {
+      if (message.source !== 'ai_generated' || !message.id.startsWith(prefix)) return false;
+      const receipt = /^([a-z0-9]+):[a-z0-9-]+:[0-9]$/.exec(message.id.slice(prefix.length));
+      if (!receipt) return false;
+      const receiptStart = new Date(Number.parseInt(receipt[1], 36));
+      if (!Number.isFinite(receiptStart.getTime())) return false;
+      const recover = !previousCoverage.has(`${contact.targetType}:${contact.targetId}`)
+        // Coverage can exist only in memory when its save failed. Confirm that
+        // same operation, without promoting an older successful operation.
+        || ((previousRun?.status === 'failed' || previousRun?.status === 'running')
+          && Number.isFinite(previousStart) && receipt[1] === previousStart.toString(36));
+      if (recover) resumeStartedAt ??= receiptStart.toISOString();
+      return recover;
+    });
+  }) : [];
+  if (!targets.length && !retrySaved.length) return;
+  // Advance from the last start even when two invocations share a clock tick.
+  const startedAt = resumeStartedAt ?? new Date(Math.max(Date.now(), Number.isFinite(previousStart) ? previousStart + 1 : 0)).toISOString();
+  const nonce = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const operationId = `${Date.parse(startedAt).toString(36)}:${nonce}`;
+  const confirmed = new Map<string, SmsAnchorTarget>();
+  const recordCoverage = () => {
+    // Another history operation may have completed while this request awaited
+    // its model or save; merge its receipts instead of restoring our snapshot.
+    const included = readCoverage();
+    for (const [key, target] of confirmed) included.set(key, target);
+    setSmsHistoryGenerationState(ownerAgent.id, {
+      ownerAgentId: ownerAgent.id,
+      generatedAt: new Date().toISOString(),
+      profileFingerprint,
+      contactsIncluded: [...included.values()],
+      version: 1,
+    }, binding.storage);
+  };
   setPhoneAiGenerationState(ownerAgent.id, 'sms_history', {
     status: 'running',
-    startedAt: new Date().toISOString(),
+    startedAt,
     finishedAt: undefined,
     error: undefined,
     profileFingerprint,
     version: 1,
   });
   try {
+    if (retrySaved.length) {
+      await binding.commit();
+      binding.assertCurrent();
+      for (const contact of retrySaved) confirmed.set(`${contact.targetType}:${contact.targetId}`, { targetType: contact.targetType, targetId: contact.targetId });
+      recordCoverage();
+      await binding.commit();
+      binding.assertCurrent();
+    }
     const userName = await resolveXingyeSpeakerUserName();
     binding.assertCurrent();
-    const loreContextText = buildLoreContextForPhone({
-      agentId: ownerAgent.id,
-      purpose: 'phone_sms',
-      ownerProfile,
-      contacts: smsContacts,
-    });
-    // SMS 反重复连续性锚点：按联系人分组抽样近期已发/已收/待发的短信首段，
-    // 让模型为同一收件人换不同话题/情绪，不再复读「在吗？」「最近怎么样？」。
-    const continuityAnchorBlock = await buildSmsBatchContinuityAnchorBlock(
-      ownerAgent.id,
-      smsContacts.map((c) => ({ targetType: c.targetType, targetId: c.targetId, displayName: c.displayName })),
-    );
-    binding.assertCurrent();
-    // 联系人详情页反哺：已初始化详情的联系人带签名/IP/近期往来 + 与设定库的同一人对齐。
-    const contactDetailBlock = formatContactDetailPromptBlock(
-      buildContactDetailPromptHints(ownerAgent.id, smsContacts),
-    );
-    const prompt = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts: smsContacts, userName, loreContextText, continuityAnchorBlock, contactDetailBlock });
-    const { raw } = await requestPhoneAi({
-      kind: 'sms_history',
-      ownerAgentId: ownerAgent.id,
-      ownerProfile,
-      contacts: smsContacts,
-      existingThreads: getSmsThreads(ownerAgent.id).map(thread => ({
-        targetType: thread.targetType,
-        targetId: thread.targetId,
-        messageCount: thread.messages.length,
-      })),
-      prompt,
-      timeoutMs: 120_000,
-    });
-    binding.assertCurrent();
-    const payload = parsePayload(raw);
-    const contactIndexMap = new Map<string, number>();
-    smsContacts.forEach((contact, index) => {
-      contactIndexMap.set(`${contact.targetType}:${contact.targetId}`, index);
-    });
-    for (const suggestion of payload.contacts) {
-      if (suggestion.targetType === 'user') continue;
-      const contact = smsContacts.find(item => item.targetType === suggestion.targetType && item.targetId === suggestion.targetId);
-      if (!contact) continue;
-      if (!suggestion.messages?.length) continue;
-      const existingThread = getSmsThread(ownerAgent.id, suggestion.targetType as XingyeContactTargetType, suggestion.targetId);
-      if (mode === 'empty_only' && existingThread?.messages.length) continue;
-      const contactIndex = contactIndexMap.get(`${contact.targetType}:${contact.targetId}`) ?? 0;
-      const sortedMessages = suggestion.messages
-        .slice(0, 10)
-        .map((message, messageIndex) => ({
-          ...message,
-          createdAt: asValidIso((message as { createdAt?: unknown }).createdAt)
-            ?? getSmsFallbackCreatedAt({ contactIndex, messageIndex, status: contact.status }),
-        }))
-        .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
-      for (const message of sortedMessages) {
-        const content = message.content.trim();
-        if (!content) continue;
-        addSmsMessage({
-          ownerAgentId: ownerAgent.id,
-          targetType: suggestion.targetType as XingyeContactTargetType,
-          targetId: suggestion.targetId,
-          content: content.slice(0, 80),
-          direction: message.from === 'owner' ? 'outgoing' : 'incoming',
-          source: 'ai_generated',
-          createdAt: message.createdAt,
-        });
+    // Match the prompt's 12-card budget, after removing already-filled targets.
+    for (let offset = 0; offset < targets.length; offset += 12) {
+      binding.assertCurrent();
+      const batch = targets.slice(offset, offset + 12);
+      const loreContextText = buildLoreContextForPhone({
+        agentId: ownerAgent.id,
+        purpose: 'phone_sms',
+        ownerProfile,
+        contacts: batch,
+      });
+      const continuityAnchorBlock = await buildSmsBatchContinuityAnchorBlock(
+        ownerAgent.id,
+        batch.map(c => ({ targetType: c.targetType, targetId: c.targetId, displayName: c.displayName })),
+      );
+      binding.assertCurrent();
+      const contactDetailBlock = formatContactDetailPromptBlock(
+        buildContactDetailPromptHints(ownerAgent.id, batch),
+      );
+      const prompt = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts: batch, userName, loreContextText, continuityAnchorBlock, contactDetailBlock });
+      const { raw } = await requestPhoneAi({
+        kind: 'sms_history',
+        ownerAgentId: ownerAgent.id,
+        ownerProfile,
+        contacts: batch,
+        existingThreads: batch.flatMap(contact => {
+          const thread = getSmsThread(ownerAgent.id, contact.targetType, contact.targetId, binding.storage);
+          return thread ? [{ targetType: thread.targetType, targetId: thread.targetId, messageCount: thread.messages.length }] : [];
+        }),
+        prompt,
+        timeoutMs: 120_000,
+      });
+      binding.assertCurrent();
+      const payload = parsePayload(raw);
+      const saved = new Set<string>();
+      for (const suggestion of payload.contacts) {
+        if (suggestion.targetType === 'user') continue;
+        const contact = batch.find(item => item.targetType === suggestion.targetType && item.targetId === suggestion.targetId);
+        if (!contact || !suggestion.messages?.length) continue;
+        const key = `${contact.targetType}:${contact.targetId}`;
+        if (saved.has(key)) continue;
+        const existingThread = getSmsThread(ownerAgent.id, contact.targetType, contact.targetId, binding.storage);
+        if (mode === 'empty_only' && existingThread?.messages.length) continue;
+        const contactIndex = offset + batch.indexOf(contact);
+        const sortedMessages = suggestion.messages
+          .slice(0, 10)
+          .map((message, messageIndex) => ({
+            ...message,
+            createdAt: asValidIso((message as { createdAt?: unknown }).createdAt)
+              ?? getSmsFallbackCreatedAt({ contactIndex, messageIndex, status: contact.status }),
+          }))
+          .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+        let wroteMessage = false;
+        for (const [messageIndex, message] of sortedMessages.entries()) {
+          const content = message.content.trim();
+          if (!content) continue;
+          const thread = addSmsMessage({
+            ownerAgentId: ownerAgent.id,
+            targetType: contact.targetType,
+            targetId: contact.targetId,
+            content: content.slice(0, 80),
+            direction: message.from === 'owner' ? 'outgoing' : 'incoming',
+            source: 'ai_generated',
+            createdAt: message.createdAt,
+            messageId: `${historyPrefix(contact)}${operationId}:${messageIndex}`,
+          }, binding.storage);
+          if (thread) wroteMessage = true;
+        }
+        if (!wroteMessage) continue;
+        // Confirm the messages before recording coverage; preserve this target's
+        // receipt even if a later target or batch fails.
+        await binding.commit();
+        binding.assertCurrent();
+        confirmed.set(key, { targetType: contact.targetType, targetId: contact.targetId });
+        recordCoverage();
+        await binding.commit();
+        binding.assertCurrent();
+        saved.add(key);
+      }
+      if (saved.size !== batch.length) {
+        throw new Error(`旧短信未完整生成：本批 ${batch.length} 个联系人，仅保存 ${saved.size} 个，请重试空线程。`);
       }
     }
-    setSmsHistoryGenerationState(ownerAgent.id, {
-      ownerAgentId: ownerAgent.id,
-      generatedAt: new Date().toISOString(),
-      profileFingerprint,
-      contactsIncluded: smsContacts.map(contact => ({ targetType: contact.targetType, targetId: contact.targetId })),
-      version: 1,
-    });
     setPhoneAiGenerationState(ownerAgent.id, 'sms_history', {
       status: 'success',
+      startedAt,
       finishedAt: new Date().toISOString(),
       profileFingerprint,
       error: undefined,
       version: 1,
     });
+    await binding.commit();
+    binding.assertCurrent();
   } catch (error) {
     if (!binding.isCurrent()) throw error;
     setPhoneAiGenerationState(ownerAgent.id, 'sms_history', {
       status: 'failed',
+      startedAt,
       finishedAt: new Date().toISOString(),
       profileFingerprint,
       error: error instanceof Error ? error.message : String(error),
