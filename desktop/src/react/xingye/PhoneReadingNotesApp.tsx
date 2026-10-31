@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Agent } from '../types';
+import { useStore } from '../stores';
+import { resolveServerConnection, type ServerConnection } from '../services/server-connection';
 import styles from './XingyeShell.module.css';
 import {
   appendAppEntry,
@@ -95,7 +97,9 @@ type DiscoveryResult = BookSearchResult & {
 type AppMode = 'list' | 'book_form' | 'note_form' | 'discover' | 'annotation';
 
 // 每次进入 owner 都创建新标识；A → B → A 不能复用第一次 A 的异步回调。
-type ReadingOwnerLifetime = { ownerAgentId: string };
+type ReadingOwnerLifetime = { ownerAgentId: string; connection: ServerConnection | null };
+type ReadingForm = { lifetime: ReadingOwnerLifetime; bookId: string };
+type AnnotationRequest = { form: ReadingForm; passage: string; citation: WikiquoteSourceCitation | null };
 
 type AnnotationStatus = 'idle' | 'suggestion_loading' | 'generating' | 'preview' | 'error';
 
@@ -338,6 +342,43 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
   const reloadSeqRef = useRef(0);
   const ownerLifetimeRef = useRef<ReadingOwnerLifetime | null>(null);
   const loadedLifetimeRef = useRef<ReadingOwnerLifetime | null>(null);
+  const [connectionRevision, setConnectionRevision] = useState(0);
+  const discoveryRunRef = useRef<object | null>(null);
+  const annotationFormRef = useRef<ReadingForm | null>(null);
+  const annotationRequestRef = useRef<AnnotationRequest | null>(null);
+  const annotationDraftOriginRef = useRef<AnnotationRequest | null>(null);
+  const annotationSaveRef = useRef<AnnotationRequest | null>(null);
+  const annotationDraftRevisionRef = useRef(0);
+
+  useLayoutEffect(() => {
+    let key = JSON.stringify(resolveServerConnection(useStore.getState()));
+    return useStore.subscribe((state) => {
+      const next = JSON.stringify(resolveServerConnection(state));
+      if (next === key) return;
+      key = next;
+      // Invalidate synchronously: even a batched connection A → B → A is a new visit.
+      ownerLifetimeRef.current = null;
+      loadedLifetimeRef.current = null;
+      reloadSeqRef.current += 1;
+      setConnectionRevision((revision) => revision + 1);
+    });
+  }, []);
+
+  const isCurrentForm = (form: ReadingForm) => (
+    form === annotationFormRef.current && form.lifetime === ownerLifetimeRef.current
+  );
+  const isCurrentAnnotation = (request: AnnotationRequest) => (
+    request === annotationRequestRef.current && isCurrentForm(request.form)
+  );
+  const invalidateAnnotation = () => {
+    annotationRequestRef.current = null;
+    annotationDraftOriginRef.current = null;
+    annotationSaveRef.current = null;
+    setAnnotationDraft(null);
+    setAnnotationStatus('idle');
+    setAnnotationError(null);
+    setAnnotationSaving(false);
+  };
 
   const reload = useCallback(async (lifetime = ownerLifetimeRef.current) => {
     // 旧业务回调不能借新 reload 序号重新取得当前页面的写入权。
@@ -486,9 +527,14 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
   };
 
   useLayoutEffect(() => {
-    const lifetime: ReadingOwnerLifetime = { ownerAgentId };
+    const lifetime: ReadingOwnerLifetime = { ownerAgentId, connection: resolveServerConnection(useStore.getState()) };
     ownerLifetimeRef.current = lifetime;
     loadedLifetimeRef.current = null;
+    discoveryRunRef.current = null;
+    annotationFormRef.current = null;
+    annotationRequestRef.current = null;
+    annotationDraftOriginRef.current = null;
+    annotationSaveRef.current = null;
     setBooks([]);
     setNotes([]);
     setPendingDrafts([]);
@@ -525,8 +571,8 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
       loadedLifetimeRef.current = null;
       reloadSeqRef.current += 1; // 卸载 / 换 agent 时作废在途 reload
     };
-    // ownerProfile/agent-name changes don't need to reset discovery; only the agent identity does.
-  }, [ownerAgentId, reload]);
+    // Profile/name edits keep the form; owner or connection changes start a new lifetime.
+  }, [ownerAgentId, reload, connectionRevision]);
 
   /**
    * 「首次打开阅读笔记」初始化：按 lore 铺 3–5 本书，每本配 1–3 条 TA 的批注，直接写入
@@ -679,7 +725,11 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
   };
 
   const openDiscover = async () => {
-    if (!ownerAgent) return;
+    const lifetime = ownerLifetimeRef.current;
+    if (!ownerAgent || !lifetime) return;
+    const operation = {};
+    discoveryRunRef.current = operation;
+    const isCurrent = () => lifetime === ownerLifetimeRef.current && operation === discoveryRunRef.current;
     setMode('discover');
     setMessage(null);
     setDiscoveryTopics([]);
@@ -698,9 +748,11 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
           createdAt: b.createdAt,
         })),
       });
+      if (!isCurrent()) return;
       setDiscoveryTopics(topics);
       setDiscoveryStatus('idle');
     } catch (err) {
+      if (!isCurrent()) return;
       setDiscoveryError(`类别推断失败：${err instanceof Error ? err.message : String(err)}`);
       setDiscoveryStatus('error');
     }
@@ -708,16 +760,22 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
 
   const runDiscoverySearch = async (topic: XingyeReadingTopicSuggestion) => {
     const subject = topic.subject.trim();
-    if (!ownerAgentId || !subject) return;
+    const lifetime = ownerLifetimeRef.current;
+    if (!ownerAgentId || !subject || !lifetime) return;
+    const operation = {};
+    discoveryRunRef.current = operation;
+    const isCurrent = () => lifetime === ownerLifetimeRef.current && operation === discoveryRunRef.current;
     setDiscoveryTopic(topic);
     setDiscoveryStatus('search_loading');
     setDiscoveryError(null);
     setDiscoveryResults([]);
     try {
       const found = await searchOpenLibraryBooksViaProxy({ subject, limit: 12 });
+      if (!isCurrent()) return;
       setDiscoveryResults(found.map((book) => ({ ...book })));
       setDiscoveryStatus('idle');
     } catch (err) {
+      if (!isCurrent()) return;
       setDiscoveryError(err instanceof Error ? err.message : String(err));
       setDiscoveryStatus('error');
     }
@@ -775,7 +833,11 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
   };
 
   const openAnnotationForm = async () => {
-    if (!ownerAgent || !selectedBook) return;
+    const lifetime = ownerLifetimeRef.current;
+    if (!ownerAgent || !selectedBook || !lifetime) return;
+    const form: ReadingForm = { lifetime, bookId: selectedBook.id };
+    annotationFormRef.current = form;
+    invalidateAnnotation();
     setMode('annotation');
     setMessage(null);
     setAnnotationStatus('idle');
@@ -793,22 +855,20 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
         authors: selectedBook.authors,
         lang: /[一-鿿]/.test(selectedBook.title) ? 'zh' : 'en',
       });
+      if (!isCurrentForm(form)) return;
       setAnnotationSuggestions(suggestions);
     } catch (err) {
+      if (!isCurrentForm(form)) return;
       setAnnotationSuggestionError(err instanceof Error ? err.message : String(err));
     } finally {
-      setAnnotationStatus((s) => (s === 'suggestion_loading' ? 'idle' : s));
+      if (isCurrentForm(form)) setAnnotationStatus((s) => (s === 'suggestion_loading' ? 'idle' : s));
     }
   };
 
   const pickAnnotationSuggestion = (suggestion: WikiquoteSuggestion) => {
+    invalidateAnnotation();
     setAnnotationPassage(suggestion.text);
     setAnnotationCitation(suggestion.sourceCitation);
-    setAnnotationError(null);
-    setAnnotationDraft(null);
-    if (annotationStatus === 'preview' || annotationStatus === 'error') {
-      setAnnotationStatus('idle');
-    }
   };
 
   const passageAlreadyAnnotated = (passage: string): ReadingNoteEntry | null => {
@@ -827,7 +887,8 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
   };
 
   const generateAnnotation = async () => {
-    if (!ownerAgent || !selectedBook) return;
+    const form = annotationFormRef.current;
+    if (!ownerAgent || !selectedBook || !form || !isCurrentForm(form) || form.bookId !== selectedBook.id) return;
     const passage = annotationPassage.trim();
     if (passage.length < 4) {
       setAnnotationError('原文太短，至少 4 个字。');
@@ -840,6 +901,10 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
       setAnnotationStatus('error');
       return;
     }
+    const request: AnnotationRequest = { form, passage, citation: annotationCitation };
+    annotationRequestRef.current = request;
+    annotationDraftOriginRef.current = null;
+    setAnnotationDraft(null);
     setAnnotationStatus('generating');
     setAnnotationError(null);
     try {
@@ -856,22 +921,30 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
         passageCitation: annotationCitation ?? undefined,
         // 让 ai 拉同书已有批注做 anchor block，避免反复写相似批注
         bookId: selectedBook.id,
+        isCurrent: () => isCurrentAnnotation(request),
       });
+      if (!isCurrentAnnotation(request)) return;
+      annotationDraftOriginRef.current = request;
       setAnnotationDraft(draft);
       setAnnotationStatus('preview');
     } catch (err) {
+      if (!isCurrentAnnotation(request)) return;
       setAnnotationError(`批注生成失败：${err instanceof Error ? err.message : String(err)}`);
       setAnnotationStatus('error');
     }
   };
 
   const updateAnnotationDraft = (patch: Partial<XingyeReadingAnnotation>) => {
+    annotationDraftRevisionRef.current += 1;
     setAnnotationDraft((prev) => (prev ? { ...prev, ...patch } : prev));
   };
 
   const saveAnnotation = async () => {
-    if (!ownerAgentId || !selectedBook || !annotationDraft) return;
-    const passage = annotationPassage.trim();
+    const request = annotationDraftOriginRef.current;
+    if (!ownerAgentId || !selectedBook || !annotationDraft || !request || !isCurrentAnnotation(request)
+      || request.form.bookId !== selectedBook.id || request.passage !== annotationPassage.trim()
+      || annotationSaveRef.current === request) return;
+    const { passage, citation } = request;
     if (!passage) {
       setAnnotationError('原文不能为空。');
       setAnnotationStatus('error');
@@ -888,19 +961,22 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
       text: passage,
       source: 'user_provided',
     };
-    if (annotationCitation) quote.sourceCitation = annotationCitation;
+    if (citation) quote.sourceCitation = citation;
     const metadata: Record<string, unknown> = {
-      bookId: selectedBook.id,
+      bookId: request.form.bookId,
       noteType: 'reading_note',
       quote,
       passageHash: hash,
       annotationSource: 'ai',
     };
     if (annotationDraft.mood) metadata.mood = annotationDraft.mood;
+    const draftRevision = annotationDraftRevisionRef.current;
+    annotationSaveRef.current = request;
     setAnnotationSaving(true);
     try {
+      const connectionArgs: [ServerConnection?] = request.form.lifetime.connection ? [request.form.lifetime.connection] : [];
       const row = normalizeReadingNote(await appendAppEntry(
-        ownerAgentId,
+        request.form.lifetime.ownerAgentId,
         READING_NOTES_APP_ID,
         {
           title: annotationDraft.title.trim() || '未命名批注',
@@ -908,8 +984,12 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
           source: 'ai_annotation',
           metadata,
         },
+        ...connectionArgs,
       ));
+      if (request.form.lifetime !== ownerLifetimeRef.current) return;
       if (row) setNotes((prev) => [row, ...prev.filter((note) => note.id !== row.id)]);
+      if (!isCurrentAnnotation(request) || annotationSaveRef.current !== request
+        || draftRevision !== annotationDraftRevisionRef.current) return;
       setMode('list');
       setAnnotationStatus('idle');
       setAnnotationPassage('');
@@ -917,10 +997,15 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
       setAnnotationDraft(null);
       setAnnotationError(null);
     } catch (err) {
+      if (!isCurrentAnnotation(request) || annotationSaveRef.current !== request
+        || draftRevision !== annotationDraftRevisionRef.current) return;
       setAnnotationError(`保存失败：${err instanceof Error ? err.message : String(err)}`);
       setAnnotationStatus('error');
     } finally {
-      setAnnotationSaving(false);
+      if (isCurrentAnnotation(request) && annotationSaveRef.current === request) {
+        annotationSaveRef.current = null;
+        setAnnotationSaving(false);
+      }
     }
   };
 
@@ -1021,6 +1106,9 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
             type="button"
             className={styles.phoneBackButton}
             onClick={() => {
+              discoveryRunRef.current = null;
+              annotationFormRef.current = null;
+              invalidateAnnotation();
               if (mode !== 'list') setMode('list');
               else setSelectedBookId(null);
               setMessage(null);
@@ -1124,11 +1212,9 @@ export function PhoneReadingNotesApp({ ownerAgent, ownerProfile, displayName, on
                 rows={5}
                 value={annotationPassage}
                 onChange={(e) => {
+                  invalidateAnnotation();
                   setAnnotationPassage(e.target.value);
                   if (annotationCitation) setAnnotationCitation(null);
-                  if (annotationStatus === 'preview' || annotationStatus === 'error') setAnnotationStatus('idle');
-                  if (annotationError) setAnnotationError(null);
-                  if (annotationDraft) setAnnotationDraft(null);
                 }}
                 placeholder="把你想批注的那段原文粘进来。"
               />

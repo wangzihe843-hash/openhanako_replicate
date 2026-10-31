@@ -1,4 +1,6 @@
-import type { XingyeStorageBackend } from './xingye-storage-backend';
+import { createAgentXingyeStorageBackend, type XingyeStorageBackend } from './xingye-storage-backend';
+import { postXingyeStorage } from './xingye-storage-api';
+import type { ServerConnection } from '../services/server-connection';
 import { appendXingyeEvent, type XingyeEventInput, type XingyeEventType } from './xingye-event-log';
 import {
   createXingyeStore,
@@ -12,9 +14,11 @@ import { originFromEntryId } from './xingye-draft-confirm-lock';
 async function appendAppEntryEventBestEffort(
   agentId: string,
   input: Omit<XingyeEventInput, 'agentId'>,
+  connection?: ServerConnection,
 ): Promise<void> {
   try {
-    await appendXingyeEvent(agentId, input);
+    const connectionArgs: [ServerConnection?] = connection ? [connection] : [];
+    await appendXingyeEvent(agentId, input, ...connectionArgs);
   } catch (error) {
     console.warn('[xingye-app-entry-store] event log append failed:', error);
   }
@@ -255,6 +259,7 @@ export function createXingyeAppEntryStore(
       agentId: string,
       appId: XingyeAppEntryAppId | string,
       input: AppEntryInput,
+      connection?: ServerConnection,
     ): Promise<AppEntry> {
       const aid = requireSafeXingyeAgentId(agentId);
       const simpleAppId = requireSimpleAppId(appId);
@@ -275,7 +280,11 @@ export function createXingyeAppEntryStore(
         createdAt: timestamp,
         updatedAt: timestamp,
       };
-      await store.appendJsonl<AppEntry>(aid, xingyeAppEntriesPath(simpleAppId), entry);
+      // An admitted UI save and its follow-up event must use the same server.
+      const destination = connection
+        ? createXingyeStore(createAgentXingyeStorageBackend((body) => postXingyeStorage(body, connection)))
+        : store;
+      await destination.appendJsonl<AppEntry>(aid, xingyeAppEntriesPath(simpleAppId), entry);
       const eventTypes = APP_ENTRY_EVENT_TYPES[simpleAppId];
       if (eventTypes) {
         await appendAppEntryEventBestEffort(aid, {
@@ -289,7 +298,7 @@ export function createXingyeAppEntryStore(
             entrySource: entry.source,
             origin: originFromEntryId(entry.id),
           },
-        });
+        }, connection);
       }
       return entry;
     },

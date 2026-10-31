@@ -37,6 +37,8 @@ export type InferReadingAnnotationParams = {
    */
   bookId?: string;
   timeoutMs?: number;
+  /** UI operation guard, checked again after the asynchronous continuity read. */
+  isCurrent?: () => boolean;
 };
 
 export type XingyeReadingAnnotation = {
@@ -236,6 +238,8 @@ export async function inferReadingAnnotationWithAI(
       continuityAnchorBlock = '';
     }
   }
+
+  if (params.isCurrent && !params.isCurrent()) throw new Error('阅读批注上下文已变化，请重新生成。');
 
   const prompt = buildReadingAnnotationPrompt({
     agent,

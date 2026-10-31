@@ -1,5 +1,6 @@
 import { postXingyeStorage } from './xingye-storage-api';
 import { createAgentXingyeStorageBackend } from './xingye-storage-backend';
+import type { ServerConnection } from '../services/server-connection';
 
 export const XINGYE_EVENT_LOG_RELATIVE_PATH = 'events/log.json';
 
@@ -246,14 +247,16 @@ async function postEventLogAppend(
   agentId: string,
   event: XingyeEvent,
   dedupeKey?: string,
+  connection?: ServerConnection,
 ): Promise<XingyeEvent> {
+  const connectionArgs: [ServerConnection?] = connection ? [connection] : [];
   const data = await postXingyeStorage({
     action: 'appendEventLog',
     agentId,
     relativePath: XINGYE_EVENT_LOG_RELATIVE_PATH,
     event,
     ...(dedupeKey ? { dedupeKey } : {}),
-  });
+  }, ...connectionArgs);
   // 服务端归一化后回写 event（dedupe 命中时回的是已有事件）；解析失败则退回本地构造的 event。
   return normalizeXingyeEvent(data?.event) ?? event;
 }
@@ -310,12 +313,13 @@ export async function listXingyeEvents(
 export async function appendXingyeEvent(
   agentId: string,
   input: Omit<XingyeEventInput, 'agentId'> & { agentId?: string },
+  connection?: ServerConnection,
 ): Promise<XingyeEvent> {
   const aid = agentId.trim();
   if (!aid) throw new Error('agentId is required');
   // 本地构造（生成 id/createdAt、做一遍校验），实际落盘走服务端锁内 append。
   const event = createXingyeEvent({ ...input, agentId: aid });
-  return postEventLogAppend(aid, event);
+  return postEventLogAppend(aid, event, undefined, connection);
 }
 
 export async function markXingyeEventConsumed(
