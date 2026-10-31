@@ -148,7 +148,9 @@ function buildSummaryText(messages: XingyeRecentMessage[], maxTotalChars: number
   if (messages.length === 0) return '';
   const lines: string[] = [];
   let used = 0;
-  for (const msg of messages) {
+  // 优先为最新消息分配预算；输出时再恢复时间正序，不改变 messages。
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const msg = messages[index];
     const rolePrefix = msg.role === 'user'
       ? '用户'
       : msg.role === 'assistant'
@@ -161,7 +163,7 @@ function buildSummaryText(messages: XingyeRecentMessage[], maxTotalChars: number
     lines.push(line);
     used += line.length + 1;
   }
-  return lines.join('\n');
+  return lines.reverse().join('\n');
 }
 
 /**
