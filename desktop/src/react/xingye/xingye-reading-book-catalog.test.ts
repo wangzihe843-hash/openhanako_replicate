@@ -239,7 +239,7 @@ describe('xingye-reading-book-catalog', () => {
     const backend = createMemoryXingyeStorageBackend();
     const store = createXingyeBookCatalogStore({
       ...backend,
-      writeJsonl: async () => {
+      mutateReadingBookCatalog: async () => {
         throw new Error('disk unavailable');
       },
     });

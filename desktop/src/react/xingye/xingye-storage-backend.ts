@@ -1,4 +1,11 @@
+import {
+  READING_BOOK_CATALOG_PATH, mutateReadingBookCatalogText, normalizeCatalogEntry,
+  type ReadingBookCatalogMutation, type ReadingBookCatalogResult,
+} from '../../../../shared/xingye-reading-book-catalog';
+
 export type XingyeStorageBackend = {
+  /** Optional for older injected backends; catalog writes fail without this capability. */
+  mutateReadingBookCatalog?(agentId: string, mutation: ReadingBookCatalogMutation): Promise<ReadingBookCatalogResult>;
   readJson<T>(agentId: string, relativePath: string): Promise<T | null>;
   writeJson<T>(agentId: string, relativePath: string, data: T): Promise<void>;
   appendJsonl<T>(agentId: string, relativePath: string, record: T): Promise<void>;
@@ -60,6 +67,12 @@ export function createMemoryXingyeStorageBackend(): XingyeStorageBackend {
   const jsonl = new Map<string, string[]>();
 
   return {
+    async mutateReadingBookCatalog(agentId, mutation) {
+      const k = key(agentId, READING_BOOK_CATALOG_PATH);
+      const { content, result } = mutateReadingBookCatalogText((jsonl.get(k) ?? []).join('\n'), agentId, mutation);
+      jsonl.set(k, content.split('\n'));
+      return result;
+    },
     async compareAndSwapJsonlRecord<T>(agentId: string, relativePath: string, recordId: string, expected: T, data: T) {
       const k = key(agentId, relativePath);
       const result = compareAndSwapLines(jsonl.get(k) ?? [], recordId, expected, data);
@@ -130,6 +143,13 @@ export function createLocalStorageXingyeBackend(
   keyForPath: (agentId: string, relativePath: string) => string,
 ): XingyeStorageBackend {
   return {
+    async mutateReadingBookCatalog(agentId, mutation) {
+      const k = keyForPath(agentId, READING_BOOK_CATALOG_PATH);
+      const previous = storage.getItem(k) ?? '';
+      const { content, result } = mutateReadingBookCatalogText(previous, agentId, mutation);
+      if (content !== previous) storage.setItem(k, content);
+      return result;
+    },
     async compareAndSwapJsonlRecord<T>(agentId: string, relativePath: string, recordId: string, expected: T, data: T) {
       const k = keyForPath(agentId, relativePath);
       const result = compareAndSwapLines((storage.getItem(k) ?? '').split('\n'), recordId, expected, data);
@@ -215,6 +235,21 @@ function requireAgentId(agentId: string): void {
 
 export function createAgentXingyeStorageBackend(post: PostFn): XingyeStorageBackend {
   return {
+    async mutateReadingBookCatalog(agentId, mutation) {
+      requireAgentId(agentId);
+      const response = await post({ action: 'mutateReadingBookCatalog', agentId, relativePath: READING_BOOK_CATALOG_PATH, mutation });
+      if (response?.ok !== true || typeof response.deleted !== 'boolean' || !Array.isArray(response.imported)
+        || (mutation.type === 'delete' && response.imported.length !== 0)
+        || (mutation.type === 'import' && (response.deleted || response.imported.length !== mutation.entries.length))) {
+        throw new Error('Invalid reading catalog mutation response');
+      }
+      const imported = response.imported.map((row: unknown) => {
+        const book = normalizeCatalogEntry(row);
+        if (!book || !book.agentTags.some((tag) => tag.agentId === agentId)) throw new Error('Invalid reading catalog mutation response');
+        return book;
+      });
+      return { imported, deleted: response.deleted };
+    },
     async compareAndSwapJsonlRecord<T>(agentId: string, relativePath: string, recordId: string, expected: T, data: T) {
       requireAgentId(agentId);
       const response = await post({ action: 'compareAndSwapJsonlRecord', agentId, relativePath, recordId, expected, data });

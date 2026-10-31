@@ -17,6 +17,9 @@ import { Hono } from "hono";
 import { syncXingyeStableLoreMemoryFile } from "../../shared/xingye-lore-memory-file.js";
 import { stableSecretSpaceRecordId } from "../../shared/xingye-secret-space-record-id.ts";
 import {
+  READING_BOOK_CATALOG_PATH, normalizeReadingBookCatalogMutation, planReadingBookCatalogMutation,
+} from "../../shared/xingye-reading-book-catalog.ts";
+import {
   appendXingyeEvent,
   appendXingyeEventOnce,
   withXingyeAgentEventLock,
@@ -63,6 +66,7 @@ const ACTIONS = new Set([
   "appendJsonl",
   "listJsonl",
   "writeJsonl",
+  "mutateReadingBookCatalog",
   "deleteJsonlRecord",
   "deleteSecretSpaceRecord",
   "compareAndSwapJsonlRecord",
@@ -384,6 +388,51 @@ export function createXingyeStorageRoute(engine) {
             }
           }
           return c.json({ ok: true, records });
+        }
+        case "mutateReadingBookCatalog": {
+          if (relativePath.replace(/\\/g, "/") !== READING_BOOK_CATALOG_PATH) {
+            return c.json({ error: "reading book catalog path required" }, 400);
+          }
+          let mutation;
+          try { mutation = normalizeReadingBookCatalogMutation(agentId, body.mutation); }
+          catch (error) { return c.json({ error: error.message }, 400); }
+          const result = await withXingyeAgentEventLock(agentId, async () => {
+            let content;
+            try { content = await fs.promises.readFile(target); }
+            catch (error) {
+              if (error?.code !== "ENOENT") throw error;
+              content = Buffer.alloc(0);
+            }
+            const lines = [];
+            const records = [];
+            for (let start = 0; start < content.length;) {
+              const newline = content.indexOf(10, start);
+              const end = newline === -1 ? content.length : newline + 1;
+              const bytes = content.subarray(start, end);
+              lines.push(bytes);
+              let row;
+              if (isUtf8(bytes)) { try { row = JSON.parse(bytes.toString("utf8")); } catch { /* preserve bad lines */ } }
+              records.push(row);
+              start = end;
+            }
+            const plan = planReadingBookCatalogMutation(records, mutation);
+            if (plan.replacements.size || plan.appended.length) {
+              const chunks = lines.map((line, index) => {
+                if (!plan.replacements.has(index)) return line;
+                const row = plan.replacements.get(index);
+                const ending = line.at(-1) === 10 ? (line.at(-2) === 13 ? "\r\n" : "\n") : "";
+                return row === null ? Buffer.alloc(0) : Buffer.from(JSON.stringify(row) + ending, "utf8");
+              });
+              if (plan.appended.length) {
+                const last = chunks.findLast((chunk) => chunk.length);
+                if (last && last.at(-1) !== 10) chunks.push(Buffer.from("\n"));
+                for (const row of plan.appended) chunks.push(Buffer.from(JSON.stringify(row) + "\n", "utf8"));
+              }
+              await atomicWrite(target, Buffer.concat(chunks));
+            }
+            return plan.result;
+          });
+          return c.json({ ok: true, ...result });
         }
         case "writeJsonl": {
           if (!Array.isArray(body?.records)) {
