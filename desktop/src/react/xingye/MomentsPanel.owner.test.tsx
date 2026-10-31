@@ -28,7 +28,7 @@ vi.mock('./xingye-storage-backend', async importOriginal => {
   const actual = await importOriginal<typeof import('./xingye-storage-backend')>();
   // The actual store runs unchanged; only its IO boundary is an isolated memory backend.
   return { ...actual, createAgentXingyeStorageBackend: () => new Proxy({}, {
-    get: (_target, method: keyof XingyeStorageBackend) => mocks.backend[method].bind(mocks.backend),
+    get: (_target, method: keyof XingyeStorageBackend) => mocks.backend[method]?.bind(mocks.backend),
   }) };
 });
 vi.mock('./xingye-moments-store', async importOriginal => ({

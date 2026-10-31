@@ -7490,8 +7490,44 @@
     },
     {
       "sourceFile": "lib/memory/pinned-memory-store.ts",
+      "kind": "atomic-write",
+      "excerpt": "atomicWriteSync(write.file, write.before.content, { mode: write.before.stat.mode & 0o777 })",
+      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
+      "storeId": "agent-memory",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/memory/pinned-memory-store.ts",
+      "kind": "atomic-write",
+      "excerpt": "atomicWriteSync(write.file, write.content, write.before.stat ? { mode: write.before.stat.mode & 0o777 } : {})",
+      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
+      "storeId": "agent-memory",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/memory/pinned-memory-store.ts",
       "kind": "mkdir",
       "excerpt": "fs.mkdirSync(agentDir, { recursive: true })",
+      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
+      "storeId": "agent-memory",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "lib/memory/pinned-memory-store.ts",
+      "kind": "mkdir",
+      "excerpt": "fs.mkdirSync(agentDir, { recursive: true })",
+      "reason": "Writes a named per-agent memory or Dream revision protocol file.",
+      "storeId": "agent-memory",
+      "exemptionId": null,
+      "ordinal": 1
+    },
+    {
+      "sourceFile": "lib/memory/pinned-memory-store.ts",
+      "kind": "remove-path",
+      "excerpt": "fs.unlinkSync(write.file)",
       "reason": "Writes a named per-agent memory or Dream revision protocol file.",
       "storeId": "agent-memory",
       "exemptionId": null,

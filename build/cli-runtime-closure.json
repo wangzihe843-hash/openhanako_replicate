@@ -7493,7 +7493,7 @@
       "provenance": [
         {
           "root": "server-bootstrap",
-          "from": "lib/memory/memory-ticker.ts",
+          "from": "lib/memory/session-derived-state.ts",
           "kind": "import-statement"
         },
         {
@@ -7522,7 +7522,7 @@
           "kind": "import-statement"
         }
       ],
-      "reason": "Reached via esbuild source module graph, imported by lib/memory/memory-ticker.ts (import-statement); lib/xingye/topic-candidates.js (import-statement); lib/tools/pinned-memory.ts (import-statement); +3 more importer(s)."
+      "reason": "Reached via esbuild source module graph, imported by lib/memory/session-derived-state.ts (import-statement); lib/xingye/topic-candidates.js (import-statement); lib/tools/pinned-memory.ts (import-statement); +3 more importer(s)."
     },
     {
       "path": "lib/memory/prompts/compile.ts",
