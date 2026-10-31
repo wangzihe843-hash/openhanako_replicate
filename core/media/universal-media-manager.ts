@@ -12,6 +12,7 @@ import { TaskStore } from "./task-store.ts";
 import { Poller } from "./poller.ts";
 import { submitImageGeneration } from "./submit-image.ts";
 import {
+  bridgeDeliveryTarget,
   isResponseDelivery,
   normalizeMediaDelivery,
   retryImageTask,
@@ -698,15 +699,33 @@ export class UniversalMediaManager {
       sessionFiles: this._sessionFiles,
       allowRawReferences: false,
     });
-    return this.submitVideo({ input, sessionId, sessionPath, sessionRef });
+    return this.submitVideo({
+      input,
+      sessionId,
+      sessionPath,
+      sessionRef,
+      ...(payload.deliveryTarget !== undefined ? { deliveryTarget: payload.deliveryTarget } : {}),
+      ...(payload.bridgeContext ? { bridgeContext: payload.bridgeContext } : {}),
+    });
   }
 
-  async submitVideo({ input = {}, sessionId = null, sessionPath = null, sessionRef = null }: any = {}) {
+  async submitVideo({ input = {}, sessionId = null, sessionPath = null, sessionRef = null, deliveryTarget = undefined, bridgeContext = null }: {
+    input?: Record<string, unknown>;
+    sessionId?: string | null;
+    sessionPath?: string | null;
+    sessionRef?: object | null;
+    deliveryTarget?: object | null;
+    bridgeContext?: object | null;
+  } = {}) {
     if (!this._bus || !this._poller) throw new Error(t("plugin.imageGen.notInitialized"));
     if (!textOrNull(input.prompt)) throw new Error("prompt is required");
     const delivery = normalizeMediaDelivery(input);
     const responseDelivery = isResponseDelivery(delivery);
     if (!sessionId && !sessionPath && !responseDelivery) throw new Error("sessionId or sessionPath is required");
+    // Capture the submitting chat before provider work can outlive its RC binding.
+    const resolvedDeliveryTarget = responseDelivery
+      ? null
+      : deliveryTarget === undefined ? bridgeDeliveryTarget({ bridgeContext }) : structuredClone(deliveryTarget);
     const requestedProviderId = textOrNull(input.provider)
       || textOrNull(this.getVideoConfig()?.defaultVideoModel?.provider);
     await this._providers.refreshRuntimeMediaCapabilities?.({
@@ -755,6 +774,7 @@ export class UniversalMediaManager {
       sessionRef,
       deliveryMode: delivery.mode,
       delivery,
+      ...(resolvedDeliveryTarget ? { deliveryTarget: resolvedDeliveryTarget } : {}),
       ...(target?.providerId ? { providerId: target.providerId } : {}),
       ...(target?.modelId ? { modelId: target.modelId } : {}),
       ...(target?.protocolId ? { protocolId: target.protocolId } : {}),
@@ -777,6 +797,7 @@ export class UniversalMediaManager {
           deliveryIntent: "ui_only",
           triggerParentTurn: false,
           prompt: input.prompt,
+          ...(resolvedDeliveryTarget ? { deliveryTarget: resolvedDeliveryTarget } : {}),
         },
       }).catch((err) => {
         this._log.warn(`deferred:register failed for ${result.taskId}:`, err);
