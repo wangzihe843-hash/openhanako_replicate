@@ -42,6 +42,7 @@ import {
   markHiddenFolderSeedGenerated,
   readHiddenFolderState,
   setHiddenFolderPassword,
+  initializeHiddenFolderPassword,
   type XingyeHiddenFileEntry,
   type XingyeHiddenFileEntryKind,
   type XingyeHiddenFolderState,
@@ -411,6 +412,9 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
 
   const hiddenContextSeqRef = useRef(0);
   const hiddenReloadSeqRef = useRef(0);
+  // Keep an in-flight initialization across context resets so returning to the
+  // same drawer verifies its result before another initialization can start.
+  const hiddenInitializationsRef = useRef(new Map<string, Promise<XingyeHiddenFolderState>>());
   const hiddenSeedOperationRef = useRef<object | null>(null);
   const [hiddenConnectionRevision, setHiddenConnectionRevision] = useState(0);
 
@@ -506,7 +510,14 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
       setInHiddenView(false);
       return;
     }
+    const initializationKey = JSON.stringify([ownerAgentId, connectionKey]);
     try {
+      const pendingInitialization = hiddenInitializationsRef.current.get(initializationKey);
+      if (pendingInitialization) {
+        // Even a lost ACK is followed by a strict read, never a blind re-lock.
+        await pendingInitialization.catch(() => undefined);
+        if (!isCurrent()) return;
+      }
       const [state, entries] = await Promise.all([
         readHiddenFolderState(ownerAgentId, connection),
         listHiddenEntries(ownerAgentId, connection, true),
@@ -524,13 +535,17 @@ export function PhoneFilesApp({ ownerAgent, ownerProfile, displayName, onBack }:
         });
         const picked = pickRandomCandidate(candidates);
         if (picked) {
+          const initialization = initializeHiddenFolderPassword(ownerAgentId, {
+            password: picked.value,
+            candidateLabel: picked.label,
+          }, connection, isCurrent);
+          hiddenInitializationsRef.current.set(initializationKey, initialization);
           try {
-            stateOut = await setHiddenFolderPassword(ownerAgentId, {
-              password: picked.value,
-              candidateLabel: picked.label,
-            }, connection);
-          } catch (err) {
-            console.warn('[PhoneFilesApp] init hidden lock failed:', err);
+            stateOut = await initialization;
+          } finally {
+            if (hiddenInitializationsRef.current.get(initializationKey) === initialization) {
+              hiddenInitializationsRef.current.delete(initializationKey);
+            }
           }
         }
       }

@@ -188,17 +188,24 @@ export type SetHiddenFolderPasswordInput = {
  *
  * 调用方负责挑候选——store 只负责 hash 并落盘。
  */
-export async function setHiddenFolderPassword(
+async function writeHiddenFolderPassword(
   agentId: string,
   input: SetHiddenFolderPasswordInput,
   connection?: ServerConnection,
+  initializeIfCurrent?: () => boolean,
 ): Promise<XingyeHiddenFolderState> {
   const aid = assertAgentId(agentId, '锁定隐藏文件夹');
   const password = input.password.trim();
   if (!password) throw new Error('锁定失败：候选密码为空。');
   const passwordHash = await hashPassword(password);
+  if (initializeIfCurrent && !initializeIfCurrent()) throw new Error('隐藏抽屉操作已失效。');
   const nowIso = new Date().toISOString();
   const previous = await readHiddenFolderState(aid, connection);
+  if (initializeIfCurrent) {
+    if (!initializeIfCurrent()) throw new Error('隐藏抽屉操作已失效。');
+    // A retry or concurrent initialization may already have established a lock.
+    if (previous.passwordHash) return previous;
+  }
   const next: XingyeHiddenFolderState = {
     ...previous,
     agentId: aid,
@@ -210,6 +217,24 @@ export async function setHiddenFolderPassword(
   };
   await persistHiddenFolderState(aid, next, connection);
   return next;
+}
+
+export async function setHiddenFolderPassword(
+  agentId: string,
+  input: SetHiddenFolderPasswordInput,
+  connection?: ServerConnection,
+): Promise<XingyeHiddenFolderState> {
+  return writeHiddenFolderPassword(agentId, input, connection);
+}
+
+/** First-use initialization must preserve a lock discovered by its final read. */
+export async function initializeHiddenFolderPassword(
+  agentId: string,
+  input: SetHiddenFolderPasswordInput,
+  connection: ServerConnection | undefined,
+  isCurrent: () => boolean,
+): Promise<XingyeHiddenFolderState> {
+  return writeHiddenFolderPassword(agentId, input, connection, isCurrent);
 }
 
 /**
