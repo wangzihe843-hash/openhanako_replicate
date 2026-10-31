@@ -1,3 +1,4 @@
+import type { ServerConnection } from '../services/server-connection';
 import { hanaFetch } from '../hooks/use-hana-fetch';
 import {
   normalizePhoneAiTimeout,
@@ -191,6 +192,7 @@ export async function requestPhoneAi(input: {
   prompt: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  connection?: ServerConnection;
   /** 后端目前只使用 prompt；结构化字段挂在请求体里便于以后服务端单独消费。 */
   recentContext?: XingyeRecentContext | null;
 }): Promise<{ raw: unknown }> {
@@ -205,6 +207,7 @@ export async function requestPhoneAi(input: {
   try {
     controller.signal.throwIfAborted();
     const response = await hanaFetch('/api/xingye/phone-generate', {
+      connection: input.connection,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       timeout: transportTimeoutMs,
@@ -837,9 +840,11 @@ export async function buildSmsContinuityAnchorBlock(
 async function buildSmsBatchContinuityAnchorBlock(
   agentId: string,
   targets: ReadonlyArray<{ targetType: XingyeContactTargetType; targetId: string; displayName?: string }>,
+  assertCurrent?: () => void,
 ): Promise<string> {
   const blocks: string[] = [];
   for (const t of targets) {
+    assertCurrent?.();
     if (t.targetType === 'user') continue;
     const single = await buildSmsContinuityAnchorBlock(agentId, { targetType: t.targetType, targetId: t.targetId });
     if (!single) continue;
@@ -919,7 +924,7 @@ export async function generateSmsHistoryWithAI(params: {
     error: undefined,
     profileFingerprint,
     version: 1,
-  });
+  }, binding.storage);
   try {
     if (retrySaved.length) {
       await binding.commit();
@@ -944,6 +949,7 @@ export async function generateSmsHistoryWithAI(params: {
       const continuityAnchorBlock = await buildSmsBatchContinuityAnchorBlock(
         ownerAgent.id,
         batch.map(c => ({ targetType: c.targetType, targetId: c.targetId, displayName: c.displayName })),
+        binding.assertCurrent,
       );
       binding.assertCurrent();
       const contactDetailBlock = formatContactDetailPromptBlock(
@@ -952,6 +958,7 @@ export async function generateSmsHistoryWithAI(params: {
       const prompt = buildSmsHistoryPrompt({ ownerAgent, ownerProfile, contacts: batch, userName, loreContextText, continuityAnchorBlock, contactDetailBlock });
       const { raw } = await requestPhoneAi({
         kind: 'sms_history',
+        connection: binding.connection,
         ownerAgentId: ownerAgent.id,
         ownerProfile,
         contacts: batch,
@@ -1020,7 +1027,7 @@ export async function generateSmsHistoryWithAI(params: {
       profileFingerprint,
       error: undefined,
       version: 1,
-    });
+    }, binding.storage);
     await binding.commit();
     binding.assertCurrent();
   } catch (error) {
@@ -1032,7 +1039,7 @@ export async function generateSmsHistoryWithAI(params: {
       profileFingerprint,
       error: error instanceof Error ? error.message : String(error),
       version: 1,
-    });
+    }, binding.storage);
     throw error;
   }
 }

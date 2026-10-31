@@ -14,7 +14,7 @@
  */
 
 import { useStore } from '../stores';
-import { hasServerConnection } from '../services/server-connection';
+import { resolveServerConnection, type ServerConnection } from '../services/server-connection';
 import { postXingyeStorage } from './xingye-storage-api';
 
 export const XINGYE_WORKSPACE_STORAGE_STATE_KEY = 'xingye.workspaceStorage.v1';
@@ -70,7 +70,7 @@ export class XingyePersistenceBindingError extends Error {
   constructor(expectedAgentId: string, actualAgentId: string | null) {
     super(
       `星野持久化未绑定到当前角色（期望「${expectedAgentId}」，实际「${actualAgentId ?? '未绑定'}」）：` +
-        '已跳过本次生成以防跨角色串读，待角色数据加载完成后会自动重试。',
+        '角色或服务器连接已变化，旧操作不能继续使用当前数据；已完成的保存仍保留在原连接。',
     );
     this.name = 'XingyePersistenceBindingError';
     this.expectedAgentId = expectedAgentId;
@@ -82,6 +82,45 @@ let mode: XingyePersistenceMode = 'disabled';
 const memory = new Map<string, string>();
 const removedKeys = new Set<string>();
 let activeAgentId: string | null = null;
+let activeConnection: ServerConnection | null = null;
+let activeConnectionVersion = -1;
+let connectionVersion = 0;
+let observedConnectionKey: string | undefined;
+let requestedAgentId: string | null = null;
+let requestedConnectionVersion = -1;
+let operationVersion = 0;
+let unsubscribeConnection: (() => void) | undefined;
+
+// Identity includes transport and principal, but never leaves this module or is
+// persisted/logged. A subscription records A -> B -> A even between awaits.
+function observeConnection(): ServerConnection | null {
+  const connection = resolveServerConnection(useStore.getState());
+  const key = JSON.stringify(connection ? [
+    connection.connectionId, connection.kind, connection.serverId, connection.serverNodeId,
+    connection.studioId, connection.userId, connection.platformAccountId,
+    connection.baseUrl, connection.token, connection.authState,
+    connection.credentialKind, connection.trustState,
+  ] : null);
+  if (key !== observedConnectionKey) {
+    observedConnectionKey = key;
+    connectionVersion += 1;
+  }
+  return connection ? { ...connection } : null;
+}
+
+function isCurrentConnection(): boolean {
+  observeConnection();
+  return activeConnection !== null && activeConnectionVersion === connectionVersion;
+}
+
+function watchConnection(): void {
+  if (unsubscribeConnection || typeof useStore.subscribe !== 'function') return;
+  observeConnection();
+  unsubscribeConnection = useStore.subscribe(() => {
+    observeConnection();
+    if (connectionVersion !== requestedConnectionVersion) void refreshXingyeAgentPersistence(requestedAgentId);
+  });
+}
 let refreshVersion = 0;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 const FLUSH_DEBOUNCE_MS = 450;
@@ -171,21 +210,21 @@ function wrapAgentScopedData(key: string, agentId: string, value: unknown): unkn
   return value;
 }
 
-async function readAgentFile(agentId: string, key: string): Promise<string | null> {
+async function readAgentFile(agentId: string, key: string, connection: ServerConnection): Promise<string | null> {
   const relativePath = KEY_TO_AGENT_RELATIVE[key];
   if (!relativePath) return null;
-  const result = await postXingyeStorage({ action: 'readJson', agentId, relativePath });
+  const result = await postXingyeStorage({ action: 'readJson', agentId, relativePath }, connection);
   const data = result?.data ?? null;
   const wrapped = wrapAgentScopedData(key, agentId, data);
   return wrapped == null ? null : JSON.stringify(wrapped);
 }
 
-async function writeAgentFile(agentId: string, key: string, raw: string | null): Promise<void> {
+async function writeAgentFile(agentId: string, key: string, raw: string | null, connection: ServerConnection): Promise<void> {
   const relativePath = KEY_TO_AGENT_RELATIVE[key];
   if (!relativePath) return;
   const parsed = raw == null ? null : parseJson(raw);
   const data = raw == null ? null : pickAgentScopedData(key, agentId, parsed);
-  await postXingyeStorage({ action: 'writeJson', agentId, relativePath, data });
+  await postXingyeStorage({ action: 'writeJson', agentId, relativePath, data }, connection);
 }
 
 /**
@@ -193,7 +232,7 @@ async function writeAgentFile(agentId: string, key: string, raw: string | null):
  * scope to this agent, write to agent files, then re-read from API.
  * Does not migrate unrelated agents' rows into this agent (pickAgentScopedData).
  */
-async function tryMigrateFromLocalStorageOnce(agentId: string, key: string): Promise<string | null> {
+async function tryMigrateFromLocalStorageOnce(agentId: string, key: string, connection: ServerConnection): Promise<string | null> {
   if (typeof window === 'undefined' || devLocalStorageFallbackEnabled()) return null;
   /** Formal UI must not pull unscoped legacy keys into arbitrary agent dirs (cross-agent / hanako pollution). */
   if (!(window as unknown as { __XINGYE_ALLOW_LEGACY_LOCAL_MIGRATE__?: boolean }).__XINGYE_ALLOW_LEGACY_LOCAL_MIGRATE__) {
@@ -205,8 +244,8 @@ async function tryMigrateFromLocalStorageOnce(agentId: string, key: string): Pro
     const parsed = parseJson(legacy);
     if (parsed == null) return null;
     if (isScopedPayloadEmpty(key, agentId, parsed)) return null;
-    await writeAgentFile(agentId, key, legacy);
-    return await readAgentFile(agentId, key);
+    await writeAgentFile(agentId, key, legacy, connection);
+    return await readAgentFile(agentId, key, connection);
   } catch {
     return null;
   }
@@ -218,12 +257,12 @@ async function tryMigrateFromLocalStorageOnce(agentId: string, key: string): Pro
  * version check, so concurrent refreshes can't interleave their partial reads
  * into the shared map and the UI never sees a mixed-agent transient state.
  */
-async function loadAgentScopedMemory(agentId: string): Promise<Map<string, string>> {
+async function loadAgentScopedMemory(agentId: string, connection: ServerConnection): Promise<Map<string, string>> {
   const next = new Map<string, string>();
   for (const key of XINGYE_KNOWN_STORAGE_KEYS) {
-    let raw = await readAgentFile(agentId, key);
+    let raw = await readAgentFile(agentId, key, connection);
     if (raw == null) {
-      raw = await tryMigrateFromLocalStorageOnce(agentId, key);
+      raw = await tryMigrateFromLocalStorageOnce(agentId, key, connection);
     }
     if (raw != null) next.set(key, raw);
   }
@@ -240,8 +279,10 @@ function scheduleFlush(delayMs = FLUSH_DEBOUNCE_MS): void {
 }
 
 async function runFlushLoop(): Promise<boolean> {
-  while (mode === 'agent' && activeAgentId && flushPending) {
+  const bindingVersion = storageBindingVersion;
+  while (mode === 'agent' && activeAgentId && activeConnection && flushPending && storageBindingVersion === bindingVersion) {
     const agentId = activeAgentId;
+    const connection = activeConnection;
     const revision = memoryRevision;
     const snapshot: Array<[string, string | null]> = [
       ...Array.from(memory.entries()),
@@ -252,7 +293,7 @@ async function runFlushLoop(): Promise<boolean> {
     lastAgentFlushError = null;
     try {
       for (const [key, raw] of snapshot) {
-        await writeAgentFile(agentId, key, raw);
+        await writeAgentFile(agentId, key, raw, connection);
       }
     } catch (err) {
       flushPending = true;
@@ -262,7 +303,7 @@ async function runFlushLoop(): Promise<boolean> {
       return false;
     }
 
-    if (mode === 'agent' && activeAgentId === agentId && revision === memoryRevision) {
+    if (mode === 'agent' && activeAgentId === agentId && storageBindingVersion === bindingVersion && revision === memoryRevision) {
       flushPending = false;
       removedKeys.clear();
       return true;
@@ -358,7 +399,7 @@ export function assertXingyePersistenceBoundTo(agentId: string): void {
   const id = typeof agentId === 'string' ? agentId.trim() : '';
   if (!id) return;
   if (devLocalStorageFallbackEnabled()) return;
-  if (mode === 'agent' && activeAgentId && activeAgentId !== id) {
+  if (mode === 'agent' && activeAgentId && (activeAgentId !== id || !isCurrentConnection())) {
     throw new XingyePersistenceBindingError(id, activeAgentId);
   }
 }
@@ -374,7 +415,7 @@ export function getXingyePersistenceStorage(): StorageLike | null {
     }
   }
 
-  if (mode !== 'agent' || !activeAgentId) {
+  if (mode !== 'agent' || !activeAgentId || !isCurrentConnection()) {
     return null;
   }
   const boundAgentId = activeAgentId;
@@ -383,6 +424,7 @@ export function getXingyePersistenceStorage(): StorageLike | null {
     mode === 'agent'
     && activeAgentId === boundAgentId
     && storageBindingVersion === boundVersion
+    && isCurrentConnection()
   );
 
   return {
@@ -414,8 +456,16 @@ export function getXingyePersistenceStorage(): StorageLike | null {
  * Pass null/undefined/'' to enter disabled state (no storage, no localStorage writes).
  */
 export async function refreshXingyeAgentPersistence(agentId: string | null | undefined): Promise<void> {
+  watchConnection();
+  const connection = observeConnection();
+  const targetConnectionVersion = connectionVersion;
+  requestedConnectionVersion = targetConnectionVersion;
   const myVersion = ++refreshVersion;
   const id = typeof agentId === 'string' ? agentId.trim() : '';
+  if (requestedAgentId !== (id || null)) operationVersion += 1;
+  requestedAgentId = id || null;
+  // Invalidate cached UI snapshots as soon as the selected server changes.
+  if (mode === 'agent' && activeConnectionVersion !== targetConnectionVersion) emitPersistenceChanged();
 
   // A newer explicit request supersedes any transition queued by an earlier
   // failed flush. If this request also fails, it becomes the new retry target.
@@ -433,13 +483,16 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     storageBindingVersion += 1;
     flushPending = false;
     activeAgentId = null;
+    activeConnection = null;
+    activeConnectionVersion = -1;
     emitPersistenceChanged();
     return;
   }
 
-  if (!hasServerConnection(useStore.getState())) {
-    // 同上：断连进入 disabled 前，先把上一个 agent 的待写落盘，避免丢失。
-    if (!(await flushPendingBeforeTransition(myVersion, null))) return;
+  if (!connection) {
+    // Keep the requested owner while offline, including a failed-flush retry,
+    // so reconnect can load that owner on the newly selected connection.
+    if (!(await flushPendingBeforeTransition(myVersion, id))) return;
     mode = 'disabled';
     memory.clear();
     removedKeys.clear();
@@ -447,11 +500,13 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     storageBindingVersion += 1;
     flushPending = false;
     activeAgentId = null;
+    activeConnection = null;
+    activeConnectionVersion = -1;
     emitPersistenceChanged();
     return;
   }
 
-  if (activeAgentId === id && mode === 'agent') {
+  if (activeAgentId === id && mode === 'agent' && activeConnectionVersion === targetConnectionVersion) {
     return;
   }
 
@@ -465,9 +520,10 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
   if (!(await flushPendingBeforeTransition(myVersion, id))) return;
 
   try {
-    const loaded = await loadAgentScopedMemory(id);
+    const loaded = await loadAgentScopedMemory(id, connection);
+    observeConnection();
     // A newer refresh superseded us during the load — don't clobber its memory.
-    if (myVersion !== refreshVersion) return;
+    if (myVersion !== refreshVersion || targetConnectionVersion !== connectionVersion) return;
     // Writes made through the still-valid old-agent Storage object while the
     // target was loading must settle before replacing the shared Map.
     if (!(await flushPendingBeforeTransition(myVersion, id))) return;
@@ -479,6 +535,8 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     storageBindingVersion += 1;
     flushPending = false;
     activeAgentId = id;
+    activeConnection = connection;
+    activeConnectionVersion = targetConnectionVersion;
     mode = 'agent';
     lastRefreshError = null;
     emitPersistenceChanged();
@@ -504,6 +562,8 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
     storageBindingVersion += 1;
     flushPending = false;
     activeAgentId = null;
+    activeConnection = null;
+    activeConnectionVersion = -1;
     pendingTransitionAgentId = id;
     scheduleFlush(FLUSH_RETRY_MS);
     emitPersistenceChanged();
@@ -516,10 +576,12 @@ export async function refreshXingyeAgentPersistence(agentId: string | null | und
  */
 export function captureXingyePersistenceBinding(agentId: string) {
   const version = storageBindingVersion;
+  const operation = operationVersion;
   const local = devLocalStorageFallbackEnabled();
   const assertCurrent = () => {
     if (local && devLocalStorageFallbackEnabled()) return;
-    if (mode !== 'agent' || activeAgentId !== agentId || storageBindingVersion !== version) {
+    if (mode !== 'agent' || activeAgentId !== agentId
+      || storageBindingVersion !== version || operationVersion !== operation || !isCurrentConnection()) {
       throw new XingyePersistenceBindingError(agentId, activeAgentId);
     }
   };
@@ -528,6 +590,7 @@ export function captureXingyePersistenceBinding(agentId: string) {
   if (!storage) throw new XingyePersistenceBindingError(agentId, activeAgentId);
   return {
     storage,
+    connection: local ? undefined : activeConnection ?? undefined,
     assertCurrent,
     isCurrent() { try { assertCurrent(); return true; } catch { return false; } },
     async commit() {
@@ -550,6 +613,15 @@ export async function refreshXingyeWorkspacePersistence(agentId?: string | null)
 }
 
 export function resetXingyePersistenceForTests(): void {
+  unsubscribeConnection?.();
+  unsubscribeConnection = undefined;
+  observedConnectionKey = undefined;
+  activeConnection = null;
+  activeConnectionVersion = -1;
+  requestedAgentId = null;
+  requestedConnectionVersion = -1;
+  operationVersion += 1;
+  refreshVersion += 1;
   mode = 'disabled';
   memory.clear();
   removedKeys.clear();
