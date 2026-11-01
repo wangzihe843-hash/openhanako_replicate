@@ -7,8 +7,8 @@
 “星野陪伴型 Agent”是本仓库的描述性称呼；本项目与同名商业产品没有官方关联。应用名称、包名和部分界面仍沿用 HanaAgent / Hanako。
 
 - 开发分支：[feature/xingye-mvp](https://github.com/wangzihe843-hash/openhanako_replicate/tree/feature/xingye-mvp)
-- 当前状态：源码开发项目；截至 2026-10-25，本 fork 尚未发布可下载的 [Release](https://github.com/wangzihe843-hash/openhanako_replicate/releases)，分支与 CI 状态见下方验证边界
-- 本页说明本 fork 已提交的功能；[README_EN.md](README_EN.md) 仍是上游英文介绍，尚未同步为本 fork 的译文
+- 当前状态：源码开发项目；截至 2026-11-01，本 fork 尚未发布可下载的 [Release](https://github.com/wangzihe843-hash/openhanako_replicate/releases)，分支与 CI 状态见下方验证边界
+- 本页说明本 fork 已提交的功能；[README_EN.md](README_EN.md) 保留上游英文介绍并附本 fork 状态说明，尚非本页的完整译文
 
 ## 目前能做什么
 
@@ -28,6 +28,8 @@
 - 对最新完成的文本回复生成“换个说法”候选，预览后采纳或丢弃；候选生成不调用工具。历史回复需先分支处理
 - 创建独立剧情分支，保留原会话历史；派生记忆携带来源与有效性信息，源内容修改或撤回后使相关派生内容失效
 - “重试任务”区分已完成和状态不明的操作。目前带副作用回执的重试仅覆盖 `channel.post` 试点，不承诺所有工具都能安全重复执行
+
+近期已合并渠道记忆回退路径的角色归属修正，以及试演、秘密空间、短信和阅读笔记的上下文与保存生命周期修正；这些修正不迁移旧记忆，也不保证补回此前未保存的内容。
 
 这些是当前的 L1 / L2 基础能力。剧情会话只允许作用域内的记忆搜索，真实操作应在现实会话中完成。新范围不会自动吸收未分类旧记忆或全部角色设定；分支也不会撤销已经发生的真实操作。
 
@@ -145,7 +147,7 @@ npm run smoke:server:open
 
 可查阅 [Windows Pi 1.0.2 验收记录](docs/audits/2026-10-06-pi-1.0.2-followup-windows.md)、[Windows Pi 1.0.3 验收记录](docs/audits/2026-10-06-pi-1.0.3-windows-acceptance.md)、[macOS 开发版验收记录](docs/audits/2026-10-08-macos-desktop-acceptance.md)及 [Linux L1 / L2 验证记录](docs/audits/2026-10-01-l1-l2-runtime-validation.md)。历史验收只覆盖各自记录的提交与环境，不能自动视为后续版本全部通过。
 
-当前已交付基线（2026-10-25）为 [`da1e935a`](https://github.com/wangzihe843-hash/openhanako_replicate/commit/da1e935a012158afc4071b0f59caa779a21dd7e4)，本次 README 维护前核对的 `feature/xingye-mvp` 与远端 `review/ci22-integration-20261009` 均指向该基线，七个 Pi 家族包固定为 1.4.0。该提交的 [review CI 40179769193](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/40179769193) 和 [feature CI 40182384830](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/40182384830) 均为五项检查通过；feature 于10月25日10:19 UTC完成。结果仅覆盖该SHA及各自运行环境，不表示本机所有历史测试均绿，也不能代替完整桌面交互、真实Windows/NTFS专项、安装/卸载、生产签名公证或真实模型服务验收。10/20的ec6927a2 / Pi1.3.0为先前已交付历史基线。
+当前已交付基线（2026-11-01）为 [`3bc2eced`](https://github.com/wangzihe843-hash/openhanako_replicate/commit/3bc2eced6374f90d05f228da4a0a14816a6089ff)，当日 10:38–10:40 UTC 核对的远端 `feature/xingye-mvp` 与 `review/ci22-integration-20261009` 均指向该提交，本机维护基线相同；七个 Pi 家族包仍精确固定为 1.4.0。该提交的 [review CI 41226543707](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/41226543707) 和 [feature CI 41229075244](https://github.com/wangzihe843-hash/openhanako_replicate/actions/runs/41229075244) 在当日 05:27 UTC 核对时均为 completed/success。本次文档维护未重跑 CI，也未重新逐项验收各 job。结果仅覆盖该 SHA 及各自运行环境，不表示本机所有历史测试均绿，也不能代替完整桌面交互、真实 Windows/NTFS 专项、安装/卸载、生产签名公证或真实模型服务验收。10/25 的 da1e935a / Pi 1.4.0 与 10/20 的 ec6927a2 / Pi 1.3.0 保留为历史交付基线。
 
 [CI](.github/workflows/ci.yml) 在推送 `main`、`feature/xingye-mvp`、`review/ci22-integration-20261009`、`review/pi-1.2.0-prep-20261013` 或向 `main` 提 PR 时触发。当前包括 macOS / Windows 2022 检查与测试、独立 Windows 原生 auth-lock 检查，以及 Linux 边界检查和 open 构建/冒烟检查。CI token 仅授予仓库内容读取权限，同一分支/PR 的新运行会取消旧 CI；Build 保留正在生成的产物，不取消已有运行。后续提交仍须核验其精确提交的实际运行结果。
 
@@ -171,7 +173,7 @@ npm run smoke:server:open
 
 ## 参与与反馈
 
-截至 2026-10-25，本 fork 尚未启用 Issues，反馈入口待维护者公布。准备反馈时，请记录分支/提交、操作系统、Node/npm 版本、复现步骤，以及脱敏后的日志；本 fork 特有问题不要直接当成上游问题提交。修改前先阅读相关模块说明；涉及持久化、工具副作用、权限或构建链时，需要同时检查兼容性和失败路径。
+截至 2026-11-01，本 fork 尚未启用 Issues，反馈入口待维护者公布。准备反馈时，请记录分支/提交、操作系统、Node/npm 版本、复现步骤，以及脱敏后的日志；本 fork 特有问题不要直接当成上游问题提交。修改前先阅读相关模块说明；涉及持久化、工具副作用、权限或构建链时，需要同时检查兼容性和失败路径。
 
 [CONTRIBUTING.md](CONTRIBUTING.md)、[插件指南](PLUGINS.md)和 [Plugin SDK](PLUGIN_SDK.md)保留了上游开发背景；其中品牌、投稿政策与分发说明尚未全面针对本 fork 更新。命令和支持范围优先以当前源码及本页为准。
 
