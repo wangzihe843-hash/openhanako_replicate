@@ -18,9 +18,9 @@ import { generateGroupChatReplyWithAI } from '../desktop/src/react/xingye/xingye
 import type { Agent } from '../desktop/src/react/types';
 
 const h = vi.hoisted(() => ({
-  bridge: null as any, generate: vi.fn(), afterConfig: null as null | (() => void),
+  bridge: null as null | ((url: string, init?: RequestInit) => Response | Promise<Response>), generate: vi.fn(), afterConfig: null as null | (() => void),
   configOverride: undefined as unknown,
-  calls: [] as Array<{ path: string; body: any }>,
+  calls: [] as Array<{ path: string; body: { prompt: string; agentId: string } }>,
 }));
 vi.mock('../desktop/src/react/hooks/use-hana-fetch', () => ({ hanaFetch: vi.fn(async (url: string, init?: RequestInit) => {
   const body = init?.body ? JSON.parse(String(init.body)) : {};
@@ -43,7 +43,7 @@ let root: string;
 let app: Hono;
 let agent: Agent;
 let runtimeAgent: RuntimeAgent;
-let engine: any;
+let engine: Omit<Engine, 'agent'> & { agent: RuntimeAgent | undefined };
 const quote = 'A转述B：「C说『我把吉他借给你，别告诉他们。』」 👩🏽‍💻';
 const channelFile = () => path.join(root, 'channels', 'ch_room.md');
 const rows = () => parseChannel(fs.readFileSync(channelFile(), 'utf8')).messages;
@@ -59,7 +59,7 @@ async function setup(opts: { name?: unknown; locale?: string; agentLocale?: stri
   for (const id of [agent.id, 'peer']) fs.mkdirSync(path.join(agentsDir, id), { recursive: true });
   fs.writeFileSync(path.join(userDir, 'preferences.json'), JSON.stringify({ _defaultsRelaxedMigrated: true, ...(opts.name !== undefined ? { userName: opts.name } : {}), ...(opts.locale !== undefined ? { locale: opts.locale } : {}) }));
   const prefs = new PreferencesManager({ userDir, agentsDir });
-  runtimeAgent = new RuntimeAgent({ id: agent.id, agentsDir, userDir, productDir: path.join(root, 'product') } as any);
+  runtimeAgent = new RuntimeAgent({ id: agent.id, agentsDir, userDir, productDir: path.join(root, 'product') } as unknown as ConstructorParameters<typeof RuntimeAgent>[0]);
   runtimeAgent._config = { ...(opts.agentLocale !== undefined ? { locale: opts.agentLocale } : {}), user: { name: 'IGNORED_AGENT_OVERRIDE' } };
   runtimeAgent._cb = { getUserName: () => prefs.getUserName(), getLocale: () => prefs.getLocale() };
   // Exercise both real constructor defaults and the loadConfigOnly/init resolution path.
@@ -77,7 +77,7 @@ async function setup(opts: { name?: unknown; locale?: string; agentLocale?: stri
     providerRegistry: { getAllProvidersRaw: () => ({}) }, emitEvent: vi.fn(),
     getAgent: (id: string) => [agent.id, 'peer'].includes(id) ? { id, name: '同名', agentDir: path.join(agentsDir, id) } : null,
     listAgents: () => [{ id: agent.id, name: '同名' }, { id: 'peer', name: '同名' }],
-  };
+  } as unknown as typeof engine;
   Object.defineProperty(engine, 'userName', Object.getOwnPropertyDescriptor(Engine.prototype, 'userName')!);
   fs.mkdirSync(engine.channelsDir, { recursive: true });
   await createChannel(engine.channelsDir, { id: 'room', name: 'Synthetic', members: [agent.id, 'peer'] });
