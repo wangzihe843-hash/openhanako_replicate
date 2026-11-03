@@ -73,6 +73,8 @@ vi.mock('./xingye-group-chat-ai', () => ({
   generateGroupChatReplyWithAI: vi.fn(async () => mocks.callAiHandler()),
 }));
 
+vi.mock('../hooks/use-config', () => ({ fetchConfig: vi.fn(async () => ({ user: { name: 'liyu' } })) }));
+
 vi.mock('./xingye-profile-store', () => ({
   readXingyeRoleProfile: vi.fn(async () => null),
 }));

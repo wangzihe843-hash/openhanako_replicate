@@ -80,6 +80,22 @@ export async function resolveXingyeSpeakerUserName(explicitUserName?: string): P
   );
 }
 
+/** Channel attribution must use the persisted sender, never a UI placeholder. */
+export async function resolveXingyeGroupChatUserName(cacheKey?: string): Promise<string> {
+  const config = await fetchConfig({ force: true, cacheKey });
+  if (!config || typeof config !== 'object' || Array.isArray(config) || config.error) {
+    throw new Error('读取群聊用户身份失败，请重试。');
+  }
+  // Older servers can supply an explicit global name, but an unset preference
+  // cannot reveal the runtime's locale/default. Fail without guessing in that case.
+  // Explicit names such as User/user/用户 are valid names, not sentinel values.
+  const name = Object.hasOwn(config, 'channelUserName') ? config.channelUserName : config.user?.name;
+  if (typeof name !== 'string' || !name.trim()) {
+    throw new Error('读取群聊用户身份失败，请刷新服务端后重试。');
+  }
+  return name.trim();
+}
+
 /** 与 resolveXingyeSpeakerUserName 一致：OpenHanako config.user.name 优先，其次显式/全局 store，最后「用户」。供 Lore 等同步 UI 使用。 */
 export function resolveXingyeLoreTemplateUserNameSync(
   openHanakoConfig: unknown,
@@ -173,6 +189,8 @@ export function formatXingyeSpeakerContextForPrompt(args: {
     `- currentUserName=${ctx.currentUserName}；currentAgentName=${ctx.currentAgentName}。`,
     `- user 消息中的“我”指 currentUserName=${ctx.currentUserName}；user 消息中的“你”指 currentAgentName=${ctx.currentAgentName}。`,
     `- agent 消息中的“我”指 currentAgentName=${ctx.currentAgentName}；agent 消息中的“你”指 currentUserName=${ctx.currentUserName}。`,
+    '- 上述映射只适用于说话者自己的陈述；引述中的“我/你”按被引述者及其受话者理解，保留引述原文，不把被引述者的经历当成当前角色的亲历或记忆。',
+    '- 此处 agent 指 currentAgent；其他群成员和评论者各有自己的身份与视角。同名时按来源中的角色类型和 ID 区分，身份不明时不要猜测归属。',
     '- 当 user 说“我陪你”“我们一起”时，companion=user，不要把第三方 NPC 写成 companion。',
     '- 第三方 NPC 只有在原文明确写“和某某一起做”“某某陪你/陪我做”时，才能作为 companion。',
     '- 当某某是送货、供货、被验收、被核查、被确认、被交接或被谈论的一方时，该 NPC 是 counterparty/mentionedPerson，不是 companion。',

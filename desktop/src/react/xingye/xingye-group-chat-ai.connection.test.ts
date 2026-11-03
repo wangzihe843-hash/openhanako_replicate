@@ -8,14 +8,14 @@ import type { Agent } from '../types';
 const mocks = vi.hoisted(() => ({
   config: vi.fn<() => Promise<{ user: { name: string } }>>(),
   lore: vi.fn<() => Promise<{ content: string }>>(),
-  calls: [] as Array<{ path: string; origin?: string; action?: string }>,
+  calls: [] as Array<{ path: string; origin?: string; action?: string; payload: Record<string, unknown> }>,
 }));
 vi.mock('../hooks/use-config', () => ({ fetchConfig: mocks.config }));
 vi.mock('../hooks/use-hana-fetch', () => ({
   hanaFetch: vi.fn(async (path: string, init?: RequestInit & { connection?: ServerConnection }) => {
     const connection = init?.connection ?? resolveServerConnection(useStore.getState());
     const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
-    mocks.calls.push({ path, origin: connection?.baseUrl, action: typeof body.action === 'string' ? body.action : undefined });
+    mocks.calls.push({ path, origin: connection?.baseUrl, action: typeof body.action === 'string' ? body.action : undefined, payload: body });
     let data: unknown;
     if (path.startsWith('/api/channels/')) data = { id: 'c', name: 'C', members: ['a'], messages: [{ sender: 'user', timestamp: 't', body: 'A private message' }] };
     else if (path === '/api/xingye/phone-generate') data = { ok: true, result: { decision: 'reply', reply: 'reply' } };
@@ -51,6 +51,22 @@ describe('MR8 group generation connection ownership', () => {
     mocks.lore.mockReset().mockResolvedValue({ content: 'A private lore' });
   });
   afterEach(() => vi.restoreAllMocks());
+
+  it.each(['A', 'a'])('passes the resolved same-name user %s through history and self-anchor attribution', async (userName) => {
+    mocks.config.mockResolvedValue({ user: { name: userName } });
+    const quote = '阿陶说：「我借给你吉他。」';
+    await generateGroupChatReplyWithAI({
+      agent, channelId: 'c', channelName: 'C', channelMembers: ['a'],
+      recentMessages: [{ sender: userName, timestamp: 't', body: quote }],
+    });
+    const request = mocks.calls.find(call => call.path === '/api/xingye/phone-generate')!.payload;
+    expect(request).toMatchObject({ agentId: 'a', ownerAgentId: 'a', mmChatMode: 'xingye_group_chat_reply' });
+    const prompt = String(request.prompt);
+    expect(prompt).toContain(`[${userName}（${userName === 'a' ? '身份不明' : 'user 本人'}） · t]\n${quote}`);
+    expect(prompt).toContain('TA 在本群第一次发言');
+    expect(prompt).not.toContain(`· [t] ${quote}`);
+    expect(mocks.calls.filter(call => call.path.endsWith('/post-as-agent') || call.action === 'appendJsonl')).toEqual([]);
+  });
 
   it.each(['username', 'lore'] as const)('MR8 cancels the real orchestrator and generator when %s resolves after switching', async (stage) => {
     const started = deferred<void>();

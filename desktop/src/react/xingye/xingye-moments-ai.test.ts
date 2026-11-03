@@ -39,11 +39,40 @@ import { postXingyeStorage } from './xingye-storage-api';
 import { getPhoneContactMeta, getConfirmedVirtualContacts, resolveContactDisplayName } from './xingye-phone-store';
 import { listXingyeMomentPosts } from './xingye-moments-store';
 import {
+  generateXingyeMomentCommentReplyWithAI,
   generateXingyeMomentDraftWithAI,
   normalizeMomentDraftResult,
 } from './xingye-moments-ai';
 
 describe('normalizeMomentDraftResult', () => {
+  it('retains typed identities for same-name real agents and virtual contacts without rewriting quotes', () => {
+    const raw = {
+      content: '合成动态', likes: ['agent:peer', 'vc:peer'],
+      comments: [
+        { ref: 'agent:peer', body: '阿陶说「我借给你」。你们去听吉他吧。' },
+        { ref: 'vc:peer', body: '他们会告诉他人。' },
+      ],
+    };
+    const before = structuredClone(raw);
+    const pools = { ownerAgentId: 'owner', virtualContacts: [{ id: 'peer', displayName: '小岑' }], peerAgents: [{ id: 'peer', displayName: '小岑' }] };
+    const result = normalizeMomentDraftResult(raw, pools)!;
+    expect(result.seedComments).toEqual([
+      { actorType: 'agent', actorId: 'peer', actorName: '小岑', body: raw.comments[0].body },
+      { actorType: 'virtual_contact', actorId: 'owner:peer', actorName: '小岑', body: raw.comments[1].body },
+    ]);
+    expect(result.seedLikes).toEqual(result.seedComments.map(({ body: _body, ...actor }) => actor));
+    expect(raw).toEqual(before);
+  });
+
+  it('rejects an unprefixed ID that matches both actor pools instead of assigning someone else’s comment', () => {
+    const pools = { ownerAgentId: 'owner', virtualContacts: [{ id: 'peer', displayName: '小岑' }], peerAgents: [{ id: 'peer', displayName: '小岑' }] };
+    const raw = { content: '合成动态', likes: ['peer'], comments: [{ ref: 'peer', body: '这是我的经历。' }] };
+    const result = normalizeMomentDraftResult(raw, pools)!;
+    expect(result.seedLikes).toEqual([]);
+    expect(result.seedComments).toEqual([]);
+    expect(raw.comments[0]).toEqual({ ref: 'peer', body: '这是我的经历。' });
+  });
+
   it('accepts content or legacy body and returns empty seed arrays', () => {
     expect(normalizeMomentDraftResult({ content: '萍水相逢' })).toEqual({
       content: '萍水相逢',
@@ -229,6 +258,32 @@ describe('generateXingyeMomentDraftWithAI', () => {
       ok: true,
       json: async () => ({ ok: true, result: { content: '今天天有点低' } }),
     } as Response);
+  });
+
+  it('collects a same-name real commenter’s own lore and impression instead of the post author’s', async () => {
+    vi.mocked(postXingyeStorage).mockImplementation(async (args) => ({ content: `合成私有设定:${args.agentId}` }));
+    vi.mocked(getPhoneContactMeta).mockReturnValue({ impression: '评论者对作者的看法' } as never);
+    vi.mocked(hanaFetch).mockResolvedValue({ ok: true, json: async () => ({ ok: true, result: { reply: '收到了。' } }) } as Response);
+    const post = { authorAgentId: 'author', authorDisplayName: '小岑', content: '阿陶说：「我借给你吉他。」' };
+    const targetComment = { authorName: '小岑', body: '你们和他们知道吗？' };
+    const before = structuredClone({ post, targetComment });
+    const result = await generateXingyeMomentCommentReplyWithAI({
+      replyAgent: { id: 'commenter', name: '小岑', yuan: 'hanako', isPrimary: false },
+      replyProfile: null, post, targetComment, existingComments: [],
+    });
+    expect(result).toBe('收到了。');
+    expect(vi.mocked(postXingyeStorage).mock.calls.map(([args]) => [args.action, args.agentId])).toEqual([['read', 'commenter']]);
+    expect(getPhoneContactMeta).toHaveBeenCalledWith('commenter', 'agent', 'author');
+    const call = vi.mocked(hanaFetch).mock.calls.find(([url]) => url === '/api/xingye/phone-generate')!;
+    const payload = JSON.parse(String(call[1]?.body));
+    expect(payload).toMatchObject({ ownerAgentId: 'commenter', agentId: 'commenter' });
+    expect(payload.prompt).toContain('合成私有设定:commenter');
+    expect(payload.prompt).not.toContain('合成私有设定:author');
+    expect(payload.prompt).toContain('评论者对作者的看法');
+    expect(payload.prompt).toContain('作者是「小岑」（不是你）');
+    expect(payload.prompt).toContain(post.content);
+    expect(payload.prompt).toContain(targetComment.body);
+    expect({ post, targetComment }).toEqual(before);
   });
 
   it('prompt enforces likes/comments as mandatory when any pool is non-empty (with few-shot)', async () => {

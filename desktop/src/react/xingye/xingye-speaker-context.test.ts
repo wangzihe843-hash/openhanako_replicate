@@ -11,10 +11,56 @@ import {
   resolveXingyeLoreTemplateUserNameSync,
 } from './xingye-speaker-context';
 import type { XingyeRelationshipState } from './xingye-state-store';
+import { getXingyeRoleProfileDisplay } from './xingye-profile-store';
+import { buildCharacterCardContext } from '../../../../shared/xingye-character-card';
 
 const linwu = { id: 'linwu', name: '林雾', yuan: 'hanako', isPrimary: true } as Agent;
 
 describe('xingye speaker context', () => {
+  it('retains quote text and speaker roles even when the user and role share a display name', () => {
+    const quote = '阿陶说：「我把吉他借给你，你们别告诉他们或他人。」';
+    const context = {
+      agentId: 'linwu', hasOpenHanakoMessages: true, sourceNotes: [], summaryText: '',
+      messages: [
+        { role: 'user' as const, source: 'openhanako_chat' as const, content: quote, createdAt: 't1' },
+        { role: 'assistant' as const, source: 'openhanako_chat' as const, content: '我只是听到了转述。', createdAt: 't2' },
+      ],
+    };
+    const before = structuredClone(context);
+    const excerpts = buildXingyeRecentChatExcerpts({ context, userName: '小岑', agentName: '小岑' });
+    expect(excerpts).toEqual([
+      { speaker: 'user', speakerLabel: '用户 小岑', text: quote, createdAt: 't1' },
+      { speaker: 'currentAgent', speakerLabel: '当前角色 小岑', text: '我只是听到了转述。', createdAt: 't2' },
+    ]);
+    expect(formatXingyeRecentChatExcerptsForPrompt(excerpts)).toContain(`[用户 小岑 t1] ${quote}`);
+    const rules = formatXingyeSpeakerContextForPrompt({ userName: '小岑', agentName: '小岑' });
+    // This checks the prompt contract, not whether a model follows it.
+    expect(rules).toContain('引述中的“我/你”');
+    expect(rules).toContain('不把被引述者的经历当成当前角色的亲历或记忆');
+    expect(context).toEqual(before);
+  });
+
+  it('keeps editable card fields intact and resolves only explicit role/user placeholders for prompts', () => {
+    const literal = '你们和他们请他人弹吉他；阿陶说「我知道你是谁」。';
+    const profile = {
+      agentId: 'linwu', updatedAt: '2026-01-01', displayName: '林雾',
+      relationshipMode: `用户小岑与角色林雾保持朋友关系。${literal}`,
+      scenario: `{{char}}与{{user}}在合成场景见面。${literal}`,
+      messageExample: `{{user}}：${literal}\n{{char}}：这是对话示例。{{eval:inert}}`,
+    };
+    const before = structuredClone(profile);
+    const display = getXingyeRoleProfileDisplay(linwu, profile);
+    expect(display.scenario).toBe(profile.scenario);
+    expect(display.messageExample).toBe(profile.messageExample);
+    expect(display.relationshipMode).toBe(profile.relationshipMode);
+    const card = buildCharacterCardContext({ profile, character: '林雾', user: '小岑' });
+    expect(card).toContain(`林雾与小岑在合成场景见面。${literal}`);
+    expect(card).toContain(`小岑：${literal}\n林雾：这是对话示例。{{eval:inert}}`);
+    expect(card).toContain('Dialogue style examples (not events or conversation history)');
+    expect(card).toContain('Do not treat example dialogue as real memories.');
+    expect(profile).toEqual(before);
+  });
+
   it('resolveXingyeLoreTemplateUserNameSync prefers OpenHanako config user.name over store', () => {
     expect(resolveXingyeLoreTemplateUserNameSync({ user: { name: 'Cfg' } }, 'Store')).toBe('Cfg');
     expect(resolveXingyeLoreTemplateUserNameSync(null, 'StoreNick')).toBe('StoreNick');

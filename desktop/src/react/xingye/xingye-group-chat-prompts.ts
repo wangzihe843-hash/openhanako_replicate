@@ -51,27 +51,52 @@ export type GroupChatReplyAiResult = {
 
 const MAX_REPLY_CHARS = 600;
 const MAX_REASON_CHARS = 280;
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
-function clamp(text: string, max: number): string {
+/** Budgets remain UTF-16 code units; retain only complete graphemes, including emoji. */
+export function truncateGroupChatText(text: string, max: number, suffix: '' | '…' = '…'): string {
+  const budget = Math.max(0, Math.floor(max));
+  if (!budget) return '';
   const trimmed = text.trim();
-  if (trimmed.length <= max) return trimmed;
-  return `${trimmed.slice(0, Math.max(0, max - 1))}…`;
+  if (trimmed.length <= budget) return trimmed;
+  let end = 0;
+  for (const { index, segment } of graphemes.segment(trimmed)) {
+    if (index + segment.length > budget - suffix.length) break;
+    end = index + segment.length;
+  }
+  return trimmed.slice(0, end) + suffix;
+}
+
+/** A legacy sender string proves self only when it has no known user/system collision. */
+export function isUnambiguousGroupChatSelfSender(sender: string, agentId: string, userName = ''): boolean {
+  return Boolean(agentId) && sender === agentId && sender !== userName.trim() && sender !== 'system';
 }
 
 export function formatGroupChatHistoryForPrompt(args: {
+  /** Channel messages store agent IDs, not profile display names. */
+  agentId?: string;
   agentName: string;
   userName: string;
+  channelMembers?: readonly string[];
   messages: GroupChatPromptMessage[];
   maxChars?: number;
 }): string {
   const { agentName, userName, messages } = args;
   const maxChars = args.maxChars ?? 6000;
-  if (!messages.length) return '（群聊里还没有任何消息）';
+  if (maxChars <= 0) return '';
+  if (!messages.length) return truncateGroupChatText('（群聊里还没有任何消息）', maxChars);
   const lines = messages.map((msg) => {
     const sender = msg.sender || 'unknown';
+    const isSelf = sender === (args.agentId || agentName);
+    const isUser = sender === userName;
+    const isMember = isSelf || args.channelMembers?.includes(sender);
+    // Legacy channel rows only have a sender string. A collision is not proof
+    // of either identity; keep the text visible without inventing ownership.
+    const ambiguous = (isUser && (isMember || sender === 'system')) || (isMember && sender === 'system');
     let tag = sender;
-    if (sender === agentName) tag = `${sender}（你自己）`;
-    else if (sender === userName) tag = `${sender}（user 本人）`;
+    if (ambiguous) tag = `${sender}（身份不明）`;
+    else if (isUnambiguousGroupChatSelfSender(sender, args.agentId || agentName, userName)) tag = `${sender}（你自己）`;
+    else if (isUser) tag = `${sender}（user 本人）`;
     else if (sender === 'system') tag = `${sender}（频道系统消息）`;
     else tag = `${sender}（其他成员）`;
     return `[${tag} · ${msg.timestamp}]\n${msg.body.trim()}`;
@@ -79,17 +104,12 @@ export function formatGroupChatHistoryForPrompt(args: {
   const marker = '…（更早消息已省略）\n\n';
   let chosen = [...lines];
   let dropped = 0;
-  while (chosen.join('\n\n').length > maxChars && chosen.length > 1) {
+  while ((dropped > 0 ? marker.length : 0) + chosen.join('\n\n').length > maxChars && chosen.length > 1) {
     chosen = chosen.slice(1);
     dropped += 1;
   }
-  let joined = (dropped > 0 ? marker : '') + chosen.join('\n\n');
-  if (joined.length > maxChars) {
-    const only = chosen[0] ?? '';
-    const budget = Math.max(120, maxChars - (dropped > 0 ? marker.length : 0));
-    joined = (dropped > 0 ? marker : '') + (only.length > budget ? `${only.slice(0, budget)}…` : only);
-  }
-  return joined;
+  const joined = (dropped > 0 ? marker : '') + chosen.join('\n\n');
+  return truncateGroupChatText(joined, maxChars);
 }
 
 function safeText(value: string | undefined | null): string {
@@ -127,8 +147,10 @@ export function buildGroupChatReplyPrompt(args: BuildGroupChatReplyPromptArgs): 
     : '群聊成员（仅你和 user）';
 
   const historyBlock = formatGroupChatHistoryForPrompt({
+    agentId: agent.id,
     agentName: agent.name,
     userName,
+    channelMembers,
     messages: recentMessages,
     maxChars: 6000,
   });
@@ -226,9 +248,9 @@ export function normalizeGroupChatReplyAiResult(raw: unknown): GroupChatReplyAiR
   else if (decisionRaw === 'skip') decision = 'skip';
   else return null;
   const replyRaw = typeof record.reply === 'string' ? record.reply : '';
-  const reply = clamp(replyRaw, MAX_REPLY_CHARS);
+  const reply = truncateGroupChatText(replyRaw, MAX_REPLY_CHARS);
   const reasonRaw = typeof record.reason === 'string' ? record.reason : '';
-  const reason = reasonRaw.trim() ? clamp(reasonRaw, MAX_REASON_CHARS) : undefined;
+  const reason = reasonRaw.trim() ? truncateGroupChatText(reasonRaw, MAX_REASON_CHARS) : undefined;
 
   if (decision === 'reply' && !reply) return null;
   return { decision, reply: decision === 'skip' ? '' : reply, reason };

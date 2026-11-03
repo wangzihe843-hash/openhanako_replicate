@@ -29,6 +29,28 @@ describe('listAggregatedXingyeMoments', () => {
     });
   });
 
+  it('keeps cross-agent posts and same-name user/agent comments visible without exposing owner-local contacts', async () => {
+    const post = await store.createPost({
+      authorAgentId: 'author-a', authorName: '小岑', content: 'A 的公开原文',
+      seedComments: [
+        { actorType: 'agent', actorId: 'author-b', actorName: '小岑', body: 'B：我听到了引述。' },
+        { actorType: 'virtual_contact', actorId: 'author-a:peer', actorName: '小岑', body: '仅 A 可见的联系人原文' },
+      ],
+    });
+    await store.addComment('author-a', post!.id, { actorType: 'user', actorId: 'user', actorName: '小岑' }, '用户：你们知道吗？');
+    await store.createPost({ authorAgentId: 'author-b', authorName: '小岑', content: 'B 的公开原文' });
+    const before = await store.listPosts('author-a');
+    const feed = await listAggregatedXingyeMoments(['author-a', 'author-b'], { listForAgent: store.listPosts, viewerAgentId: 'author-b' });
+    expect(feed.map(item => item.authorAgentId).sort()).toEqual(['author-a', 'author-b']);
+    const aPost = feed.find(item => item.authorAgentId === 'author-a')!;
+    expect(aPost.content).toBe('A 的公开原文');
+    expect(aPost.comments.map(comment => [comment.actorType, comment.actorId, comment.body])).toEqual([
+      ['agent', 'author-b', 'B：我听到了引述。'],
+      ['user', 'user', '用户：你们知道吗？'],
+    ]);
+    expect(await store.listPosts('author-a')).toEqual(before);
+  });
+
   it('returns empty array when no agent ids are provided', async () => {
     await expect(listAggregatedXingyeMoments([], { listForAgent: store.listPosts })).resolves.toEqual([]);
   });

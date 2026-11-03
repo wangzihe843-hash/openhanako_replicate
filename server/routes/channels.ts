@@ -52,6 +52,7 @@ import {
   updateAgentPhoneProjectionMeta,
 } from "../../lib/conversations/agent-phone-projection.ts";
 import { resolveAgentStrict } from "../utils/resolve-agent.ts";
+import { getChannelUserName } from "../utils/channel-user.ts";
 import { findModel } from "../../shared/model-ref.ts";
 import { createModuleLogger } from "../../lib/debug-log.ts";
 import {
@@ -696,7 +697,7 @@ export function createChannelsRoute(engine: any, hub: any) {
         return c.json({ error: "Channel not found" }, 404);
       }
 
-      const senderName = engine.userName || "user";
+      const senderName = getChannelUserName(engine);
       const result = await appendMessage(filePath, senderName, body);
 
       debugLog()?.log("api", `POST /channels/${name}/messages`);

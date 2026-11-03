@@ -31,6 +31,7 @@ import {
   resolveDefaultWorkspacePath,
 } from "../../shared/default-workspace.ts";
 import { splitByScope, injectGlobalFields } from '../../shared/config-scope.ts';
+import { getChannelUserName } from '../utils/channel-user.ts';
 import {
   clearWorkspaceHistory,
   mergeWorkspaceHistory,
@@ -212,6 +213,15 @@ export function createConfigRoute(engine: any) {
 
       // 自动注入全局字段（schema-driven）
       injectGlobalFields(config, engine);
+      // Read-only channel sender snapshot, separate from the raw name preference.
+      // Runtime locale/defaults (including agent locale overrides) belong to the
+      // same source as POST /channels/:name/messages, not a renderer UI fallback.
+      try {
+        config.channelUserName = getChannelUserName(engine);
+      } catch {
+        // Global settings remain readable before a runtime agent is available.
+        config.channelUserName = null;
+      }
       return c.json(maskObjectSecrets(config));
     } catch (err) {
       return c.json({ error: err.message }, 500);
@@ -294,6 +304,9 @@ export function createConfigRoute(engine: any) {
       const partial = await safeJson(c);
       if (!partial || typeof partial !== "object") {
         return c.json({ error: t("error.invalidJson") }, 400);
+      }
+      if (Object.hasOwn(partial, "channelUserName")) {
+        return c.json({ error: "channelUserName is read-only; set user.name instead" }, 400);
       }
       const settingsDenied = denyWithoutScope(c, "settings.write");
       if (settingsDenied) return settingsDenied;

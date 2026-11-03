@@ -23,17 +23,22 @@ import { resolveServerConnection, type ServerConnection } from '../services/serv
  */
 
 import { hanaFetch } from '../hooks/use-hana-fetch';
+import { resolveXingyeGroupChatUserName } from './xingye-speaker-context';
 import type { Agent, ChannelMessage } from '../types';
 import { generateGroupChatReplyWithAI } from './xingye-group-chat-ai';
+import { isUnambiguousGroupChatSelfSender } from './xingye-group-chat-prompts';
 import {
   appendGroupChatRun,
   buildChannelMessageId,
   findGroupChatRunByDedupeKey,
   isRetryableGroupChatRun,
+  listGroupChatRuns,
   makeGroupChatDedupeKey,
+  GROUP_CHAT_SELF_SKIP_REASON,
   type XingyeGroupChatRun,
 } from './xingye-group-chat-state-store';
 import { readXingyeRoleProfile } from './xingye-profile-store';
+import { requireSafeXingyeAgentId } from './xingye-store-utils';
 
 const RECENT_WINDOW = 20;
 
@@ -164,7 +169,9 @@ async function runGroupChatReply(
 ): Promise<TriggerGroupChatReplyOutcome> {
   const { agent } = params;
   const channelId = String(params.channelId ?? '').trim();
-  if (!agent?.id) {
+  try {
+    if (typeof agent?.id !== 'string' || requireSafeXingyeAgentId(agent.id) !== agent.id) throw new Error('invalid agent');
+  } catch {
     return { status: 'error', error: '当前 agent 无效' };
   }
   if (!channelId) {
@@ -231,14 +238,32 @@ async function runGroupChatReply(
     };
   }
 
-  if (latest && latest.sender === agent.id) {
+  // Share the actual channel sender snapshot with the generator. A failed read
+  // must not persist a guessed self-skip or fall back to a display-only name.
+  const userName = await resolveXingyeGroupChatUserName(connectionKey);
+  assertCurrent();
+  let latestIsSelf = Boolean(latest && isUnambiguousGroupChatSelfSender(latest.sender, agent.id, userName));
+  if (latest && latest.sender === agent.id && !latestIsSelf) {
+    const runs = await listGroupChatRuns(agent.id);
+    assertCurrent();
+    // Acknowledged posts supply identity evidence even when the sender string
+    // collides. Match owner, group, message ID and exact body; no text guessing.
+    latestIsSelf = runs.some(run => run.agentId === agent.id && run.channelId === channelId
+      && run.status === 'replied' && run.replyMessageId === latestMessageId && run.replyContent === latest.body);
+  }
+
+  if (latestIsSelf) {
+    if (existing?.status === 'skipped') {
+      return { status: 'noop', reason: GROUP_CHAT_SELF_SKIP_REASON, channel, previousRun: existing };
+    }
     const run = await safeAppendRun({
       agentId: agent.id,
       channelId,
       sourceMessageIds,
       latestMessageId,
       status: 'skipped',
-      reason: '最新一条消息是当前 agent 自己刚发的，不再追发',
+      retryable: true,
+      reason: GROUP_CHAT_SELF_SKIP_REASON,
     });
     return {
       status: 'skipped',
@@ -261,6 +286,7 @@ async function runGroupChatReply(
       channelDescription: channel.description,
       channelMembers: channel.members,
       recentMessages: recent,
+      userName,
       timeoutMs: params.timeoutMs,
     });
   } catch (err) {
@@ -285,6 +311,7 @@ async function runGroupChatReply(
       sourceMessageIds,
       latestMessageId,
       status: 'skipped',
+      retryable: false,
       reason: aiResult.reason || 'AI 判断当前无需回复',
     });
     return { status: 'skipped', run, channel, reason: run.reason };

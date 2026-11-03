@@ -228,17 +228,17 @@ function coerceRefString(entry: unknown): string | null {
 }
 
 /**
- * 先按 ref 原文查 index；若 ref 不含 `:` 前缀，再依次尝试 `vc:<ref>` 与 `agent:<ref>` 兜底。
- * 这样模型即便偷懒只写 `"hanako"` / `"vc-1"`，只要值能在池里命中也能解析出来。
+ * 先按 ref 原文查 index；无前缀时只接受唯一命中的身份。
+ * 两个池同 ID 时无法知道评论者是谁，不能靠遍历顺序把评论归给另一人。
  */
 function resolveActorRefSmart(rawRef: string, index: ActorRefIndex): ResolvedActorRef | null {
   const direct = index.get(rawRef);
   if (direct) return direct;
   if (!rawRef.includes(':')) {
     const vc = index.get(`vc:${rawRef}`);
-    if (vc) return vc;
     const ag = index.get(`agent:${rawRef}`);
-    if (ag) return ag;
+    if (vc && ag) return null;
+    return vc ?? ag ?? null;
   }
   return null;
 }

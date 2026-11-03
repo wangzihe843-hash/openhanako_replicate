@@ -14,11 +14,13 @@ import type { Agent } from '../types';
 import type { XingyeRoleProfile } from './xingye-profile-store';
 import {
   buildGroupChatReplyPrompt,
+  isUnambiguousGroupChatSelfSender,
   normalizeGroupChatReplyAiResult,
+  truncateGroupChatText as truncateChars,
   type GroupChatPromptMessage,
   type GroupChatReplyAiResult,
 } from './xingye-group-chat-prompts';
-import { resolveXingyeSpeakerUserName } from './xingye-speaker-context';
+import { resolveXingyeGroupChatUserName } from './xingye-speaker-context';
 import {
   collectRecentContextForAgent,
   describeRecentContextForPrompt,
@@ -41,16 +43,12 @@ export type GenerateGroupChatReplyParams = {
   channelDescription?: string;
   channelMembers: string[];
   recentMessages: GroupChatPromptMessage[];
+  /** Channel user sender already read by the orchestrator; keep its identity snapshot. */
+  userName?: string;
   timeoutMs?: number;
   /** Shares the orchestrator operation lifetime, including earlier connection changes. */
   assertCurrent?: () => void;
 };
-
-function truncateChars(text: string, max: number): string {
-  const t = text.trim();
-  if (t.length > max) return `${t.slice(0, Math.max(0, max - 1))}…`;
-  return t;
-}
 
 async function readLoreMemoryMarkdown(agentId: string, assertCurrent: () => void): Promise<string | null> {
   const aid = agentId.trim();
@@ -142,25 +140,29 @@ const GROUP_CHAT_OWN_REPLY_SNIPPET_CHARS = 30;
 export function buildGroupChatOwnReplyContinuityAnchorBlock(args: {
   agentId: string;
   agentName: string;
+  userName?: string;
   recentMessages: GroupChatPromptMessage[];
 }): string {
   const aid = args.agentId.trim();
   const aname = args.agentName.trim() || aid;
   if (!aid) return '';
+  // Sender strings cannot disambiguate an agent ID from an identical user
+  // name (or the reserved system sender). Never claim these rows as self.
+  if (!isUnambiguousGroupChatSelfSender(aid, aid, args.userName)) return '';
   if (!Array.isArray(args.recentMessages) || args.recentMessages.length === 0) return '';
   // 倒序遍历，挑出 sender === agentId 的最近 N 条；保持倒序展示（最近的在最上面）。
   const own: GroupChatPromptMessage[] = [];
   for (let i = args.recentMessages.length - 1; i >= 0 && own.length < GROUP_CHAT_OWN_REPLY_ANCHOR_LIMIT; i -= 1) {
     const m = args.recentMessages[i];
     if (!m) continue;
-    if (m.sender === aid || m.sender === aname) own.push(m);
+    if (m.sender === aid) own.push(m);
   }
   if (own.length === 0) return '';
   const lines: string[] = [
     `- 你（${aname}）在这条群聊里最近已经说过的几句（请避免再写几乎相同的话；让对话向前推进，不要原地打转）:`,
   ];
   for (const m of own) {
-    const snippet = (m.body ?? '').trim().replace(/\s+/g, ' ').slice(0, GROUP_CHAT_OWN_REPLY_SNIPPET_CHARS);
+    const snippet = truncateChars((m.body ?? '').trim().replace(/\s+/g, ' '), GROUP_CHAT_OWN_REPLY_SNIPPET_CHARS, '');
     if (!snippet) continue;
     lines.push(`  · [${m.timestamp}] ${snippet}`);
   }
@@ -252,7 +254,7 @@ async function generateForConnection(
   const { agent, profile } = params;
   const timeoutMs = params.timeoutMs ?? 90_000;
 
-  const userName = await resolveXingyeSpeakerUserName();
+  const userName = params.userName ?? await resolveXingyeGroupChatUserName(JSON.stringify(connection));
   assertCurrent();
   const recentContext = collectRecentContextForAgent({ agentId: agent.id });
   const recentSceneBlock = describeRecentContextForPrompt(recentContext);
@@ -280,6 +282,7 @@ async function generateForConnection(
   const ownReplyAnchorBlock = buildGroupChatOwnReplyContinuityAnchorBlock({
     agentId: agent.id,
     agentName: profile?.displayName ?? agent.name,
+    userName,
     recentMessages: params.recentMessages,
   });
 

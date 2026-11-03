@@ -48,6 +48,54 @@ afterEach(() => {
 });
 
 describe('buildXingyeAgentPhoneTurnContext', () => {
+  it('uses real peer IDs through same-name quotes without changing source files or loading the quoted peer’s relationship', () => {
+    const relationshipMode = '用户小岑与角色Alice保持朋友关系。你们和他们请他人弹吉他。';
+    writeJson('xingye/profile.json', { displayName: 'Alice', relationshipMode });
+    const args = {
+      agentId: 'alice', agentDir, hanakoHome, agentName: 'Alice', locale: 'zh',
+      messageText: 'Alice 转述 Carol：「我把吉他借给你，你们别告诉他们或他人。」',
+      peerRefs: [{ id: 'bob', name: 'Alice' }],
+    };
+    const original = structuredClone(args);
+    const files = ['xingye/profile.json', 'xingye/lore/entries.json'].map(name => path.join(agentDir, name));
+    const before = files.map(file => fs.readFileSync(file));
+    const out = buildXingyeAgentPhoneTurnContext(args);
+    expect(out).toContain('Alice（agent id：alice）');
+    expect(out).toContain('本轮 agent 发言者是：Alice（bob）');
+    expect(out).toContain('Bob 是 Alice 多年的挚友');
+    expect(out).toContain(`与用户的相处模式: ${relationshipMode}`);
+    expect(out).toContain('Alice（你自己）的资料');
+    expect(out).not.toContain('Carol 与 Alice 是宿敌');
+    expect(args).toEqual(original);
+    expect(files.map(file => fs.readFileSync(file))).toEqual(before);
+  });
+
+  it('does not let identity cues revive stale, disabled, private, foreign-owner or author-only sources', () => {
+    const entries = {
+      valid: loreEntry('valid', 'relationship', ['bob'], 'VALID_BOB_RELATION'),
+      stale: { ...loreEntry('stale', 'relationship', ['bob'], 'SECRET_STALE'), sourceStatus: 'stale' },
+      disabled: { ...loreEntry('disabled', 'relationship', ['bob'], 'SECRET_DISABLED'), enabled: false },
+      private: { ...loreEntry('private', 'relationship', ['bob'], 'SECRET_PRIVATE'), visibility: 'private' },
+      foreign: { ...loreEntry('foreign', 'relationship', ['bob'], 'SECRET_FOREIGN'), agentId: 'other-owner' },
+      author: { ...loreEntry('author', 'relationship', ['bob'], 'SECRET_AUTHOR'), memoryScope: { realm: 'legacy', knowledge: 'author' } },
+    };
+    writeJson('xingye/lore/entries.json', entries);
+    writeJson('xingye/profile.json', { scenario: 'SECRET_STORY_CARD', memoryScope: { realm: 'story', worldId: 'w', branchId: 'b' } });
+    const args = { agentId: 'alice', agentDir, hanakoHome, locale: 'zh', messageText: 'bob 说「我认识你」。', peerRefs: [{ id: 'bob', name: 'Alice' }] };
+    const first = buildXingyeAgentPhoneTurnContext(args);
+    expect(first).toContain('VALID_BOB_RELATION');
+    expect(first).not.toContain('SECRET_');
+    entries.valid.enabled = false;
+    writeJson('xingye/lore/entries.json', entries);
+    const sourceFile = path.join(agentDir, 'xingye/lore/entries.json');
+    const before = fs.readFileSync(sourceFile);
+    const second = buildXingyeAgentPhoneTurnContext(args);
+    expect(second).not.toContain('VALID_BOB_RELATION');
+    expect(second).not.toContain('SECRET_');
+    expect(second.length).toBeLessThanOrEqual(14_400);
+    expect(fs.readFileSync(sourceFile)).toEqual(before);
+  });
+
   it('combines latest self profile, real-speaker relationship, and topical keyword lore', () => {
     const out = buildXingyeAgentPhoneTurnContext({
       agentId: 'alice',

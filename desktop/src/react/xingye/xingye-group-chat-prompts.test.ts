@@ -9,6 +9,54 @@ import {
 const baseAgent = { id: 'agent-a', name: 'Linwu', yuan: 'yuan' } as const;
 
 describe('xingye-group-chat-prompts', () => {
+  it('attributes stored sender IDs while keeping a same-name user and quoted speech distinct', () => {
+    const recentMessages = [
+      { sender: '小岑', timestamp: 't1', body: '我转述阿陶的话：「我把吉他借给你，你们别告诉他们或他人。」' },
+      { sender: 'agent-a', timestamp: 't2', body: '我听到的是阿陶的原话。' },
+      { sender: 'agent-b', timestamp: 't3', body: '我才是被引述的人。' },
+    ];
+    const before = structuredClone(recentMessages);
+    const prompt = buildGroupChatReplyPrompt({
+      agent: { ...baseAgent, name: '小岑' },
+      profile: { agentId: 'agent-a', displayName: '新展示名', updatedAt: '2026-01-01' },
+      userName: '小岑', channelId: 'quoted', channelName: '合成群聊',
+      channelMembers: ['agent-a', 'agent-b'], recentMessages,
+    });
+    expect(prompt).toContain(`[小岑（user 本人） · t1]\n${recentMessages[0].body}`);
+    expect(prompt).toContain(`[agent-a（你自己） · t2]\n${recentMessages[1].body}`);
+    expect(prompt).toContain(`[agent-b（其他成员） · t3]\n${recentMessages[2].body}`);
+    expect(recentMessages).toEqual(before);
+  });
+
+  it('does not promote another member whose ID equals the current display name to self', () => {
+    const prompt = buildGroupChatReplyPrompt({
+      agent: { ...baseAgent, name: 'agent-b' }, userName: 'human',
+      channelId: 'same-name', channelName: '同名群', channelMembers: ['agent-a', 'agent-b'],
+      recentMessages: [{ sender: 'agent-b', timestamp: 't', body: '我说的是我自己的经历。' }],
+    });
+    expect(prompt).toContain('[agent-b（其他成员） · t]');
+    expect(prompt).not.toContain('[agent-b（你自己）');
+  });
+
+  it('keeps ambiguous legacy sender text unclaimed when a user name equals an agent ID', () => {
+    const prompt = buildGroupChatReplyPrompt({
+      agent: baseAgent, userName: 'agent-a', channelId: 'collision', channelName: '同名群',
+      channelMembers: ['agent-a', 'agent-b'],
+      recentMessages: [{ sender: 'agent-a', timestamp: 't', body: '我是谁不能从这一字段断定。' }],
+    });
+    expect(prompt).toContain('[agent-a（身份不明） · t]');
+    expect(prompt).not.toContain('[agent-a（你自己）');
+    expect(prompt).not.toContain('[agent-a（user 本人）');
+  });
+
+  it.each([0, 80, 6000])('keeps attribution labels inside a %i-character history budget', (maxChars) => {
+    const messages = [{ sender: 'other', timestamp: 't', body: '原文'.repeat(3500) }];
+    const original = messages[0].body;
+    const history = formatGroupChatHistoryForPrompt({ agentName: 'A', userName: 'U', messages, maxChars });
+    expect(history.length).toBeLessThanOrEqual(maxChars);
+    expect(messages[0].body).toBe(original);
+  });
+
   it('marks the current agent, the user, and other members distinctly in history', () => {
     const text = formatGroupChatHistoryForPrompt({
       agentName: 'Linwu',
@@ -118,5 +166,49 @@ describe('xingye-group-chat-prompts', () => {
       ownReplyAnchorBlock: '',
     });
     expect(prompt).toContain('TA 在本群第一次发言');
+  });
+});
+
+
+describe('group history keeps UTF-16 budgets at complete grapheme boundaries', () => {
+  const header = '[peer（其他成员） · t]\n';
+  it.each(['😀', '👩🏽‍💻', '👨‍👩‍👧‍👦', '🇨🇳', 'e\u0301', '1\uFE0F\u20E3', '🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}'])('preserves whole %s clusters before, on, and after each budget edge', cluster => {
+    const messages = [{ sender: 'peer', timestamp: 't', body: cluster.repeat(7000) }];
+    const before = structuredClone(messages);
+    for (const extra of [0, 1, cluster.length, cluster.length + 1, cluster.length + 2, cluster.length * 2, 6000 - header.length]) {
+      const maxChars = header.length + extra;
+      const text = formatGroupChatHistoryForPrompt({ agentId: 'self', agentName: 'Name', userName: 'user', messages, maxChars });
+      expect(text.length).toBeLessThanOrEqual(maxChars);
+      expect(text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u);
+      if (extra >= 1) expect(text).toBe(header + cluster.repeat(Math.floor((extra - 1) / cluster.length)) + '…');
+    }
+    expect(messages).toEqual(before);
+    const exact = [{ ...messages[0], body: cluster.repeat(2) }];
+    const full = header + exact[0].body;
+    for (const maxChars of [full.length, full.length + 1]) {
+      expect(formatGroupChatHistoryForPrompt({ agentName: 'Name', userName: 'user', messages: exact, maxChars })).toBe(full);
+    }
+  });
+
+  it('does not expand the budget to fit an oversized combining grapheme', () => {
+    const body = 'a' + '\u0301'.repeat(9000);
+    const text = formatGroupChatHistoryForPrompt({ agentName: 'Name', userName: 'user', messages: [{ sender: 'peer', timestamp: 't', body }], maxChars: 6000 });
+    expect(text).toBe(header + '…');
+    expect(text.length).toBeLessThanOrEqual(6000);
+  });
+});
+
+
+describe('group reply and reason Unicode limits', () => {
+  it('applies the existing 600/280 UTF-16 caps without splitting compound emoji', () => {
+    const cluster = '👩🏽‍💻';
+    const raw = { decision: 'reply', reply: 'x' + cluster.repeat(200), reason: 'x' + cluster.repeat(200) };
+    const before = structuredClone(raw);
+    const result = normalizeGroupChatReplyAiResult(raw)!;
+    expect(result.reply).toBe('x' + cluster.repeat(Math.floor(598 / cluster.length)) + '…');
+    expect(result.reason).toBe('x' + cluster.repeat(Math.floor(278 / cluster.length)) + '…');
+    expect(result.reply.length).toBeLessThanOrEqual(600);
+    expect(result.reason!.length).toBeLessThanOrEqual(280);
+    expect(raw).toEqual(before);
   });
 });

@@ -3,7 +3,7 @@
  *
  * 这是 group-chat 的去重核心——抽取 agent 自己在群里最近说过的话，作为反重复
  * 锚点喂回 prompt。和 news / journal 之类「卡片型 anchor」不同，这里是对
- * 流式上下文的轻量抽样：sender 命中 agent.id（或 agentName）即视为自己发言。
+ * 流式上下文的轻量抽样：仅 sender 命中 agent.id 且没有身份冲突时视为自己发言。
  *
  * 单独测试这个纯函数（不走 hanaFetch），让跨会话隔离 / 空历史 / 长截断行为
  * 都能稳定回归。
@@ -12,6 +12,30 @@ import { describe, expect, it } from 'vitest';
 import { buildGroupChatOwnReplyContinuityAnchorBlock } from './xingye-group-chat-ai';
 
 describe('buildGroupChatOwnReplyContinuityAnchorBlock', () => {
+  it('does not claim a sender string shared by the user name and agent ID', () => {
+    expect(buildGroupChatOwnReplyContinuityAnchorBlock({
+      agentId: 'agent-a', agentName: '角色名', userName: 'agent-a',
+      recentMessages: [{ sender: 'agent-a', timestamp: 't', body: '原文仍属于身份不明的来源。' }],
+    })).toBe('');
+  });
+
+  it('does not turn same-name user/NPC quotes into the current agent’s own reply anchor', () => {
+    const quoted = '阿陶说：「我把吉他借给你。」';
+    const recentMessages = [
+      { sender: '小岑', timestamp: 't1', body: quoted },
+      { sender: 'agent-b', timestamp: 't2', body: '我自己的事。' },
+      { sender: 'agent-a', timestamp: 't3', body: '我收到了转述。' },
+    ];
+    const before = structuredClone(recentMessages);
+    const anchor = buildGroupChatOwnReplyContinuityAnchorBlock({
+      agentId: 'agent-a', agentName: '小岑', recentMessages,
+    });
+    expect(anchor).toContain('[t3] 我收到了转述。');
+    expect(anchor).not.toContain(quoted);
+    expect(anchor).not.toContain('我自己的事。');
+    expect(recentMessages).toEqual(before);
+  });
+
   it('无 recentMessages → 空串', () => {
     expect(
       buildGroupChatOwnReplyContinuityAnchorBlock({
@@ -113,5 +137,18 @@ describe('buildGroupChatOwnReplyContinuityAnchorBlock', () => {
     });
     // 30 字 + prefix + timestamp，但绝不能全 80 字
     expect(block.length).toBeLessThan(long.length + 100);
+  });
+});
+
+
+describe('own-reply continuity Unicode budget', () => {
+  it.each(['😀', '👩🏽‍💻', '👨‍👩‍👧‍👦', '🇨🇳', 'e\u0301'])('keeps the 30 UTF-16-unit snippet limit without splitting %s', cluster => {
+    const messages = [{ sender: 'agent-a', timestamp: 't', body: 'x' + cluster.repeat(40) }];
+    const before = structuredClone(messages);
+    const text = buildGroupChatOwnReplyContinuityAnchorBlock({ agentId: 'agent-a', agentName: 'Role', userName: '访客', recentMessages: messages });
+    const snippet = text.split('  · [t] ')[1];
+    expect(snippet).toBe('x' + cluster.repeat(Math.floor(29 / cluster.length)));
+    expect(snippet.length).toBeLessThanOrEqual(30);
+    expect(messages).toEqual(before);
   });
 });

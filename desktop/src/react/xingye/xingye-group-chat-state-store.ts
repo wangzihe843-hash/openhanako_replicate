@@ -25,6 +25,7 @@ import { hanaFetch } from '../hooks/use-hana-fetch';
 import type { ServerConnection } from '../services/server-connection';
 
 export const XINGYE_GROUP_CHAT_RUNS_PATH = 'group-chat/runs.jsonl';
+export const GROUP_CHAT_SELF_SKIP_REASON = '最新一条消息是当前 agent 自己刚发的，不再追发';
 
 export type XingyeGroupChatRunStatus = 'replied' | 'skipped' | 'error';
 
@@ -38,7 +39,7 @@ export type XingyeGroupChatRun = {
   /** `${agentId}::${channelId}::${latestMessageId}` —— 同一组合不会重复回复 */
   dedupeKey: string;
   status: XingyeGroupChatRunStatus;
-  /** Only failures known to precede message posting may be retried. */
+  /** Pre-post failures and string-only self checks can be reconsidered. */
   retryable?: boolean;
   replyMessageId?: string;
   replyContent?: string;
@@ -84,6 +85,11 @@ function normalizeStatus(value: unknown): XingyeGroupChatRunStatus | null {
 }
 
 export function isRetryableGroupChatRun(run: XingyeGroupChatRun): boolean {
+  // Re-evaluate old string-only self skips: a user name can equal an agent ID.
+  // Explicit false keeps new model skips terminal, even with identical reason text.
+  if (run.status === 'skipped' && !run.replyMessageId && !run.replyContent) {
+    return run.retryable ?? run.reason === GROUP_CHAT_SELF_SKIP_REASON;
+  }
   // Older generation errors had no reply content; post errors retained it.
   return run.status === 'error' && !run.replyMessageId && (run.retryable ?? !run.replyContent);
 }
