@@ -442,18 +442,6 @@
       "sourceFile": "server/index.ts"
     },
     {
-      "expiresOn": "2026-11-17",
-      "id": "local-user-account-atomic-helper",
-      "kinds": [
-        "mkdir",
-        "secret-write"
-      ],
-      "linePattern": "(?:path[.]dirname\\(filePath\\)|writeSecretFileSync\\(filePath)",
-      "ownerModule": "core/local-user-account.ts",
-      "reason": "The file-local atomic helper receives paths only from the separately registered users.json and local-user-auth.json call sites.",
-      "sourceFile": "core/local-user-account.ts"
-    },
-    {
       "expiresOn": "2027-01-31",
       "id": "sandbox-command-output",
       "kinds": [
@@ -646,7 +634,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:16181608a68d637785e630fb32270299592ea617fae99f08cc6decbec438749b",
+  "payloadFingerprint": "sha256:4895791c8105884a99c2540fff75feabb75cb5cef001fce66f509fb12ac3b3f3",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -1890,8 +1878,12 @@
       "identityContract": "The credential belongs to the local userId in the same HANA_HOME.",
       "migrationEntry": [],
       "openEntry": [
-        "ensureLocalUserAccount",
-        "authenticateLocalUser"
+        "getLocalAccountSummary",
+        "updateLocalAccountProfile",
+        "setLocalAccountPassword",
+        "clearLocalAccountPassword",
+        "verifyLocalAccountPassword",
+        "loadLocalUserAuth"
       ],
       "ownerModule": "core/local-user-account.ts",
       "pathExclusions": [],
@@ -1901,7 +1893,9 @@
         "local-user-auth.json"
       ],
       "preCoordinatorReadProjection": null,
-      "protocolModules": [],
+      "protocolModules": [
+        "shared/secret-fs.ts"
+      ],
       "restorePolicy": "Restore atomically before local authentication is enabled.",
       "schemaContract": {
         "compatibility": "The named runtime reader is canonical; this inventory does not imply stricter validation than runtime currently performs.",
@@ -3137,7 +3131,12 @@
       ],
       "openEntry": [
         "loadServerIdentity",
-        "ensureLocalIdentityRegistries"
+        "ensureLocalIdentityRegistries",
+        "getLocalAccountSummary",
+        "updateLocalAccountProfile",
+        "setLocalAccountPassword",
+        "clearLocalAccountPassword",
+        "verifyLocalAccountPassword"
       ],
       "ownerModule": "core/server-identity.ts",
       "pathExclusions": [],
@@ -3149,7 +3148,10 @@
         "spaces.json"
       ],
       "preCoordinatorReadProjection": null,
-      "protocolModules": [],
+      "protocolModules": [
+        "core/local-user-account.ts",
+        "shared/secret-fs.ts"
+      ],
       "restorePolicy": "Restore users/studios before dependent grants or mounts; never project newer studio state back into spaces.json.",
       "schemaContract": {
         "compatibility": "The named runtime reader is canonical; this inventory does not imply stricter validation than runtime currently performs.",
@@ -3369,8 +3371,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Register the existing config scope migration contract and its existing agent config write without changing store paths or runtime behavior.",
-    "payloadFingerprint": "sha256:16181608a68d637785e630fb32270299592ea617fae99f08cc6decbec438749b"
+    "compatibilityReason": "Split the existing account writer into fixed-target helpers without changing file format, paths, permissions, ordering, or failure behavior; correct entry declarations and pin existing shared writer protocol.",
+    "payloadFingerprint": "sha256:4895791c8105884a99c2540fff75feabb75cb5cef001fce66f509fb12ac3b3f3"
   },
   "schemas": [
     {
@@ -3824,7 +3826,13 @@
       "contract": "local authentication secret reader and atomic serializer",
       "kind": "runtime-contract",
       "module": "core/local-user-account.ts",
-      "sourceHash": "sha256:a91644f7d468bc3a50a0b434428f8b6a66938032484917bd1deb15556ee0bc63",
+      "protocolModules": [
+        {
+          "module": "shared/secret-fs.ts",
+          "sourceHash": "sha256:23e8eada81dc1c2db780bace27b66e827f09f5e21d5706d282b09735774abdd8"
+        }
+      ],
+      "sourceHash": "sha256:6eb6047ccb71d7f82b9cd0b9401034ea4d3e1a54b11da07f39c7156405e333ff",
       "storeId": "local-user-auth"
     },
     {
@@ -4165,6 +4173,16 @@
       "contract": "user/studio registry readers plus legacy spaces.json compatibility projection",
       "kind": "runtime-contract",
       "module": "core/server-identity.ts",
+      "protocolModules": [
+        {
+          "module": "core/local-user-account.ts",
+          "sourceHash": "sha256:6eb6047ccb71d7f82b9cd0b9401034ea4d3e1a54b11da07f39c7156405e333ff"
+        },
+        {
+          "module": "shared/secret-fs.ts",
+          "sourceHash": "sha256:23e8eada81dc1c2db780bace27b66e827f09f5e21d5706d282b09735774abdd8"
+        }
+      ],
       "sourceHash": "sha256:c2ea6e4fb07c4f7a0a8d3af2252662d9532739e1fbfa2bb72b30b571fc9c15cf",
       "storeId": "user-studio-registries"
     },
@@ -5195,20 +5213,20 @@
       "storeId": "provider-state"
     },
     {
-      "exemptionId": "local-user-account-atomic-helper",
+      "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
-      "reason": "The file-local atomic helper receives paths only from the separately registered users.json and local-user-auth.json call sites.",
+      "reason": "Ensures the local user authentication directory.",
       "sourceFile": "core/local-user-account.ts",
-      "storeId": null
+      "storeId": "local-user-auth"
     },
     {
-      "exemptionId": "local-user-account-atomic-helper",
-      "kind": "secret-write",
+      "exemptionId": null,
+      "kind": "mkdir",
       "ordinal": 0,
-      "reason": "The file-local atomic helper receives paths only from the separately registered users.json and local-user-auth.json call sites.",
+      "reason": "Ensures the local user registry directory.",
       "sourceFile": "core/local-user-account.ts",
-      "storeId": null
+      "storeId": "user-studio-registries"
     },
     {
       "exemptionId": null,
@@ -5225,14 +5243,6 @@
       "reason": "Updates the local user record in users.json.",
       "sourceFile": "core/local-user-account.ts",
       "storeId": "user-studio-registries"
-    },
-    {
-      "exemptionId": null,
-      "kind": "secret-write",
-      "ordinal": 1,
-      "reason": "Writes the local user authentication record.",
-      "sourceFile": "core/local-user-account.ts",
-      "storeId": "local-user-auth"
     },
     {
       "exemptionId": null,

@@ -38,7 +38,7 @@ export function updateLocalAccountProfile(hanakoHome, {
   user.displayName = nextDisplayName;
   user.updatedAt = now;
   users.updatedAt = now;
-  writeSecretJson(path.join(hanakoHome, USERS_FILE), users);
+  writeLocalUsers(hanakoHome, users);
   const auth = loadLocalUserAuth(hanakoHome);
   return sanitizeAccount(user, { passwordSet: !!findCredential(auth, user.userId) });
 }
@@ -70,7 +70,7 @@ export function setLocalAccountPassword(hanakoHome, {
     auth.credentials.push(nextCredential);
   }
   auth.updatedAt = now;
-  writeSecretJson(path.join(hanakoHome, LOCAL_USER_AUTH_FILE), auth);
+  writeLocalAuth(hanakoHome, auth);
   return sanitizeAccount(user, { passwordSet: true });
 }
 
@@ -81,7 +81,7 @@ export function clearLocalAccountPassword(hanakoHome, {
   const auth = loadLocalUserAuth(hanakoHome);
   auth.credentials = auth.credentials.filter((credential) => credential.userId !== user.userId);
   auth.updatedAt = now;
-  writeSecretJson(path.join(hanakoHome, LOCAL_USER_AUTH_FILE), auth);
+  writeLocalAuth(hanakoHome, auth);
   return sanitizeAccount(user, { passwordSet: false });
 }
 
@@ -252,9 +252,14 @@ function readJsonIfPresent(filePath, label) {
   }
 }
 
-function writeSecretJson(filePath, data) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  writeSecretFileSync(filePath, JSON.stringify(data, null, 2) + "\n");
+function writeLocalUsers(hanakoHome, data) {
+  fs.mkdirSync(path.dirname(path.join(hanakoHome, USERS_FILE)), { recursive: true });
+  writeSecretFileSync(path.join(hanakoHome, USERS_FILE), JSON.stringify(data, null, 2) + "\n");
+}
+
+function writeLocalAuth(hanakoHome, data) {
+  fs.mkdirSync(path.dirname(path.join(hanakoHome, LOCAL_USER_AUTH_FILE)), { recursive: true });
+  writeSecretFileSync(path.join(hanakoHome, LOCAL_USER_AUTH_FILE), JSON.stringify(data, null, 2) + "\n");
 }
 
 function isPlainObject(value) {

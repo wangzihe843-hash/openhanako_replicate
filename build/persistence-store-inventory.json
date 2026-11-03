@@ -1296,11 +1296,17 @@
         "compatibility": "The named runtime reader is canonical; this inventory does not imply stricter validation than runtime currently performs."
       },
       "openEntry": [
-        "ensureLocalUserAccount",
-        "authenticateLocalUser"
+        "getLocalAccountSummary",
+        "updateLocalAccountProfile",
+        "setLocalAccountPassword",
+        "clearLocalAccountPassword",
+        "verifyLocalAccountPassword",
+        "loadLocalUserAuth"
       ],
       "migrationEntry": [],
-      "protocolModules": [],
+      "protocolModules": [
+        "shared/secret-fs.ts"
+      ],
       "firstPossibleOpenPhase": "identity_seed",
       "firstPossibleWritePhase": "identity_seed",
       "epochPolicy": "epoch-managed",
@@ -2543,12 +2549,20 @@
       },
       "openEntry": [
         "loadServerIdentity",
-        "ensureLocalIdentityRegistries"
+        "ensureLocalIdentityRegistries",
+        "getLocalAccountSummary",
+        "updateLocalAccountProfile",
+        "setLocalAccountPassword",
+        "clearLocalAccountPassword",
+        "verifyLocalAccountPassword"
       ],
       "migrationEntry": [
         "legacy spaces.json compatibility reader"
       ],
-      "protocolModules": [],
+      "protocolModules": [
+        "core/local-user-account.ts",
+        "shared/secret-fs.ts"
+      ],
       "firstPossibleOpenPhase": "identity_seed",
       "firstPossibleWritePhase": "identity_seed",
       "epochPolicy": "epoch-managed",
@@ -3678,25 +3692,25 @@
     {
       "sourceFile": "core/local-user-account.ts",
       "kind": "mkdir",
-      "excerpt": "fs.mkdirSync(path.dirname(filePath), { recursive: true })",
-      "reason": "The file-local atomic helper receives paths only from the separately registered users.json and local-user-auth.json call sites.",
-      "storeId": null,
-      "exemptionId": "local-user-account-atomic-helper",
+      "excerpt": "fs.mkdirSync(path.dirname(path.join(hanakoHome, LOCAL_USER_AUTH_FILE)), { recursive: true })",
+      "reason": "Ensures the local user authentication directory.",
+      "storeId": "local-user-auth",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "core/local-user-account.ts",
+      "kind": "mkdir",
+      "excerpt": "fs.mkdirSync(path.dirname(path.join(hanakoHome, USERS_FILE)), { recursive: true })",
+      "reason": "Ensures the local user registry directory.",
+      "storeId": "user-studio-registries",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
       "sourceFile": "core/local-user-account.ts",
       "kind": "secret-write",
-      "excerpt": "writeSecretFileSync(filePath, JSON.stringify(data, null, 2) + \"\\n\")",
-      "reason": "The file-local atomic helper receives paths only from the separately registered users.json and local-user-auth.json call sites.",
-      "storeId": null,
-      "exemptionId": "local-user-account-atomic-helper",
-      "ordinal": 0
-    },
-    {
-      "sourceFile": "core/local-user-account.ts",
-      "kind": "secret-write",
-      "excerpt": "writeSecretJson(path.join(hanakoHome, LOCAL_USER_AUTH_FILE), auth)",
+      "excerpt": "writeSecretFileSync(path.join(hanakoHome, LOCAL_USER_AUTH_FILE), JSON.stringify(data, null, 2) + \"\\n\")",
       "reason": "Writes the local user authentication record.",
       "storeId": "local-user-auth",
       "exemptionId": null,
@@ -3705,16 +3719,7 @@
     {
       "sourceFile": "core/local-user-account.ts",
       "kind": "secret-write",
-      "excerpt": "writeSecretJson(path.join(hanakoHome, LOCAL_USER_AUTH_FILE), auth)",
-      "reason": "Writes the local user authentication record.",
-      "storeId": "local-user-auth",
-      "exemptionId": null,
-      "ordinal": 1
-    },
-    {
-      "sourceFile": "core/local-user-account.ts",
-      "kind": "secret-write",
-      "excerpt": "writeSecretJson(path.join(hanakoHome, USERS_FILE), users)",
+      "excerpt": "writeSecretFileSync(path.join(hanakoHome, USERS_FILE), JSON.stringify(data, null, 2) + \"\\n\")",
       "reason": "Updates the local user record in users.json.",
       "storeId": "user-studio-registries",
       "exemptionId": null,
@@ -11352,18 +11357,6 @@
         "persistent-store-constructor"
       ],
       "linePattern": "ConfirmStore"
-    },
-    {
-      "id": "local-user-account-atomic-helper",
-      "ownerModule": "core/local-user-account.ts",
-      "sourceFile": "core/local-user-account.ts",
-      "reason": "The file-local atomic helper receives paths only from the separately registered users.json and local-user-auth.json call sites.",
-      "expiresOn": "2026-11-17",
-      "kinds": [
-        "mkdir",
-        "secret-write"
-      ],
-      "linePattern": "(?:path[.]dirname\\(filePath\\)|writeSecretFileSync\\(filePath)"
     },
     {
       "id": "sandbox-command-output",

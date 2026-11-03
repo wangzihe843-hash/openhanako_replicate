@@ -46,8 +46,8 @@ describe("config scope migration ownership", () => {
     const previous = scanPersistentStores({ rootDir: ROOT, stores: oldStores, exemptions: oldExemptions });
     expect(actual.inventory).toEqual(inventory);
     expect(actual.inventory.stores).toHaveLength(65);
-    expect(actual.inventory.discoveredSites).toHaveLength(905);
-    expect(actual.inventory.exemptions).toHaveLength(36);
+    expect(actual.inventory.discoveredSites).toHaveLength(904);
+    expect(actual.inventory.exemptions).toHaveLength(35);
     const differences = previous.inventory.discoveredSites.map((before, i) => ({ before, after: actual.inventory.discoveredSites[i] })).filter(({ before, after }) => JSON.stringify(before) !== JSON.stringify(after));
     expect(differences).toHaveLength(2);
     const owned = differences.find(({ after }) => after.storeId === OWNER && after.sourceFile === MODULE)!;
@@ -65,8 +65,8 @@ describe("config scope migration ownership", () => {
     expect(actual.startupReceipt).toEqual(JSON.parse(fs.readFileSync(path.join(ROOT, "build/persistence-startup-receipt.json"), "utf8")));
     const remaining = actual.inventory.exemptions.filter((e) => e.expiresOn === "2026-11-17");
     const ids = new Set(remaining.map((e) => e.id));
-    expect(remaining).toHaveLength(10);
-    expect(actual.inventory.discoveredSites.filter((s) => ids.has(s.exemptionId))).toHaveLength(104);
+    expect(remaining).toHaveLength(9);
+    expect(actual.inventory.discoveredSites.filter((s) => ids.has(s.exemptionId))).toHaveLength(102);
     expect(actual.inventory.discoveredSites.filter((s) => s.exemptionId === EXEMPTION)).toHaveLength(1);
     expect(() => scanPersistentStores({ rootDir: ROOT, stores: oldStores })).toThrow(/unregistered persistence site/);
     expect(() => scanPersistentStores({ rootDir: ROOT, exemptions: oldExemptions })).toThrow(/ambiguous persistence site/);

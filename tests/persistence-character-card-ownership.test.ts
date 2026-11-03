@@ -34,8 +34,8 @@ describe("character-card persistence ownership", () => {
     const { inventory: actual, startupReceipt } = scanPersistentStores({ rootDir: ROOT });
     expect(actual).toEqual(inventory);
     expect(actual.stores).toHaveLength(65);
-    expect(actual.discoveredSites).toHaveLength(905);
-    expect(actual.exemptions).toHaveLength(36);
+    expect(actual.discoveredSites).toHaveLength(904);
+    expect(actual.exemptions).toHaveLength(35);
     const targets = actual.discoveredSites.filter((s: { sourceFile: string; reason: string }) => s.sourceFile === MODULE && newReasons.includes(s.reason));
     expect(targets.map((s: { kind: string; excerpt: string; storeId: string; exemptionId: string | null; ordinal: number }) => [s.kind, s.excerpt, s.storeId, s.exemptionId, s.ordinal])).toEqual([
       ["copy-file", "fs.copyFileSync(sourcePath, dst)", OWNER, null, 0],
@@ -44,14 +44,14 @@ describe("character-card persistence ownership", () => {
     expect(actual.exemptions.some((e: { id: string }) => e.id === RETIRED)).toBe(false);
     const remaining = actual.exemptions.filter((e: { expiresOn: string }) => e.expiresOn === "2026-11-17");
     const ids = new Set(remaining.map((e: { id: string }) => e.id));
-    expect(remaining).toHaveLength(10);
-    expect(actual.discoveredSites.filter((s: { exemptionId: string | null }) => ids.has(s.exemptionId))).toHaveLength(104);
+    expect(remaining).toHaveLength(9);
+    expect(actual.discoveredSites.filter((s: { exemptionId: string | null }) => ids.has(s.exemptionId))).toHaveLength(102);
     expect(remaining.map((e: { id: string }) => [e.id, actual.discoveredSites.filter((s: { exemptionId: string | null }) => s.exemptionId === e.id).length])).toEqual([
       ["compat-directory-seeding", 1], ["conditional-plugin-install-cleanup", 2],
       ["conditional-upload-target", 4], ["config-scope-migration-helper", 1],
       ["cross-store-first-run-bootstrap", 15], ["cross-store-legacy-migrations", 70],
       ["data-epoch-durable-json-primitive", 5], ["desktop-legacy-update-path-cleanup", 2],
-      ["local-user-account-atomic-helper", 2], ["server-identity-atomic-helper", 2],
+      ["server-identity-atomic-helper", 2],
     ]);
     const previous = scanPersistentStores({ rootDir: ROOT, stores: previousStores, exemptions: [...PERSISTENCE_EXEMPTIONS, oldExemption] });
     const changed = previous.inventory.discoveredSites.map((before: unknown, i: number) => ({ before, after: actual.discoveredSites[i] }))
