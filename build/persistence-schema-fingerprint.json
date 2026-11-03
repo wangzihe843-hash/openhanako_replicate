@@ -48,20 +48,11 @@
       "expiresOn": "2026-11-17",
       "id": "config-scope-migration-helper",
       "kinds": [
-        "database-open",
-        "write-file",
-        "append-file",
-        "rename",
-        "copy-file",
-        "mkdir",
-        "remove-path",
-        "truncate-file",
-        "atomic-write",
-        "secret-write",
-        "persistent-store-constructor"
+        "secret-write"
       ],
+      "linePattern": "writeSecretFileSync\\(backupPath, ac[.]content\\)",
       "ownerModule": "shared/migrate-config-scope.ts",
-      "reason": "Compatibility helper mutates a caller-supplied config file; concrete agent config ownership is registered at callers.",
+      "reason": "Preserves the original agent config as a scope-migration backup; backup recovery ownership remains under review.",
       "sourceFile": "shared/migrate-config-scope.ts"
     },
     {
@@ -655,7 +646,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:518a6fe3c1d5cb50c0770e44271de3264da236bea6d4015b69ac2ab78d251982",
+  "payloadFingerprint": "sha256:16181608a68d637785e630fb32270299592ea617fae99f08cc6decbec438749b",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -935,7 +926,10 @@
         "core/agent.ts",
         "core/persona-source.ts",
         "core/first-run.ts",
-        "core/agents-md-migration.ts"
+        "core/agents-md-migration.ts",
+        "core/engine.ts",
+        "shared/config-schema.ts",
+        "shared/migrate-config-scope.ts"
       ],
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
       "schemaContract": {
@@ -3375,8 +3369,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Attribute two existing character-card asset helper writes to their token-scoped staging store; runtime behavior, paths, data format, and epoch are unchanged.",
-    "payloadFingerprint": "sha256:518a6fe3c1d5cb50c0770e44271de3264da236bea6d4015b69ac2ab78d251982"
+    "compatibilityReason": "Register the existing config scope migration contract and its existing agent config write without changing store paths or runtime behavior.",
+    "payloadFingerprint": "sha256:16181608a68d637785e630fb32270299592ea617fae99f08cc6decbec438749b"
   },
   "schemas": [
     {
@@ -3565,12 +3559,24 @@
           "sourceHash": "sha256:830a67053c2142323eabb1f4f20ddf33e60773b71ec115eb5652829afd956c50"
         },
         {
+          "module": "core/engine.ts",
+          "sourceHash": "sha256:7ace8ece00c98d8a761d79a872451148688f2e95fe6d4a5e41e4d1cf945774ed"
+        },
+        {
           "module": "core/first-run.ts",
           "sourceHash": "sha256:4d44e7606d95bcafc581e9b62cad7321e29eecc6436b9d746cc7acdb752aa814"
         },
         {
           "module": "core/persona-source.ts",
           "sourceHash": "sha256:65d2a9c931cddced01d501197c4c394dbbde254e1292f64bc33514f5079026ef"
+        },
+        {
+          "module": "shared/config-schema.ts",
+          "sourceHash": "sha256:6320dce8ed7d1fd176c6095439fcdf122a8cc0f3b39002a9d0ae9b2d67a7a880"
+        },
+        {
+          "module": "shared/migrate-config-scope.ts",
+          "sourceHash": "sha256:e5c3efba09987d603bb4e753319dec1b05cee2dcc584ff13184bdd0d6af32b86"
         }
       ],
       "sourceHash": "sha256:218fa1ce3cc45a4c5f79c733826078a25f74564bb60660937302d5b4460827fc",
@@ -11389,18 +11395,18 @@
       "storeId": null
     },
     {
-      "exemptionId": "config-scope-migration-helper",
+      "exemptionId": null,
       "kind": "secret-write",
       "ordinal": 0,
-      "reason": "Compatibility helper mutates a caller-supplied config file; concrete agent config ownership is registered at callers.",
+      "reason": "Writes the cleaned agent config after preserving its scope-migration backup.",
       "sourceFile": "shared/migrate-config-scope.ts",
-      "storeId": null
+      "storeId": "agent-profile"
     },
     {
       "exemptionId": "config-scope-migration-helper",
       "kind": "secret-write",
       "ordinal": 0,
-      "reason": "Compatibility helper mutates a caller-supplied config file; concrete agent config ownership is registered at callers.",
+      "reason": "Preserves the original agent config as a scope-migration backup; backup recovery ownership remains under review.",
       "sourceFile": "shared/migrate-config-scope.ts",
       "storeId": null
     },

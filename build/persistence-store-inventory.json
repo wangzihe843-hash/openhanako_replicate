@@ -325,7 +325,10 @@
         "core/agent.ts",
         "core/persona-source.ts",
         "core/first-run.ts",
-        "core/agents-md-migration.ts"
+        "core/agents-md-migration.ts",
+        "core/engine.ts",
+        "shared/config-schema.ts",
+        "shared/migrate-config-scope.ts"
       ],
       "firstPossibleOpenPhase": "first_run_seed",
       "firstPossibleWritePhase": "first_run_seed",
@@ -10651,16 +10654,16 @@
       "sourceFile": "shared/migrate-config-scope.ts",
       "kind": "secret-write",
       "excerpt": "writeSecretFileSync(ac.path, YAML.dump(ac.config, { lineWidth: -1 }))",
-      "reason": "Compatibility helper mutates a caller-supplied config file; concrete agent config ownership is registered at callers.",
-      "storeId": null,
-      "exemptionId": "config-scope-migration-helper",
+      "reason": "Writes the cleaned agent config after preserving its scope-migration backup.",
+      "storeId": "agent-profile",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
       "sourceFile": "shared/migrate-config-scope.ts",
       "kind": "secret-write",
       "excerpt": "writeSecretFileSync(backupPath, ac.content)",
-      "reason": "Compatibility helper mutates a caller-supplied config file; concrete agent config ownership is registered at callers.",
+      "reason": "Preserves the original agent config as a scope-migration backup; backup recovery ownership remains under review.",
       "storeId": null,
       "exemptionId": "config-scope-migration-helper",
       "ordinal": 0
@@ -10957,21 +10960,12 @@
       "id": "config-scope-migration-helper",
       "ownerModule": "shared/migrate-config-scope.ts",
       "sourceFile": "shared/migrate-config-scope.ts",
-      "reason": "Compatibility helper mutates a caller-supplied config file; concrete agent config ownership is registered at callers.",
+      "reason": "Preserves the original agent config as a scope-migration backup; backup recovery ownership remains under review.",
       "expiresOn": "2026-11-17",
       "kinds": [
-        "database-open",
-        "write-file",
-        "append-file",
-        "rename",
-        "copy-file",
-        "mkdir",
-        "remove-path",
-        "truncate-file",
-        "atomic-write",
-        "secret-write",
-        "persistent-store-constructor"
-      ]
+        "secret-write"
+      ],
+      "linePattern": "writeSecretFileSync\\(backupPath, ac[.]content\\)"
     },
     {
       "id": "cross-store-first-run-bootstrap",

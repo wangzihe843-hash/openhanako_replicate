@@ -493,7 +493,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     pathKind: "file",
     format: "mixed-directory",
     schemaSource: directorySource("core/agent-manager.ts", "agent config and authored Markdown/image profile protocol"),
-    protocolModules: ["core/agent.ts", "core/persona-source.ts", "core/first-run.ts", "core/agents-md-migration.ts"],
+    protocolModules: ["core/agent.ts", "core/persona-source.ts", "core/first-run.ts", "core/agents-md-migration.ts", "core/engine.ts", "shared/config-schema.ts", "shared/migrate-config-scope.ts"],
     openEntry: ["AgentManager.loadAgents", "new HanaAgent"],
     migrationEntry: ["lib/compat/checks/config-yaml.ts", "core/agents-md-migration.ts"],
     firstPossibleOpenPhase: "first_run_seed",
@@ -511,6 +511,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
       // through library helpers, not literal fs calls in this file).
       ...rules(["lib/agent-appearance-summary.ts", "lib/compat/checks/config-yaml.ts", "server/routes/agents.ts", "server/routes/avatar.ts"], "Reads, repairs, removes, or edits agent/user profile material.", ["write-file", "copy-file", "rename", "mkdir", "remove-path", "atomic-write"]),
       ...rules(["lib/compat/checks/config-yaml.ts"], "Publishes a recovered profile configuration through the credential file writer after preserving the original.", ["secret-write"]),
+      ...rules(["shared/migrate-config-scope.ts"], "Writes the cleaned agent config after preserving its scope-migration backup.", ["secret-write"], "writeSecretFileSync\\(ac[.]path, YAML[.]dump\\(ac[.]config"),
       ...rules(["server/utils/avatar-files.ts"], "Atomically replaces or removes agent/user avatars, including temporary files in the same profile directory.", ["write-file", "rename", "mkdir", "remove-path"]),
     ],
   }),
@@ -1812,7 +1813,9 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "config-scope-migration-helper",
     "shared/migrate-config-scope.ts",
     "shared/migrate-config-scope.ts",
-    "Compatibility helper mutates a caller-supplied config file; concrete agent config ownership is registered at callers.",
+    "Preserves the original agent config as a scope-migration backup; backup recovery ownership remains under review.",
     "2026-11-17",
+    ["secret-write"],
+    "writeSecretFileSync\\(backupPath, ac[.]content\\)",
   ),
 ]);
