@@ -5890,27 +5890,27 @@
       "sourceFile": "desktop/src/shared/gpu-startup-policy.cjs",
       "kind": "mkdir",
       "excerpt": "fs.mkdirSync(path.dirname(filePath), { recursive: true })",
-      "reason": "Generic atomic JSON primitive has no independent store ownership; its writeJson call sites are assigned to the GPU state or preferences owner.",
-      "storeId": null,
-      "exemptionId": "desktop-gpu-json-primitive",
+      "reason": "Ensures the fixed GPU state file's parent directory.",
+      "storeId": "desktop-gpu-startup-state",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
       "sourceFile": "desktop/src/shared/gpu-startup-policy.cjs",
       "kind": "rename",
       "excerpt": "fs.renameSync(tmpPath, filePath)",
-      "reason": "Generic atomic JSON primitive has no independent store ownership; its writeJson call sites are assigned to the GPU state or preferences owner.",
-      "storeId": null,
-      "exemptionId": "desktop-gpu-json-primitive",
+      "reason": "Promotes the GPU state file's temporary sibling to its fixed destination.",
+      "storeId": "desktop-gpu-startup-state",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
       "sourceFile": "desktop/src/shared/gpu-startup-policy.cjs",
       "kind": "write-file",
       "excerpt": "fs.writeFileSync(tmpPath, JSON.stringify(value, null, 2) + \"\\n\", \"utf-8\")",
-      "reason": "Generic atomic JSON primitive has no independent store ownership; its writeJson call sites are assigned to the GPU state or preferences owner.",
-      "storeId": null,
-      "exemptionId": "desktop-gpu-json-primitive",
+      "reason": "Writes the GPU state file's exact PID-suffixed temporary sibling.",
+      "storeId": "desktop-gpu-startup-state",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -11094,19 +11094,6 @@
         "secret-write",
         "persistent-store-constructor"
       ]
-    },
-    {
-      "id": "desktop-gpu-json-primitive",
-      "ownerModule": "desktop/src/shared/gpu-startup-policy.cjs",
-      "sourceFile": "desktop/src/shared/gpu-startup-policy.cjs",
-      "reason": "Generic atomic JSON primitive has no independent store ownership; its writeJson call sites are assigned to the GPU state or preferences owner.",
-      "expiresOn": "2026-11-17",
-      "kinds": [
-        "mkdir",
-        "write-file",
-        "rename"
-      ],
-      "linePattern": "(?:path[.]dirname\\(filePath\\)|tmpPath, JSON|stringify|tmpPath, filePath)"
     },
     {
       "id": "desktop-legacy-update-path-cleanup",

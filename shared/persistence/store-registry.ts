@@ -1254,7 +1254,14 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
       ],
     },
     identityContract: "One fixed GPU startup record belongs to one desktop installation data home.",
-    siteRules: rules(["desktop/src/shared/gpu-startup-policy.cjs"], "Atomically writes desktop GPU startup state.", ["atomic-write"], "writeJson\\(getGpuStartupStatePath"),
+    siteRules: [
+      ...rules(["desktop/src/shared/gpu-startup-policy.cjs"], "Atomically writes desktop GPU startup state.", ["atomic-write"], "writeJson\\(getGpuStartupStatePath"),
+      // writeJson is file-local with only writeState as its caller. Its target
+      // is getGpuStartupStatePath(hanakoHome); tmpPath is that file's sibling.
+      ...rules(["desktop/src/shared/gpu-startup-policy.cjs"], "Ensures the fixed GPU state file's parent directory.", ["mkdir"], "^fs[.]mkdirSync\\(path[.]dirname\\(filePath\\), \\{ recursive: true \\}\\)$"),
+      ...rules(["desktop/src/shared/gpu-startup-policy.cjs"], "Writes the GPU state file's exact PID-suffixed temporary sibling.", ["write-file"], '^fs[.]writeFileSync\\(tmpPath, JSON[.]stringify\\(value, null, 2\\) \\+ "\\\\n", "utf-8"\\)$'),
+      ...rules(["desktop/src/shared/gpu-startup-policy.cjs"], "Promotes the GPU state file's temporary sibling to its fixed destination.", ["rename"], "^fs[.]renameSync\\(tmpPath, filePath\\)$"),
+    ],
   }),
   defineStore({
     id: "desktop-win32-install-acl-heal-state",
@@ -1544,15 +1551,6 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "2026-11-17",
     ["mkdir", "write-file", "rename", "remove-path"],
     "(?:path[.]dirname\\(filePath\\)|serialized|temporaryPath)",
-  ),
-  exemption(
-    "desktop-gpu-json-primitive",
-    "desktop/src/shared/gpu-startup-policy.cjs",
-    "desktop/src/shared/gpu-startup-policy.cjs",
-    "Generic atomic JSON primitive has no independent store ownership; its writeJson call sites are assigned to the GPU state or preferences owner.",
-    "2026-11-17",
-    ["mkdir", "write-file", "rename"],
-    "(?:path[.]dirname\\(filePath\\)|tmpPath, JSON|stringify|tmpPath, filePath)",
   ),
   exemption(
     "desktop-external-text-file",
