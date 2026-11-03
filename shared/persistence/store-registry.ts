@@ -1458,6 +1458,8 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     siteRules: [
       ...rules(["server/routes/character-cards.ts"], "Writes a bounded character-card upload package."),
       ...rules(["lib/character-cards/service.ts"], "Writes or removes a token-scoped character-card import/export plan or package.", ["mkdir", "write-file", "copy-file", "remove-path", "atomic-write"], "(?:filePath, JSON[.]stringify|packageRoot|pngPath|stripSillyTavernPngCharacterMetadata|stageDir|exportRoot)"),
+      ...rules(["lib/character-cards/service.ts"], "Copies a non-PNG asset inside a token-scoped character-card import/export package.", ["copy-file"], "^fs\\.copyFileSync\\(sourcePath, dst\\)$"),
+      ...rules(["lib/character-cards/service.ts"], "Ensures the asset directory inside a token-scoped character-card import/export package.", ["mkdir"], "^fs\\.mkdirSync\\(path\\.dirname\\(dst\\), \\{ recursive: true \\}\\)$"),
     ],
   }),
   defineStore({
@@ -1684,15 +1686,6 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "2026-11-17",
     ["mkdir", "secret-write"],
     "(?:path[.]dirname\\(filePath\\)|writeSecretFileSync\\(filePath)",
-  ),
-  exemption(
-    "character-card-copy-helper",
-    "lib/character-cards/service.ts",
-    "lib/character-cards/service.ts",
-    "The file-local copy helper is flow-dependent: callers target either token-scoped card staging or an explicitly registered skill destination.",
-    "2026-11-17",
-    ["mkdir", "copy-file"],
-    "(?:path[.]dirname\\(dst\\)|sourcePath, dst)",
   ),
   exemption(
     "external-desk-workspace-roots",

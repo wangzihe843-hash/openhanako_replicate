@@ -6286,9 +6286,9 @@
       "sourceFile": "lib/character-cards/service.ts",
       "kind": "copy-file",
       "excerpt": "fs.copyFileSync(sourcePath, dst)",
-      "reason": "The file-local copy helper is flow-dependent: callers target either token-scoped card staging or an explicitly registered skill destination.",
-      "storeId": null,
-      "exemptionId": "character-card-copy-helper",
+      "reason": "Copies a non-PNG asset inside a token-scoped character-card import/export package.",
+      "storeId": "character-card-staging",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -6331,9 +6331,9 @@
       "sourceFile": "lib/character-cards/service.ts",
       "kind": "mkdir",
       "excerpt": "fs.mkdirSync(path.dirname(dst), { recursive: true })",
-      "reason": "The file-local copy helper is flow-dependent: callers target either token-scoped card staging or an explicitly registered skill destination.",
-      "storeId": null,
-      "exemptionId": "character-card-copy-helper",
+      "reason": "Ensures the asset directory inside a token-scoped character-card import/export package.",
+      "storeId": "character-card-staging",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -10910,18 +10910,6 @@
     }
   ],
   "exemptions": [
-    {
-      "id": "character-card-copy-helper",
-      "ownerModule": "lib/character-cards/service.ts",
-      "sourceFile": "lib/character-cards/service.ts",
-      "reason": "The file-local copy helper is flow-dependent: callers target either token-scoped card staging or an explicitly registered skill destination.",
-      "expiresOn": "2026-11-17",
-      "kinds": [
-        "mkdir",
-        "copy-file"
-      ],
-      "linePattern": "(?:path[.]dirname\\(dst\\)|sourcePath, dst)"
-    },
     {
       "id": "compat-directory-seeding",
       "ownerModule": "lib/compat/checks/dirs.ts",

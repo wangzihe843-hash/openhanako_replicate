@@ -3,18 +3,6 @@
   "exemptions": [
     {
       "expiresOn": "2026-11-17",
-      "id": "character-card-copy-helper",
-      "kinds": [
-        "mkdir",
-        "copy-file"
-      ],
-      "linePattern": "(?:path[.]dirname\\(dst\\)|sourcePath, dst)",
-      "ownerModule": "lib/character-cards/service.ts",
-      "reason": "The file-local copy helper is flow-dependent: callers target either token-scoped card staging or an explicitly registered skill destination.",
-      "sourceFile": "lib/character-cards/service.ts"
-    },
-    {
-      "expiresOn": "2026-11-17",
       "id": "compat-directory-seeding",
       "kinds": [
         "database-open",
@@ -667,7 +655,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:850f4c6e915cd8c0e6d361fd3c9181886b4ab10b51ff894a8d781f476dc75667",
+  "payloadFingerprint": "sha256:518a6fe3c1d5cb50c0770e44271de3264da236bea6d4015b69ac2ab78d251982",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3387,8 +3375,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "GPU writeJson has one file-local caller targeting user/gpu-startup.json; its parent and PID-suffixed temporary sibling are now assigned to that existing store. Runtime behavior, data epoch, schemas and all other ownership are unchanged.",
-    "payloadFingerprint": "sha256:850f4c6e915cd8c0e6d361fd3c9181886b4ab10b51ff894a8d781f476dc75667"
+    "compatibilityReason": "Attribute two existing character-card asset helper writes to their token-scoped staging store; runtime behavior, paths, data format, and epoch are unchanged.",
+    "payloadFingerprint": "sha256:518a6fe3c1d5cb50c0770e44271de3264da236bea6d4015b69ac2ab78d251982"
   },
   "schemas": [
     {
@@ -7521,12 +7509,12 @@
       "storeId": "character-card-staging"
     },
     {
-      "exemptionId": "character-card-copy-helper",
+      "exemptionId": null,
       "kind": "copy-file",
       "ordinal": 0,
-      "reason": "The file-local copy helper is flow-dependent: callers target either token-scoped card staging or an explicitly registered skill destination.",
+      "reason": "Copies a non-PNG asset inside a token-scoped character-card import/export package.",
       "sourceFile": "lib/character-cards/service.ts",
-      "storeId": null
+      "storeId": "character-card-staging"
     },
     {
       "exemptionId": null,
@@ -7561,12 +7549,12 @@
       "storeId": "skill-state"
     },
     {
-      "exemptionId": "character-card-copy-helper",
+      "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
-      "reason": "The file-local copy helper is flow-dependent: callers target either token-scoped card staging or an explicitly registered skill destination.",
+      "reason": "Ensures the asset directory inside a token-scoped character-card import/export package.",
       "sourceFile": "lib/character-cards/service.ts",
-      "storeId": null
+      "storeId": "character-card-staging"
     },
     {
       "exemptionId": null,
