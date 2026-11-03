@@ -10915,7 +10915,7 @@
       "ownerModule": "lib/character-cards/service.ts",
       "sourceFile": "lib/character-cards/service.ts",
       "reason": "The file-local copy helper is flow-dependent: callers target either token-scoped card staging or an explicitly registered skill destination.",
-      "expiresOn": "2026-10-31",
+      "expiresOn": "2026-11-17",
       "kinds": [
         "mkdir",
         "copy-file"
@@ -10927,7 +10927,7 @@
       "ownerModule": "lib/compat/checks/dirs.ts",
       "sourceFile": "lib/compat/checks/dirs.ts",
       "reason": "Compatibility check creates a fixed set of registered HANA_HOME roots; flow attribution remains with the first-run coordinator.",
-      "expiresOn": "2026-10-31",
+      "expiresOn": "2026-11-17",
       "kinds": [
         "database-open",
         "write-file",
@@ -10947,7 +10947,7 @@
       "ownerModule": "server/routes/plugins.ts",
       "sourceFile": "server/routes/plugins.ts",
       "reason": "One bounded cleanup list contains both HANA_HOME .installing staging and operating-system extraction temp; flow-sensitive attribution must replace this exact conditional site.",
-      "expiresOn": "2026-10-31",
+      "expiresOn": "2026-11-17",
       "kinds": [
         "remove-path"
       ],
@@ -10958,7 +10958,7 @@
       "ownerModule": "server/routes/upload.ts",
       "sourceFile": "server/routes/upload.ts",
       "reason": "resolveUploadTarget sends the same syntactic write sites to registered session-files storage when sessionPath is present or to the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
-      "expiresOn": "2026-10-31",
+      "expiresOn": "2026-11-17",
       "kinds": [
         "mkdir",
         "copy-file",
@@ -10970,7 +10970,7 @@
       "ownerModule": "shared/migrate-config-scope.ts",
       "sourceFile": "shared/migrate-config-scope.ts",
       "reason": "Compatibility helper mutates a caller-supplied config file; concrete agent config ownership is registered at callers.",
-      "expiresOn": "2026-10-31",
+      "expiresOn": "2026-11-17",
       "kinds": [
         "database-open",
         "write-file",
@@ -10990,7 +10990,7 @@
       "ownerModule": "core/first-run.ts",
       "sourceFile": "core/first-run.ts",
       "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
-      "expiresOn": "2026-10-31",
+      "expiresOn": "2026-11-17",
       "kinds": [
         "database-open",
         "write-file",
@@ -11010,7 +11010,7 @@
       "ownerModule": "core/migrations.ts",
       "sourceFile": "core/migrations.ts",
       "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
-      "expiresOn": "2026-10-31",
+      "expiresOn": "2026-11-17",
       "kinds": [
         "database-open",
         "write-file",
@@ -11030,7 +11030,7 @@
       "ownerModule": "shared/data-epoch.cjs",
       "sourceFile": "shared/data-epoch.cjs",
       "reason": "The same-directory temp write, fsync, rename, and temp cleanup primitive has no independent store identity; its durableWriteJson call sites are assigned to stamp or journal ownership.",
-      "expiresOn": "2026-10-31",
+      "expiresOn": "2026-11-17",
       "kinds": [
         "mkdir",
         "write-file",
@@ -11100,7 +11100,7 @@
       "ownerModule": "desktop/src/shared/gpu-startup-policy.cjs",
       "sourceFile": "desktop/src/shared/gpu-startup-policy.cjs",
       "reason": "Generic atomic JSON primitive has no independent store ownership; its writeJson call sites are assigned to the GPU state or preferences owner.",
-      "expiresOn": "2026-10-31",
+      "expiresOn": "2026-11-17",
       "kinds": [
         "mkdir",
         "write-file",
@@ -11113,7 +11113,7 @@
       "ownerModule": "desktop/auto-updater.cjs",
       "sourceFile": "desktop/auto-updater.cjs",
       "reason": "Deletes the exact legacy last-update-version source and its now-empty legacy directory outside the active HANA_HOME.",
-      "expiresOn": "2026-10-31",
+      "expiresOn": "2026-11-17",
       "kinds": [
         "remove-path"
       ],
@@ -11389,7 +11389,7 @@
       "ownerModule": "core/local-user-account.ts",
       "sourceFile": "core/local-user-account.ts",
       "reason": "The file-local atomic helper receives paths only from the separately registered users.json and local-user-auth.json call sites.",
-      "expiresOn": "2026-10-31",
+      "expiresOn": "2026-11-17",
       "kinds": [
         "mkdir",
         "secret-write"
@@ -11481,7 +11481,7 @@
       "ownerModule": "core/server-identity.ts",
       "sourceFile": "core/server-identity.ts",
       "reason": "The file-local atomic helper receives paths only from the separately registered server-node and user/studio registry call sites.",
-      "expiresOn": "2026-10-31",
+      "expiresOn": "2026-11-17",
       "kinds": [
         "mkdir",
         "atomic-write"
