@@ -83207,6 +83207,23 @@
       "reason": "Reached via esbuild source module graph, imported by server/routes/agents.ts (import-statement)."
     },
     {
+      "path": "server/utils/channel-user.ts",
+      "inputType": "source-graph",
+      "provenance": [
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/config.ts",
+          "kind": "import-statement"
+        },
+        {
+          "root": "server-bootstrap",
+          "from": "server/routes/channels.ts",
+          "kind": "import-statement"
+        }
+      ],
+      "reason": "Reached via esbuild source module graph, imported by server/routes/config.ts (import-statement); server/routes/channels.ts (import-statement)."
+    },
+    {
       "path": "server/utils/path-security.ts",
       "inputType": "source-graph",
       "provenance": [
@@ -86283,9 +86300,9 @@
     }
   ],
   "stats": {
-    "totalFiles": 6900,
+    "totalFiles": 6901,
     "byInputType": {
-      "source-graph": 751,
+      "source-graph": 752,
       "runtime-asset": 11,
       "nft-runtime-trace": 6138
     }

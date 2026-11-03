@@ -107,6 +107,20 @@ describe("lint-open-boundary: relative specifier resolution", () => {
 });
 
 describe("lint-open-boundary: violation detection", () => {
+  it("still rejects a closed dependency introduced through the channel-user helper", () => {
+    const root = makeFixtureRepo({
+      "server/routes/channels.ts": 'import "../utils/channel-user.ts";\n',
+      "server/utils/channel-user.ts": 'export { name } from "../composition/full-root.ts";\n',
+      "server/composition/full-root.ts": 'export const name = "synthetic closed fixture";\n',
+    });
+    const manifest = { version: 1, paths: ["server/routes/channels.ts", "server/utils/channel-user.ts"] };
+    const violations = findBoundaryViolations({ rootDir: root, manifest });
+    expect(violations).toEqual([{
+      from: "server/utils/channel-user.ts", to: "server/composition/full-root.ts", line: 1,
+    }]);
+    expect(checkRatchet({ violations, baseline: { edges: [] } }).ok).toBe(false);
+  });
+
   it("reports an edge when a whitelisted file imports a non-whitelisted repo path", () => {
     const root = makeFixtureRepo({
       "open/a.ts": 'import { x } from "../closed/b.ts";\nexport const y = x;\n',
@@ -163,6 +177,19 @@ describe("lint-open-boundary: ratchet check", () => {
 });
 
 describe("lint-open-boundary: real repo state (smoke)", () => {
+  it("rejects both public route imports when channel-user is omitted from the manifest", () => {
+    const manifest = readExportManifest({ rootDir: REPOSITORY_ROOT });
+    const withoutHelper = { ...manifest, paths: manifest.paths.filter((entry: string) => entry !== "server/utils/channel-user.ts") };
+    const violations = findBoundaryViolations({ rootDir: REPOSITORY_ROOT, manifest: withoutHelper });
+    expect(violations.map(({ from, to }) => ({ from, to }))).toEqual([
+      { from: "server/routes/channels.ts", to: "server/utils/channel-user.ts" },
+      { from: "server/routes/config.ts", to: "server/utils/channel-user.ts" },
+    ]);
+    const result = checkRatchet({ violations, baseline: readBaseline({ rootDir: REPOSITORY_ROOT }) });
+    expect(result.ok).toBe(false);
+    expect(result.newViolations).toEqual(violations);
+  }, 30_000);
+
   it("the committed export-manifest.json + baseline pass cleanly against real source", () => {
     const manifest = readExportManifest({ rootDir: REPOSITORY_ROOT });
     const violations = findBoundaryViolations({ rootDir: REPOSITORY_ROOT, manifest });

@@ -24,6 +24,12 @@ it("the open source graph fits the actual export plan without unclassified route
   const sourcePaths = closure.files.filter((file) => file.inputType === "source-graph").map((file) => file.path);
   expect(sourcePaths.length).toBeGreaterThan(500);
   expect(sourcePaths.filter((file) => !exported.has(file))).toEqual([]);
+  expect(sourcePaths).toContain("server/utils/channel-user.ts");
+  // Reproduce PC01's missing-file export without changing the real manifest.
+  const manifest = readExportManifest({ rootDir: ROOT });
+  const withoutHelper = { ...manifest, paths: manifest.paths.filter((entry: string) => entry !== "server/utils/channel-user.ts") };
+  const incompleteExport = new Set(planExportCopies({ rootDir: ROOT, manifest: withoutHelper, skeleton: EXPORT_SKELETON }));
+  expect(sourcePaths.filter((file) => !incompleteExport.has(file))).toEqual(["server/utils/channel-user.ts"]);
   for (const file of ["server/main-full.ts", "server/composition/full-root.ts", "server/routes/mobile-workbench.ts"]) {
     expect(sourcePaths).not.toContain(file);
     expect(exported.has(file)).toBe(false);
