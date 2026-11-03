@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -131,7 +132,8 @@ const cases = [
 
 describe('PC01 channel user identity from production preferences/runtime through entry and prompt', () => {
   beforeEach(() => {
-    const parent = process.env.HANAKO_HOME!; fs.mkdirSync(parent, { recursive: true });
+    root = '';
+    const parent = process.env.HANAKO_HOME || os.tmpdir(); fs.mkdirSync(parent, { recursive: true });
     root = fs.mkdtempSync(path.join(parent, 'group-user-'));
     h.calls = []; h.bridge = null; h.afterConfig = null; h.configOverride = undefined;
     vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-01T10:00:00Z'));
@@ -139,7 +141,7 @@ describe('PC01 channel user identity from production preferences/runtime through
     invalidateConfigCache();
     useStore.setState({ userName: 'WRONG_UI_NAME', serverPort: '17333', serverToken: 'synthetic', activeServerConnection: null, activeServerConnectionId: null, serverConnections: {} });
   });
-  afterEach(() => { h.bridge = null; vi.useRealTimers(); fs.rmSync(root, { recursive: true, force: true }); });
+  afterEach(() => { h.bridge = null; vi.useRealTimers(); if (root) fs.rmSync(root, { recursive: true, force: true }); });
 
   it.each(cases)('$label keeps the source, replies once and blocks its acknowledged self post', async ({ sender, ...opts }) => {
     await setup(opts); const source = await userSend();
