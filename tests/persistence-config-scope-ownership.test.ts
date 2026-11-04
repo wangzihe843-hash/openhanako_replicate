@@ -38,8 +38,6 @@ function usesMigration(file: string, text: string): boolean {
   walk(ast);
   return found;
 }
-vi.setConfig({ testTimeout: 30_000 });
-
 describe("config scope migration ownership", () => {
   it("moves only the formal config write and preserves every other site, store path and receipt", () => {
     const actual = scanPersistentStores({ rootDir: ROOT });
@@ -66,9 +64,15 @@ describe("config scope migration ownership", () => {
     const remaining = actual.inventory.exemptions.filter((e) => e.expiresOn === "2026-11-17");
     const ids = new Set(remaining.map((e) => e.id));
     expect(remaining).toHaveLength(6);
-    expect(actual.inventory.discoveredSites.filter((s) => ids.has(s.exemptionId))).toHaveLength(91);
+    expect(actual.inventory.discoveredSites.filter((s) => ids.has(s.exemptionId))).toHaveLength(90);
     expect(actual.inventory.discoveredSites.filter((s) => s.exemptionId === EXEMPTION)).toHaveLength(1);
+  });
+
+  it("rejects a config write without its owner", () => {
     expect(() => scanPersistentStores({ rootDir: ROOT, stores: oldStores })).toThrow(/unregistered persistence site/);
+  });
+
+  it("rejects a config write with overlapping ownership", () => {
     expect(() => scanPersistentStores({ rootDir: ROOT, exemptions: oldExemptions })).toThrow(/ambiguous persistence site/);
   });
 

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { assertCommittedPersistenceSchemaFingerprint, generatePersistenceSchemaFingerprint } from "../scripts/generate-persistence-schema-fingerprint.mjs";
 import { scanPersistentStores } from "../scripts/scan-persistent-stores.mjs";
 import { PERSISTENCE_EXEMPTIONS, PERSISTENT_STORES } from "../shared/persistence/store-registry.ts";
@@ -27,8 +27,6 @@ const newReasons = [
 const previousStores = PERSISTENT_STORES.map((store) => store.id !== OWNER ? store : {
   ...store, siteRules: store.siteRules.filter((rule) => !newReasons.includes(rule.reason)),
 });
-vi.setConfig({ testTimeout: 30_000 });
-
 describe("character-card persistence ownership", () => {
   it("moves exactly the two physical sites from the retired exemption and preserves all other rows", () => {
     const { inventory: actual, startupReceipt } = scanPersistentStores({ rootDir: ROOT });
@@ -45,11 +43,11 @@ describe("character-card persistence ownership", () => {
     const remaining = actual.exemptions.filter((e: { expiresOn: string }) => e.expiresOn === "2026-11-17");
     const ids = new Set(remaining.map((e: { id: string }) => e.id));
     expect(remaining).toHaveLength(6);
-    expect(actual.discoveredSites.filter((s: { exemptionId: string | null }) => ids.has(s.exemptionId))).toHaveLength(91);
+    expect(actual.discoveredSites.filter((s: { exemptionId: string | null }) => ids.has(s.exemptionId))).toHaveLength(90);
     expect(remaining.map((e: { id: string }) => [e.id, actual.discoveredSites.filter((s: { exemptionId: string | null }) => s.exemptionId === e.id).length])).toEqual([
       ["compat-directory-seeding", 1], ["conditional-plugin-install-cleanup", 1],
       ["config-scope-migration-helper", 1],
-      ["cross-store-first-run-bootstrap", 13], ["cross-store-legacy-migrations", 70],
+      ["cross-store-first-run-bootstrap", 12], ["cross-store-legacy-migrations", 70],
       ["data-epoch-durable-json-primitive", 5],
     ]);
     const previous = scanPersistentStores({ rootDir: ROOT, stores: previousStores, exemptions: [...PERSISTENCE_EXEMPTIONS, oldExemption] });
@@ -64,12 +62,21 @@ describe("character-card persistence ownership", () => {
     expect(previous.inventory.stores).toEqual(actual.stores);
     expect(previous.inventory.exemptions.filter((e: { id: string }) => e.id !== RETIRED)).toEqual(actual.exemptions);
     expect(previous.startupReceipt).toEqual(startupReceipt);
+  });
+
+  it("rejects a card asset site without its owner", () => {
     expect(() => scanPersistentStores({ rootDir: ROOT, stores: previousStores })).toThrow(/unregistered persistence site/);
+  });
+
+  it("rejects a card asset site with overlapping ownership", () => {
     expect(() => scanPersistentStores({ rootDir: ROOT, exemptions: [...PERSISTENCE_EXEMPTIONS, oldExemption] })).toThrow(/ambiguous persistence site/);
   });
 
-  it("accepts the original source and comment-only drift", async () => {
+  it("accepts the original source", async () => {
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT })).resolves.toEqual(committed);
+  });
+
+  it("accepts comment-only drift", async () => {
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, committedFingerprint: committed, sourceOverrides: overrides(`// comment-only drift\n${source}`) })).resolves.toEqual(committed);
   });
 
@@ -93,8 +100,11 @@ describe("character-card persistence ownership", () => {
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, committedFingerprint: committed, sourceOverrides })).rejects.toThrow(`persistence schema fingerprint mismatch: committed ${committed.payloadFingerprint}, generated ${mutation.payloadFingerprint}`);
   });
 
-  it("rejects a deleted owned write and an unregistered added write", () => {
+  it("rejects a deleted owned write", () => {
     expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace("    fs.copyFileSync(sourcePath, dst);", "    void dst;")) })).toThrow(/dangling/);
+  });
+
+  it("rejects an unregistered added write", () => {
     expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace("    fs.copyFileSync(sourcePath, dst);", '    fs.copyFileSync(sourcePath, dst);\n    fs.writeFileSync("unknown-target", "extra");')) })).toThrow(/unregistered persistence site/);
   });
 });

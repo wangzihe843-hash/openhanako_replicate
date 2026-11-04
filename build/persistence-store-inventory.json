@@ -326,7 +326,9 @@
         "core/persona-source.ts",
         "core/first-run.ts",
         "server/index.ts",
+        "shared/hana-runtime-paths.ts",
         "shared/hana-runtime-paths.cjs",
+        "shared/hana-root.ts",
         "core/agents-md-migration.ts",
         "core/engine.ts",
         "shared/config-schema.ts",
@@ -1976,7 +1978,9 @@
       ],
       "migrationEntry": [],
       "protocolModules": [
-        "shared/hana-runtime-paths.cjs"
+        "shared/hana-runtime-paths.ts",
+        "shared/hana-runtime-paths.cjs",
+        "shared/hana-root.ts"
       ],
       "firstPossibleOpenPhase": "home_guard",
       "firstPossibleWritePhase": "home_guard",
@@ -2517,7 +2521,9 @@
       "protocolModules": [
         "core/first-run.ts",
         "server/index.ts",
-        "shared/hana-runtime-paths.cjs"
+        "shared/hana-runtime-paths.ts",
+        "shared/hana-runtime-paths.cjs",
+        "shared/hana-root.ts"
       ],
       "firstPossibleOpenPhase": "desktop_bootstrap",
       "firstPossibleWritePhase": "first_run_seed",
@@ -3443,9 +3449,9 @@
       "sourceFile": "core/first-run.ts",
       "kind": "copy-file",
       "excerpt": "fs.copyFileSync(configSrc, cfgDest)",
-      "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
-      "storeId": null,
-      "exemptionId": "cross-store-first-run-bootstrap",
+      "reason": "Copies the default agent configuration template during first-run seeding or repair.",
+      "storeId": "agent-profile",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -11002,7 +11008,7 @@
         "secret-write",
         "write-file"
       ],
-      "linePattern": "^(?:fs\\.copyFileSync\\(configSrc, cfgDest\\)|fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"avatars\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|writeSecretFileSync\\(cfgDest, YAML\\.dump\\(raw, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' \\}\\)\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$"
+      "linePattern": "^(?:fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"avatars\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|writeSecretFileSync\\(cfgDest, YAML\\.dump\\(raw, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' \\}\\)\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$"
     },
     {
       "id": "cross-store-legacy-migrations",

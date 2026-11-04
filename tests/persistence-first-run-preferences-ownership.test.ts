@@ -25,7 +25,6 @@ const broadExemptions = PERSISTENCE_EXEMPTIONS.map(e => e.id !== EXEMPTION ? e :
 const priorExemptions = PERSISTENCE_EXEMPTIONS.map(e => e.id !== EXEMPTION ? e : { ...e, linePattern: `(?:${e.linePattern})|(?:^fs\\.writeFileSync\\( prefsPath,)` });
 const overrides = (text: string) => new Map([[MODULE, text]]);
 const tempDirs: string[] = [];
-vi.setConfig({ testTimeout: 30_000 });
 afterEach(() => { vi.restoreAllMocks(); for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
 
 function setup() {
@@ -56,10 +55,16 @@ describe("first-run preferences ownership", () => {
     expect(previous.startupReceipt).toEqual(actual.startupReceipt);
     const exemptions = actual.inventory.exemptions.filter(e => e.expiresOn === "2026-11-17");
     expect(exemptions).toHaveLength(6);
-    expect(actual.inventory.discoveredSites.filter(s => exemptions.some(e => e.id === s.exemptionId))).toHaveLength(91);
-    expect(actual.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(13);
+    expect(actual.inventory.discoveredSites.filter(s => exemptions.some(e => e.id === s.exemptionId))).toHaveLength(90);
+    expect(actual.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(12);
     expect(actual.inventory.exemptions.find(e => e.id === EXEMPTION)?.expiresOn).toBe("2026-11-17");
+  });
+
+  it("rejects a preferences write without its owner", () => {
     expect(() => scanPersistentStores({ rootDir: ROOT, stores: withoutOwner })).toThrow(/unregistered persistence site/);
+  });
+
+  it("rejects overlapping preferences ownership", () => {
     expect(() => scanPersistentStores({ rootDir: ROOT, exemptions: broadExemptions })).toThrow(/ambiguous persistence site/);
   });
 
@@ -95,16 +100,30 @@ describe("first-run preferences ownership", () => {
     expect(fs.readFileSync(target, "utf8")).toBe('{"primary');
   });
 
-  it("detects deleted, duplicated, overlapping and unknown writes", () => {
+  it("detects a deleted preferences write", () => {
     expect(source.split(call)).toHaveLength(2);
     expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(call, "void 0")) })).toThrow(/dangling/);
+  });
+
+  it("detects a duplicated preferences write", () => {
+    expect(source.split(call)).toHaveLength(2);
     expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(call, `${call}; ${call}`)) }).inventory).not.toEqual(inventory);
+  });
+
+  it("detects an unknown preferences write", () => {
+    expect(source.split(call)).toHaveLength(2);
     expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(call, `${call}; fs.writeFileSync("unknown", "x")`)) })).toThrow(/unregistered persistence site/);
+  });
+
+  it("detects an overlapping preferences exemption", () => {
     expect(() => scanPersistentStores({ rootDir: ROOT, exemptions: broadExemptions })).toThrow(/ambiguous persistence site/);
   });
 
-  it("accepts the committed fingerprint and comment drift", async () => {
+  it("accepts the committed fingerprint", async () => {
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT })).resolves.toBeDefined();
+  });
+
+  it("accepts comment-only fingerprint drift", async () => {
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, sourceOverrides: overrides(`// comment\n${source}`) })).resolves.toBeDefined();
   });
   it.each([
