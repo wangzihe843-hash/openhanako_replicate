@@ -9,9 +9,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { Buffer } from "node:buffer";
-import { setTimeout } from "node:timers";
+import { setImmediate, setTimeout } from "node:timers";
 import console from "node:console";
-import { WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import { createFeishuWorkerAdapter } from "../../lib/bridge/feishu-worker-adapter.ts";
 import { createOutboundProxyRuntime } from "../../lib/net/outbound-proxy.ts";
 import { initDebugLog, debugLog } from "../../lib/debug-log.ts";
@@ -40,7 +40,7 @@ function encodeEvent(id = "event-1", openId = "synthetic-user") {
   return writer.uint32(66).bytes(Buffer.from(body)).finish();
 }
 
-async function httpFixture(mode = "healthy") {
+async function httpFixture(mode = "healthy", holdUpgradeNumber = 0) {
   const sockets = new Set();
   const requests = [];
   const wsClients = new Set();
@@ -49,6 +49,7 @@ async function httpFixture(mode = "healthy") {
   let tokens = 0;
   let messageId = 0;
   let failContentOnce = false;
+  let heldUpgrade;
   const server = createHttpServer((request, response) => {
     const chunks = [];
     request.on("data", chunk => chunks.push(Buffer.from(chunk)));
@@ -95,7 +96,10 @@ async function httpFixture(mode = "healthy") {
   server.on("upgrade", (request, socket, head) => {
     upgrades++;
     if (mode === "handshake") { socket.resume(); socket.on("end", () => socket.end()); }
-    else wss.handleUpgrade(request, socket, head, ws => wss.emit("connection", ws));
+    else {
+      if (upgrades === holdUpgradeNumber) { socket.cork(); heldUpgrade = socket; }
+      wss.handleUpgrade(request, socket, head, ws => wss.emit("connection", ws));
+    }
   });
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   const port = server.address().port;
@@ -107,6 +111,8 @@ async function httpFixture(mode = "healthy") {
       ClientConfig: { PingInterval: 60, ReconnectCount: 3, ReconnectInterval: 0.02, ReconnectNonce: 0 } } }));
   }
   return { base, port, sockets, requests, wsClients, releaseEndpoint,
+    upgradeHeld: () => Boolean(heldUpgrade),
+    releaseUpgrade() { assert.ok(heldUpgrade); heldUpgrade.uncork(); heldUpgrade = undefined; },
     upgrades: () => upgrades, aborts: () => aborts, tokens: () => tokens,
     endpoints: () => requests.filter(r => r.path === "/callback/ws/endpoint"),
     messages: () => requests.filter(r => r.path.startsWith("/open-apis/im/v1/messages") && !r.path.includes("/resources/")),
@@ -297,8 +303,12 @@ try {
     assert.deepEqual(proxy.counts(), countsBefore, "late proxy response must not advance negotiation after stop");
     assert.equal((await send).deliveryUnknown, true);
   } else {
-    const mode = ["proxy-config", "proxy-system", "no-proxy", "events", "reconnect"].includes(scenario) ? "healthy" : scenario;
-    const h = await httpFixture(mode); cleanups.push(() => h.close());
+    const firstHeldHandshake = ["contact-handshake-gate", "contact-disconnect-gate", "contact-stop-gate"].includes(scenario);
+    const reconnectGate = ["contact-reconnect-gate", "contact-reconnect-current-gate"].includes(scenario);
+    const stopReady = scenario === "contact-stop-ready";
+    const contactGate = firstHeldHandshake || reconnectGate || stopReady;
+    const mode = contactGate ? "contact" : ["proxy-config", "proxy-system", "no-proxy", "events", "reconnect"].includes(scenario) ? "healthy" : scenario;
+    const h = await httpFixture(mode, firstHeldHandshake ? 1 : reconnectGate ? 2 : 0); cleanups.push(() => h.close());
     let firstProxy; let secondProxy;
     if (["proxy-config", "proxy-system", "no-proxy"].includes(scenario)) {
       firstProxy = await socksFixture("healthy", h.port); cleanups.push(() => firstProxy.close());
@@ -340,21 +350,89 @@ try {
       await until(() => h.upgrades() === 2, "single SDK reconnect");
       await pause(100); assert.equal(h.upgrades(), 2); assert.equal(h.endpoints().length, 2);
       observation.stop = await stoppedAt250(value, h.sockets); assert.equal(h.upgrades(), 2);
-    } else if (scenario === "events" || scenario === "contact") {
+    } else if (scenario === "events" || scenario === "contact" || contactGate) {
       await until(() => h.wsClients.size === 1, "event socket");
-      [...h.wsClients][0].send(encodeEvent());
-      await until(() => h.requests.some(r => r.path.includes("/contact/")), "inbound user lookup");
-      if (scenario === "contact") {
-        const stopping = value.stop();
-        h.requests.find(r => r.path.includes("/contact/")).response.end(JSON.stringify({ code: 0, data: { user: { name: "late" } } }));
-        observation.stop = await stoppedAt250(value, h.sockets); await stopping; assert.equal(messages.length, 0);
-      } else {
-        await until(() => messages.length === 1, "inbound normalized event");
-        assert.equal(messages[0].sessionKey, "fs_dm_synthetic-user@synthetic-agent");
-        assert.equal(messages[0].senderName, "Synthetic User");
-        await value.sendReply("synthetic-chat", "reply while application callback remains pending");
-        observation.stop = await stoppedAt250(value, h.sockets);
+      const eventSocket = [...h.wsClients][0];
+      // Keep readiness and the contact lookup within the original lookup budget.
+      const lookupDeadline = Date.now() + 5000;
+      let eventSends = 0;
+      let eventStopStarted = false;
+      const stopEventWorker = () => { eventStopStarted = true; return value.stop(); };
+      function requireOriginalEventSocket(socket) {
+        const status = statuses.at(-1)?.[0];
+        if (eventStopStarted || status === "error" || status === "disconnected" || h.upgrades() !== 1 || h.wsClients.size !== 1 || !h.wsClients.has(socket) || socket.readyState !== WebSocket.OPEN) {
+          throw new Error("event socket changed, closed, or stopped before delivery");
+        }
       }
+      async function sendEventOnce(socket = eventSocket) {
+        // A connected status has no socket ID. It is usable only while the
+        // original socket is the sole upgrade for this Worker.
+        await until(() => { requireOriginalEventSocket(socket); return statuses.at(-1)?.[0] === "connected"; },
+          "event client connected", Math.max(0, lookupDeadline - Date.now()));
+        requireOriginalEventSocket(socket);
+        if (scenario === "contact-handshake-gate") assert.equal(h.upgradeHeld(), false, "send only after the client can complete its handshake");
+        eventSends++;
+        socket.send(encodeEvent());
+      }
+      if (firstHeldHandshake) {
+        assert.equal(h.upgradeHeld(), true, "hold the handshake after the server accepts the socket");
+        assert.equal(statuses.some(s => s[0] === "connected"), false, "server acceptance is not client readiness");
+      }
+      if (scenario === "contact-handshake-gate") {
+        // Let an early sender run before the buffered handshake is released.
+        setImmediate(() => h.releaseUpgrade());
+      }
+      if (reconnectGate) {
+        await until(() => statuses.some(s => s[0] === "connected"), "first connection ready", Math.max(0, lookupDeadline - Date.now()));
+        eventSocket.terminate();
+        await until(() => h.upgrades() === 2 && h.wsClients.size === 1 && h.upgradeHeld(), "second handshake held", Math.max(0, lookupDeadline - Date.now()));
+        assert.equal(statuses.some(s => s[0] === "connected"), true, "retain the first connection's historical status");
+        const reconnectedSocket = [...h.wsClients][0];
+        assert.notEqual(reconnectedSocket, eventSocket);
+        // Also model a first observation after reconnection, when selecting the
+        // current socket alone cannot identify which socket emitted the status.
+        const candidate = scenario === "contact-reconnect-current-gate" ? reconnectedSocket : eventSocket;
+        await assert.rejects(sendEventOnce(candidate), { message: "event socket changed, closed, or stopped before delivery" });
+        const stopping = stopEventWorker(); h.releaseUpgrade();
+        observation.stop = await stoppedAt250(value, h.sockets); await stopping;
+      } else if (scenario === "contact-disconnect-gate" || scenario === "contact-stop-gate") {
+        const blocked = assert.rejects(sendEventOnce(), { message: "event socket changed, closed, or stopped before delivery" });
+        if (scenario === "contact-disconnect-gate") {
+          eventSocket.terminate();
+          await blocked;
+          observation.stop = await stoppedAt250(value, h.sockets);
+        } else {
+          const stopping = stopEventWorker(); h.releaseUpgrade();
+          [, observation.stop] = await Promise.all([blocked, stoppedAt250(value, h.sockets), stopping]);
+        }
+      } else if (stopReady) {
+        await until(() => statuses.some(s => s[0] === "connected"), "first connection ready", Math.max(0, lookupDeadline - Date.now()));
+        const stopping = stopEventWorker();
+        assert.equal(eventSocket.readyState, WebSocket.OPEN, "stop must be checked even before socket close is observed");
+        await assert.rejects(sendEventOnce(), { message: "event socket changed, closed, or stopped before delivery" });
+        observation.stop = await stoppedAt250(value, h.sockets); await stopping;
+      } else {
+        await sendEventOnce();
+        assert.equal(eventSends, 1, "send exactly one event");
+        await until(() => h.requests.some(r => r.path.includes("/contact/")), "inbound user lookup", Math.max(0, lookupDeadline - Date.now()));
+        if (scenario === "contact" || contactGate) {
+          const stopping = stopEventWorker();
+          h.requests.find(r => r.path.includes("/contact/")).response.end(JSON.stringify({ code: 0, data: { user: { name: "late" } } }));
+          observation.stop = await stoppedAt250(value, h.sockets); await stopping; assert.equal(messages.length, 0);
+        } else {
+          await until(() => messages.length === 1, "inbound normalized event");
+          assert.equal(messages[0].sessionKey, "fs_dm_synthetic-user@synthetic-agent");
+          assert.equal(messages[0].senderName, "Synthetic User");
+          await value.sendReply("synthetic-chat", "reply while application callback remains pending");
+          observation.stop = await stoppedAt250(value, h.sockets);
+        }
+      }
+      if (reconnectGate || stopReady || ["contact-disconnect-gate", "contact-stop-gate"].includes(scenario)) {
+        assert.equal(eventSends, 0, "never send to a stale, closed, or stopped connection");
+        assert.equal(h.requests.some(r => r.path.includes("/contact/")), false);
+        assert.equal(messages.length, 0);
+      }
+      observation.eventSends = eventSends;
     } else if (scenario === "contracts") {
       await value.sendReply("synthetic-chat", "hello"); await value.sendBlockReply("synthetic-chat", "block");
       assert.equal(h.tokens(), 2, "SDK refreshes a deliberately expired token then caches the new one");
