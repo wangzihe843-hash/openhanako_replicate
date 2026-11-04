@@ -1,0 +1,5 @@
+# First-run preferences ownership
+
+`ensureFirstRun` writes `user/preferences.json` once when the path does not exist, using the `hanakoHome` passed by the server. Server startup resolves that root from `HANA_HOME` before calling it. This site belongs to the existing `user-preferences` store. The remaining first-run exemption covers only the other discovered expressions and retains its 2026-11-17 expiry. The executable first-run and server sources are bound to the preferences fingerprint.
+
+This classification changes no runtime path, file format, write method, epoch, checkpoint, or restore policy. Existing preferences, including malformed or partially written bytes, are left untouched by this initializer. Its existence check and direct synchronous write are not an atomic create or a crash-recovery protocol: a partial file can remain after a failed or interrupted write, and a subsequent run does not repair it. Concurrent creation is not excluded by the check. Other readers and their separate recovery behavior are unchanged.

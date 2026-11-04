@@ -435,6 +435,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     format: "json",
     schemaSource: runtimeSource("core/preferences-manager.ts", "PreferencesManager defaults, coercion, and _dataVersion migration driver"),
     openEntry: ["new PreferencesManager"],
+    protocolModules: ["core/first-run.ts", "server/index.ts"],
     migrationEntry: ["core/preferences-manager.ts unreadable-source preservation", "core/migrations.ts runMigrations"],
     firstPossibleOpenPhase: "desktop_bootstrap",
     firstPossibleWritePhase: "first_run_seed",
@@ -457,6 +458,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     },
     siteRules: [
       ...rules(["core/preferences-manager.ts"], "Reads and atomically writes user preferences."),
+      ...rules(["core/first-run.ts"], "Seeds the missing user preferences document on first run.", ["write-file"], "^fs\\.writeFileSync\\( prefsPath, JSON\\.stringify\\(\\{ primaryAgent: \"hanako\", \\}, null, 2\\) \\+ \"\\\\n\", \"utf-8\", \\)$"),
       ...rules(["core/engine.ts"], "Constructs the preferences owner.", ["persistent-store-constructor"], "PreferencesManager"),
     ],
   }),
@@ -1673,6 +1675,8 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "core/first-run.ts",
     "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
     "2026-11-17",
+    ["copy-file", "mkdir", "rename", "secret-write", "write-file"],
+    "^(?:fs\\.copyFileSync\\(configSrc, cfgDest\\)|fs\\.copyFileSync\\(publicAgentsSrc, path\\.join\\(agentDir, PUBLIC_PERSONA_FILE_NAME\\)\\)|fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"avatars\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|writeSecretFileSync\\(cfgDest, YAML\\.dump\\(raw, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' \\}\\)\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
   ),
   exemption(
     "cross-store-legacy-migrations",

@@ -47,18 +47,13 @@
       "expiresOn": "2026-11-17",
       "id": "cross-store-first-run-bootstrap",
       "kinds": [
-        "database-open",
-        "write-file",
-        "append-file",
-        "rename",
         "copy-file",
         "mkdir",
-        "remove-path",
-        "truncate-file",
-        "atomic-write",
+        "rename",
         "secret-write",
-        "persistent-store-constructor"
+        "write-file"
       ],
+      "linePattern": "^(?:fs\\.copyFileSync\\(configSrc, cfgDest\\)|fs\\.copyFileSync\\(publicAgentsSrc, path\\.join\\(agentDir, PUBLIC_PERSONA_FILE_NAME\\)\\)|fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"avatars\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|writeSecretFileSync\\(cfgDest, YAML\\.dump\\(raw, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' \\}\\)\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
       "ownerModule": "core/first-run.ts",
       "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
       "sourceFile": "core/first-run.ts"
@@ -599,7 +594,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:fd14e5447b7c68572b5b455d12669fb15cd2b8328eec920d5917891b84d5de9c",
+  "payloadFingerprint": "sha256:0909080127002e9457127ca44ded9e72e2cb1f52e872415108280a98d39163f6",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3078,7 +3073,10 @@
         ],
         "reason": "Desktop startup reads only these named optional fields before the epoch transition; removal or semantic reinterpretation requires moving the read behind the coordinator."
       },
-      "protocolModules": [],
+      "protocolModules": [
+        "core/first-run.ts",
+        "server/index.ts"
+      ],
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
       "schemaContract": {
         "compatibility": "PreferencesManager is intentionally permissive; _dataVersion is the legacy migration cursor, not a strict schema validator. Unreadable source bytes are preserved before any replacement document is written. Optional search_credential_provider pins a model provider ID for explicitly selected DeepSeek Search; absent values preserve existing search defaults and keys, and referenced keys are never copied into preferences. Optional web_fetch_provider, web_fetch_api_key and web_fetch_credential_provider add independently selected Fetch; absent provider keeps direct fetching, while empty Fetch credentials reuse the existing DeepSeek Search override or reference without copying keys.",
@@ -3348,8 +3346,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "The fixed legacy updater source now belongs to desktop-window-version-state and its updater/canonical-directory protocol is fingerprinted. Native directory identity prevents alias self-deletion and ambiguous file identities retain the source; ordinary rename/unlink/rmdir order and failure behavior, all stored paths, checkpoint/restore policy and DATA_EPOCH are unchanged. See docs/audits/2026-11-04-desktop-legacy-update-cleanup-ownership.md; prior compatible reviews remain applicable.",
-    "payloadFingerprint": "sha256:fd14e5447b7c68572b5b455d12669fb15cd2b8328eec920d5917891b84d5de9c"
+    "compatibilityReason": "Classifies the existing first-run preferences seed under user-preferences and binds its executable first-run and server call sources; paths, runtime writes, formats, DATA_EPOCH, checkpoint and restore policies remain unchanged. See docs/audits/2026-11-04-first-run-preferences-ownership.md; prior compatible reviews remain applicable.",
+    "payloadFingerprint": "sha256:0909080127002e9457127ca44ded9e72e2cb1f52e872415108280a98d39163f6"
   },
   "schemas": [
     {
@@ -4171,6 +4169,16 @@
       "contract": "PreferencesManager defaults, coercion, and _dataVersion migration driver",
       "kind": "runtime-contract",
       "module": "core/preferences-manager.ts",
+      "protocolModules": [
+        {
+          "module": "core/first-run.ts",
+          "sourceHash": "sha256:4d44e7606d95bcafc581e9b62cad7321e29eecc6436b9d746cc7acdb752aa814"
+        },
+        {
+          "module": "server/index.ts",
+          "sourceHash": "sha256:8f233b38548e5ea62d8599ff632beddcefe4e8e8ca9c880324deb54c932c545c"
+        }
+      ],
       "sourceHash": "sha256:77297fa68814896ca9b50d3747c98f5c2f7678424d9232bfdd8aba205d61b442",
       "storeId": "user-preferences"
     },
@@ -5086,12 +5094,12 @@
       "storeId": null
     },
     {
-      "exemptionId": "cross-store-first-run-bootstrap",
+      "exemptionId": null,
       "kind": "write-file",
       "ordinal": 0,
-      "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
+      "reason": "Seeds the missing user preferences document on first run.",
       "sourceFile": "core/first-run.ts",
-      "storeId": null
+      "storeId": "user-preferences"
     },
     {
       "exemptionId": "cross-store-first-run-bootstrap",

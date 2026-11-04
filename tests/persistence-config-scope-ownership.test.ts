@@ -66,7 +66,7 @@ describe("config scope migration ownership", () => {
     const remaining = actual.inventory.exemptions.filter((e) => e.expiresOn === "2026-11-17");
     const ids = new Set(remaining.map((e) => e.id));
     expect(remaining).toHaveLength(6);
-    expect(actual.inventory.discoveredSites.filter((s) => ids.has(s.exemptionId))).toHaveLength(93);
+    expect(actual.inventory.discoveredSites.filter((s) => ids.has(s.exemptionId))).toHaveLength(92);
     expect(actual.inventory.discoveredSites.filter((s) => s.exemptionId === EXEMPTION)).toHaveLength(1);
     expect(() => scanPersistentStores({ rootDir: ROOT, stores: oldStores })).toThrow(/unregistered persistence site/);
     expect(() => scanPersistentStores({ rootDir: ROOT, exemptions: oldExemptions })).toThrow(/ambiguous persistence site/);

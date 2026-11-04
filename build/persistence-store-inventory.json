@@ -2510,7 +2510,10 @@
         "core/preferences-manager.ts unreadable-source preservation",
         "core/migrations.ts runMigrations"
       ],
-      "protocolModules": [],
+      "protocolModules": [
+        "core/first-run.ts",
+        "server/index.ts"
+      ],
       "firstPossibleOpenPhase": "desktop_bootstrap",
       "firstPossibleWritePhase": "first_run_seed",
       "epochPolicy": "epoch-managed",
@@ -3552,9 +3555,9 @@
       "sourceFile": "core/first-run.ts",
       "kind": "write-file",
       "excerpt": "fs.writeFileSync( prefsPath, JSON.stringify({ primaryAgent: \"hanako\", }, null, 2) + \"\\n\", \"utf-8\", )",
-      "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
-      "storeId": null,
-      "exemptionId": "cross-store-first-run-bootstrap",
+      "reason": "Seeds the missing user preferences document on first run.",
+      "storeId": "user-preferences",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -10988,18 +10991,13 @@
       "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
       "expiresOn": "2026-11-17",
       "kinds": [
-        "database-open",
-        "write-file",
-        "append-file",
-        "rename",
         "copy-file",
         "mkdir",
-        "remove-path",
-        "truncate-file",
-        "atomic-write",
+        "rename",
         "secret-write",
-        "persistent-store-constructor"
-      ]
+        "write-file"
+      ],
+      "linePattern": "^(?:fs\\.copyFileSync\\(configSrc, cfgDest\\)|fs\\.copyFileSync\\(publicAgentsSrc, path\\.join\\(agentDir, PUBLIC_PERSONA_FILE_NAME\\)\\)|fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"avatars\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|writeSecretFileSync\\(cfgDest, YAML\\.dump\\(raw, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' \\}\\)\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$"
     },
     {
       "id": "cross-store-legacy-migrations",
