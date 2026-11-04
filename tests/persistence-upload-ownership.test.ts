@@ -42,45 +42,56 @@ describe("upload directory ownership", () => {
     expect(PERSISTENT_STORES.find((s) => s.id === "session-files")?.protocolModules).toContain(MODULE);
   });
 
-  it("rejects missing owner, overlapping exemption, missing mkdir and unknown writes", () => {
+  it("rejects a missing owner", () => {
     const noOwner = PERSISTENT_STORES.map((s) => s.id !== "session-files" ? s : { ...s, siteRules: s.siteRules.filter((r) => r.linePattern !== "sessionFilesDir") });
     expect(() => scanPersistentStores({ rootDir: ROOT, stores: noOwner })).toThrow(/unregistered persistence site/);
+  });
+
+  it("rejects an overlapping exemption", () => {
     const wide = [...PERSISTENCE_EXEMPTIONS, { id: "test-upload-overlap", ownerModule: MODULE, sourceFile: MODULE, reason: "Test-only overlapping exemption.", expiresOn: "2027-01-31", kinds: ["mkdir"], linePattern: "sessionFilesDir" }];
     expect(() => scanPersistentStores({ rootDir: ROOT, exemptions: wide })).toThrow(/ambiguous persistence site/);
-    for (const dir of ["sessionFilesDir", "legacyUploadsDir"]) {
-      const statement = `await fs.mkdir(${dir}, { recursive: true });`;
-      expect(source.split(statement)).toHaveLength(2);
-      expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(statement, `void ${dir};`)) })).toThrow(/dangling/);
-    }
-    const statements = [
-      "await fs.copyFile(srcPath, sessionFilePath);", "await fs.copyFile(srcPath, legacyUploadPath);",
-      "await fs.writeFile(sessionFilePath, buf);", "await fs.writeFile(legacyUploadPath, buf);",
-    ];
-    for (const statement of statements) {
-      expect(source.split(statement)).toHaveLength(2);
-      expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(statement, "void destPath;")) })).toThrow(/dangling/);
-      expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(statement, `${statement}\n        ${statement}`)) }).inventory).not.toEqual(inventory);
-    }
-    const write = statements[2];
+  });
+
+  it.each(["sessionFilesDir", "legacyUploadsDir"])("rejects a missing mkdir for %s", (dir) => {
+    const statement = `await fs.mkdir(${dir}, { recursive: true });`;
+    expect(source.split(statement)).toHaveLength(2);
+    expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(statement, `void ${dir};`)) })).toThrow(/dangling/);
+  });
+
+  it.each([
+    "await fs.copyFile(srcPath, sessionFilePath);", "await fs.copyFile(srcPath, legacyUploadPath);",
+    "await fs.writeFile(sessionFilePath, buf);", "await fs.writeFile(legacyUploadPath, buf);",
+  ])("detects a missing or duplicated upload operation: %s", (statement) => {
+    expect(source.split(statement)).toHaveLength(2);
+    expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(statement, "void destPath;")) })).toThrow(/dangling/);
+    expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(statement, `${statement}\n        ${statement}`)) }).inventory).not.toEqual(inventory);
+  });
+
+  it("rejects an unknown write", () => {
+    const write = "await fs.writeFile(sessionFilePath, buf);";
     expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(write, `${write}\n        await fs.writeFile("unknown", buf);`)) })).toThrow(/unregistered persistence site/);
   });
 
-  it("fingerprints routing changes while accepting comment-only drift", async () => {
+  it("accepts the committed fingerprint", async () => {
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT })).resolves.toBeDefined();
+  });
+
+  it("accepts comment-only drift", async () => {
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, sourceOverrides: overrides(`// comment only\n${source}`) })).resolves.toBeDefined();
-    for (const [before, after] of [
-      ['path.join(engine.hanakoHome, "uploads")', 'path.join(engine.hanakoHome, "other")'],
-      ["shouldCleanOldUploads: false", "shouldCleanOldUploads: true"],
-      ["if (sessionPath) {", "if (!sessionPath) {"],
-      [`if (uploadTarget.storageKind === "managed_cache") {\n          const sessionFilePath = destPath;\n          await fs.copyFile`, `if (uploadTarget.storageKind !== "managed_cache") {\n          const sessionFilePath = destPath;\n          await fs.copyFile`],
-      [`if (uploadTarget.storageKind === "managed_cache") {\n          const sessionFilePath = destPath;\n          await fs.writeFile`, `if (uploadTarget.storageKind !== "managed_cache") {\n          const sessionFilePath = destPath;\n          await fs.writeFile`],
-      [`const sessionFilePath = destPath;\n          await fs.copyFile`, `const sessionFilePath = path.join(uploadsDir, "other");\n          await fs.copyFile`],
-      [`const legacyUploadPath = destPath;\n          await fs.copyFile`, `const legacyUploadPath = path.join(uploadsDir, "other");\n          await fs.copyFile`],
-      [`const sessionFilePath = destPath;\n          await fs.writeFile`, `const sessionFilePath = path.join(uploadsDir, "other");\n          await fs.writeFile`],
-      [`const legacyUploadPath = destPath;\n          await fs.writeFile`, `const legacyUploadPath = path.join(uploadsDir, "other");\n          await fs.writeFile`],
-    ]) {
-      expect(source.split(before)).toHaveLength(2);
-      await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, sourceOverrides: overrides(source.replace(before, after)) })).rejects.toThrow(/fingerprint mismatch/);
-    }
+  });
+
+  it.each([
+    ['path.join(engine.hanakoHome, "uploads")', 'path.join(engine.hanakoHome, "other")'],
+    ["shouldCleanOldUploads: false", "shouldCleanOldUploads: true"],
+    ["if (sessionPath) {", "if (!sessionPath) {"],
+    [`if (uploadTarget.storageKind === "managed_cache") {\n          const sessionFilePath = destPath;\n          await fs.copyFile`, `if (uploadTarget.storageKind !== "managed_cache") {\n          const sessionFilePath = destPath;\n          await fs.copyFile`],
+    [`if (uploadTarget.storageKind === "managed_cache") {\n          const sessionFilePath = destPath;\n          await fs.writeFile`, `if (uploadTarget.storageKind !== "managed_cache") {\n          const sessionFilePath = destPath;\n          await fs.writeFile`],
+    [`const sessionFilePath = destPath;\n          await fs.copyFile`, `const sessionFilePath = path.join(uploadsDir, "other");\n          await fs.copyFile`],
+    [`const legacyUploadPath = destPath;\n          await fs.copyFile`, `const legacyUploadPath = path.join(uploadsDir, "other");\n          await fs.copyFile`],
+    [`const sessionFilePath = destPath;\n          await fs.writeFile`, `const sessionFilePath = path.join(uploadsDir, "other");\n          await fs.writeFile`],
+    [`const legacyUploadPath = destPath;\n          await fs.writeFile`, `const legacyUploadPath = path.join(uploadsDir, "other");\n          await fs.writeFile`],
+  ])("fingerprints routing change: %s", async (before, after) => {
+    expect(source.split(before)).toHaveLength(2);
+    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, sourceOverrides: overrides(source.replace(before, after)) })).rejects.toThrow(/fingerprint mismatch/);
   });
 });
