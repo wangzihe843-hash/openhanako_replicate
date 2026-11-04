@@ -19,7 +19,7 @@ describe("local account persistence ownership", () => {
     const result = scanPersistentStores({ rootDir: ROOT });
     expect(result.inventory).toEqual(inventory);
     expect(result.inventory.discoveredSites).toHaveLength(905);
-    expect(result.inventory.exemptions).toHaveLength(33);
+    expect(result.inventory.exemptions).toHaveLength(32);
     expect(result.inventory.discoveredSites.filter((site: {sourceFile: string}) => site.sourceFile !== MODULE)).toHaveLength(901);
     expect(result.inventory.discoveredSites.filter((site: {sourceFile: string}) => site.sourceFile === MODULE).map((s: {kind: string; storeId: string; exemptionId: string | null; excerpt: string}) => [s.kind, s.storeId, s.exemptionId, s.excerpt])).toEqual([
       ["mkdir", "local-user-auth", null, "fs.mkdirSync(path.dirname(path.join(hanakoHome, LOCAL_USER_AUTH_FILE)), { recursive: true })"],

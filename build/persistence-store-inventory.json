@@ -1035,8 +1035,13 @@
         "post-update announcement",
         "desktop update cache cleanup"
       ],
-      "migrationEntry": [],
-      "protocolModules": [],
+      "migrationEntry": [
+        "desktop/auto-updater.cjs: fixed ~/.hanako-dev/last-update-version migration and empty-source-directory cleanup after native directory identity comparison"
+      ],
+      "protocolModules": [
+        "desktop/auto-updater.cjs",
+        "desktop/src/shared/user-data-identity.cjs"
+      ],
       "firstPossibleOpenPhase": "runtime_ready",
       "firstPossibleWritePhase": "runtime_ready",
       "epochPolicy": "compatible",
@@ -5446,18 +5451,18 @@
       "sourceFile": "desktop/auto-updater.cjs",
       "kind": "remove-path",
       "excerpt": "fs.rmdirSync(wrongDir)",
-      "reason": "Deletes the exact legacy last-update-version source and its now-empty legacy directory outside the active HANA_HOME.",
-      "storeId": null,
-      "exemptionId": "desktop-legacy-update-path-cleanup",
+      "reason": "Removes the fixed legacy update version marker and then its empty source directory after migration or supersession, only outside the canonical active data directory.",
+      "storeId": "desktop-window-version-state",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
       "sourceFile": "desktop/auto-updater.cjs",
       "kind": "remove-path",
       "excerpt": "fs.unlinkSync(wrongFile)",
-      "reason": "Deletes the exact legacy last-update-version source and its now-empty legacy directory outside the active HANA_HOME.",
-      "storeId": null,
-      "exemptionId": "desktop-legacy-update-path-cleanup",
+      "reason": "Removes the fixed legacy update version marker and then its empty source directory after migration or supersession, only outside the canonical active data directory.",
+      "storeId": "desktop-window-version-state",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -11085,17 +11090,6 @@
         "secret-write",
         "persistent-store-constructor"
       ]
-    },
-    {
-      "id": "desktop-legacy-update-path-cleanup",
-      "ownerModule": "desktop/auto-updater.cjs",
-      "sourceFile": "desktop/auto-updater.cjs",
-      "reason": "Deletes the exact legacy last-update-version source and its now-empty legacy directory outside the active HANA_HOME.",
-      "expiresOn": "2026-11-17",
-      "kinds": [
-        "remove-path"
-      ],
-      "linePattern": "(?:wrongFile|wrongDir)"
     },
     {
       "id": "desktop-office-render-output",

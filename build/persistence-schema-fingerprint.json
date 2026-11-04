@@ -154,17 +154,6 @@
       "sourceFile": "desktop/file-text-io.cjs"
     },
     {
-      "expiresOn": "2026-11-17",
-      "id": "desktop-legacy-update-path-cleanup",
-      "kinds": [
-        "remove-path"
-      ],
-      "linePattern": "(?:wrongFile|wrongDir)",
-      "ownerModule": "desktop/auto-updater.cjs",
-      "reason": "Deletes the exact legacy last-update-version source and its now-empty legacy directory outside the active HANA_HOME.",
-      "sourceFile": "desktop/auto-updater.cjs"
-    },
-    {
       "expiresOn": "2027-01-31",
       "id": "desktop-office-render-output",
       "kinds": [
@@ -610,7 +599,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:6e4986b5acd12f93f659714217cf79ed33556397ed2bb0a57c3ebdbfa086231c",
+  "payloadFingerprint": "sha256:fd14e5447b7c68572b5b455d12669fb15cd2b8328eec920d5917891b84d5de9c",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -1583,7 +1572,9 @@
       "format": "mixed-directory",
       "id": "desktop-window-version-state",
       "identityContract": "Each fixed path is shell-local presentation or update metadata, never durable application identity.",
-      "migrationEntry": [],
+      "migrationEntry": [
+        "desktop/auto-updater.cjs: fixed ~/.hanako-dev/last-update-version migration and empty-source-directory cleanup after native directory identity comparison"
+      ],
       "openEntry": [
         "desktop window creation",
         "post-update announcement",
@@ -1601,7 +1592,10 @@
         "last-update-version"
       ],
       "preCoordinatorReadProjection": null,
-      "protocolModules": [],
+      "protocolModules": [
+        "desktop/auto-updater.cjs",
+        "desktop/src/shared/user-data-identity.cjs"
+      ],
       "restorePolicy": "Read through each desktop owner; invalid or absent shell metadata is recreated from safe defaults.",
       "schemaContract": {
         "compatibility": "The named runtime reader is canonical; this inventory does not imply stricter validation than runtime currently performs.",
@@ -3354,8 +3348,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Plugin install staging and extraction cleanup retain their previous order and failure behavior; the installed-plugins protocol now fingerprints its route. No persisted format or epoch changes; see 2026-11-04-plugin-install-staging-ownership review.",
-    "payloadFingerprint": "sha256:6e4986b5acd12f93f659714217cf79ed33556397ed2bb0a57c3ebdbfa086231c"
+    "compatibilityReason": "The fixed legacy updater source now belongs to desktop-window-version-state and its updater/canonical-directory protocol is fingerprinted. Native directory identity prevents alias self-deletion and ambiguous file identities retain the source; ordinary rename/unlink/rmdir order and failure behavior, all stored paths, checkpoint/restore policy and DATA_EPOCH are unchanged. See docs/audits/2026-11-04-desktop-legacy-update-cleanup-ownership.md; prior compatible reviews remain applicable.",
+    "payloadFingerprint": "sha256:fd14e5447b7c68572b5b455d12669fb15cd2b8328eec920d5917891b84d5de9c"
   },
   "schemas": [
     {
@@ -3711,7 +3705,7 @@
       "contract": "update channel record version, device identifier, activation flag, update feed address, activation time, and held invite codes",
       "kind": "runtime-contract",
       "module": "desktop/auto-updater.cjs",
-      "sourceHash": "sha256:02061db2ea18663c89ca0527e6dde36fb4b32f456298dbae863d78f463fe84f4",
+      "sourceHash": "sha256:2707ad973c1ae80b60937c42b630d2bb01941d0a9e008f7234eddb7d47248d8b",
       "storeId": "desktop-update-channel"
     },
     {
@@ -3725,6 +3719,16 @@
       "contract": "desktop window bounds, pet window options, release announcement bookmark, and update cache version marker readers",
       "kind": "directory-contract",
       "module": "desktop/main.cjs",
+      "protocolModules": [
+        {
+          "module": "desktop/auto-updater.cjs",
+          "sourceHash": "sha256:2707ad973c1ae80b60937c42b630d2bb01941d0a9e008f7234eddb7d47248d8b"
+        },
+        {
+          "module": "desktop/src/shared/user-data-identity.cjs",
+          "sourceHash": "sha256:ae2b25f0fd4450c5f99a11b41bc3f8e1647a4f98451bf1464e63ce0146440f12"
+        }
+      ],
       "sourceHash": "sha256:46196c644defa8d9ffb9d775c3e2fc84f490e23730e8334ad93bd8a574e551b9",
       "storeId": "desktop-window-version-state"
     },
@@ -6770,20 +6774,20 @@
       "storeId": null
     },
     {
-      "exemptionId": "desktop-legacy-update-path-cleanup",
+      "exemptionId": null,
       "kind": "remove-path",
       "ordinal": 0,
-      "reason": "Deletes the exact legacy last-update-version source and its now-empty legacy directory outside the active HANA_HOME.",
+      "reason": "Removes the fixed legacy update version marker and then its empty source directory after migration or supersession, only outside the canonical active data directory.",
       "sourceFile": "desktop/auto-updater.cjs",
-      "storeId": null
+      "storeId": "desktop-window-version-state"
     },
     {
-      "exemptionId": "desktop-legacy-update-path-cleanup",
+      "exemptionId": null,
       "kind": "remove-path",
       "ordinal": 0,
-      "reason": "Deletes the exact legacy last-update-version source and its now-empty legacy directory outside the active HANA_HOME.",
+      "reason": "Removes the fixed legacy update version marker and then its empty source directory after migration or supersession, only outside the canonical active data directory.",
       "sourceFile": "desktop/auto-updater.cjs",
-      "storeId": null
+      "storeId": "desktop-window-version-state"
     },
     {
       "exemptionId": null,

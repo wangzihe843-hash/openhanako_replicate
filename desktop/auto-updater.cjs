@@ -13,6 +13,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 
 const updatePolicy = require("../shared/update-policy.cjs");
+const { canonicalizeDesktopHome } = require("./src/shared/user-data-identity.cjs");
 
 const CHECK_INTERVAL = 4 * 60 * 60 * 1000; // 4 小时
 const DIGEST_ASSET_NAME = "release-digest.v1.json";
@@ -491,10 +492,19 @@ async function cleanUpdateCache() {
   // 搬过来后尝试清理孤儿目录
   try {
     const wrongDir = path.join(require("os").homedir(), ".hanako-dev");
-    if (wrongDir !== dataDir) {
+    // Compare native directory identities, including symlink/junction ancestors.
+    // Resolution failures leave the legacy source untouched; do not case-fold.
+    if (canonicalizeDesktopHome(wrongDir, fs) !== canonicalizeDesktopHome(dataDir, fs)) {
       const wrongFile = path.join(wrongDir, "last-update-version");
-      if (fs.existsSync(wrongFile)) {
-        if (!fs.existsSync(versionFile)) {
+      const wrongStat = fs.lstatSync(wrongFile);
+      if (wrongStat.isFile() && wrongStat.nlink === 1) {
+        let versionStat = null;
+        try { versionStat = fs.lstatSync(versionFile); }
+        catch (err) { if (err.code !== "ENOENT") throw err; }
+        // Never replace a special destination or write through its link below.
+        // Its ownership is uncertain, so retain both paths for inspection.
+        if (versionStat && (!versionStat.isFile() || versionStat.nlink !== 1)) return;
+        if (!versionStat) {
           fs.mkdirSync(path.dirname(versionFile), { recursive: true });
           fs.renameSync(wrongFile, versionFile);
         } else {

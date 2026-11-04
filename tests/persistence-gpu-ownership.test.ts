@@ -34,8 +34,8 @@ describe("GPU persistence ownership", () => {
     ]);
     const remaining = actual.exemptions.filter((item: { expiresOn: string }) => item.expiresOn === "2026-11-17");
     const remainingIds = new Set(remaining.map((item: { id: string }) => item.id));
-    expect(remaining).toHaveLength(7);
-    expect(actual.discoveredSites.filter((site: { exemptionId: string | null }) => remainingIds.has(site.exemptionId)).length).toBe(95);
+    expect(remaining).toHaveLength(6);
+    expect(actual.discoveredSites.filter((site: { exemptionId: string | null }) => remainingIds.has(site.exemptionId)).length).toBe(93);
 
     // Reconstruct the previous rules only in memory, then compare every row.
     const previousStores = PERSISTENT_STORES.map((store) => store.id !== OWNER ? store : {

@@ -1327,6 +1327,8 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     ],
     format: "mixed-directory",
     schemaSource: directorySource("desktop/main.cjs", "desktop window bounds, pet window options, release announcement bookmark, and update cache version marker readers"),
+    migrationEntry: ["desktop/auto-updater.cjs: fixed ~/.hanako-dev/last-update-version migration and empty-source-directory cleanup after native directory identity comparison"],
+    protocolModules: ["desktop/auto-updater.cjs", "desktop/src/shared/user-data-identity.cjs"],
     openEntry: ["desktop window creation", "post-update announcement", "desktop update cache cleanup"],
     firstPossibleOpenPhase: "runtime_ready",
     firstPossibleWritePhase: "runtime_ready",
@@ -1339,6 +1341,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
       ...rules(["desktop/main.cjs"], "Writes desktop window bounds or the release-announcement version bookmark.", ["mkdir", "write-file"], "(?:lastSeenVersionPath|windowStatePath|quickChatWindowStatePath)"),
       ...rules(["desktop/main.cjs"], "Atomically writes Windows pet window bounds and options, removing a failed temporary file.", ["mkdir", "write-file", "rename", "remove-path"], "(?:petWindowStatePath|tempPath)"),
       ...rules(["desktop/auto-updater.cjs"], "Migrates or writes the current desktop update-cache version marker.", ["mkdir", "rename", "write-file"], "(?:versionFile|wrongFile, versionFile)"),
+      ...rules(["desktop/auto-updater.cjs"], "Removes the fixed legacy update version marker and then its empty source directory after migration or supersession, only outside the canonical active data directory.", ["remove-path"], "^fs[.](?:unlinkSync\\(wrongFile\\)|rmdirSync\\(wrongDir\\))$"),
     ],
   }),
   defineStore({
@@ -1586,15 +1589,6 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "desktop/file-text-io.cjs",
     "Writes an absolute artifact/editor path explicitly selected by the caller, outside any implied HANA_HOME store.",
     "2027-01-31",
-  ),
-  exemption(
-    "desktop-legacy-update-path-cleanup",
-    "desktop/auto-updater.cjs",
-    "desktop/auto-updater.cjs",
-    "Deletes the exact legacy last-update-version source and its now-empty legacy directory outside the active HANA_HOME.",
-    "2026-11-17",
-    ["remove-path"],
-    "(?:wrongFile|wrongDir)",
   ),
   exemption(
     "desktop-electron-update-cache",

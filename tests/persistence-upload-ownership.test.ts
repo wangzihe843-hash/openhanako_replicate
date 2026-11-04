@@ -25,8 +25,8 @@ describe("upload directory ownership", () => {
     expect(actual.inventory.discoveredSites).toHaveLength(905);
     const other = actual.inventory.discoveredSites.filter((site: { sourceFile: string }) => site.sourceFile !== MODULE);
     expect(other).toHaveLength(898);
-    // Pins exact non-upload rows after the plugin staging ownership review and all registered store path patterns.
-    expect(digest(other)).toBe("4cfa33b35ccf5caf3c6d8b36f02bd57f2b00dd8bc7d537cd1537c550e583bb9f");
+    // Pins exact non-upload rows after the desktop legacy update ownership review and all registered store path patterns.
+    expect(digest(other)).toBe("696461f31d07c15f1e8f2438cdffd170ff8ba8d41ed8520ee607df300a7c2bf1");
     expect(digest(actual.inventory.stores.map((s: { id: string; pathPatterns: string[] }) => [s.id, s.pathPatterns]))).toBe("c01545dd61d741bb1f3ad259081292443f3b673671274d50ad65a59c0cda8f53");
     const sites = actual.inventory.discoveredSites.filter((site: { sourceFile: string }) => site.sourceFile === MODULE);
     expect(sites.map((s: { kind: string; excerpt: string; storeId: string | null; exemptionId: string | null }) => [s.kind, s.excerpt, s.storeId, s.exemptionId])).toEqual([
