@@ -22,6 +22,7 @@ const call = `fs.writeFileSync(\n      prefsPath,\n      JSON.stringify({\n     
 const reason = "Seeds the missing user preferences document on first run.";
 const withoutOwner = PERSISTENT_STORES.map(s => s.id !== OWNER ? s : { ...s, siteRules: s.siteRules.filter(r => r.reason !== reason) });
 const broadExemptions = PERSISTENCE_EXEMPTIONS.map(e => e.id !== EXEMPTION ? e : { ...e, kinds: undefined, linePattern: undefined });
+const priorExemptions = PERSISTENCE_EXEMPTIONS.map(e => e.id !== EXEMPTION ? e : { ...e, linePattern: `(?:${e.linePattern})|(?:^fs\\.writeFileSync\\( prefsPath,)` });
 const overrides = (text: string) => new Map([[MODULE, text]]);
 const tempDirs: string[] = [];
 vi.setConfig({ testTimeout: 30_000 });
@@ -43,7 +44,7 @@ describe("first-run preferences ownership", () => {
     const actual = scanPersistentStores({ rootDir: ROOT });
     expect(actual.inventory).toEqual(inventory);
     expect(actual.startupReceipt).toEqual(receipt);
-    const previous = scanPersistentStores({ rootDir: ROOT, stores: withoutOwner, exemptions: broadExemptions });
+    const previous = scanPersistentStores({ rootDir: ROOT, stores: withoutOwner, exemptions: priorExemptions });
     const changed = previous.inventory.discoveredSites.map((before, i) => ({ before, after: actual.inventory.discoveredSites[i] }))
       .filter(({ before, after }) => JSON.stringify(before) !== JSON.stringify(after));
     expect(changed).toHaveLength(1);
@@ -55,8 +56,8 @@ describe("first-run preferences ownership", () => {
     expect(previous.startupReceipt).toEqual(actual.startupReceipt);
     const exemptions = actual.inventory.exemptions.filter(e => e.expiresOn === "2026-11-17");
     expect(exemptions).toHaveLength(6);
-    expect(actual.inventory.discoveredSites.filter(s => exemptions.some(e => e.id === s.exemptionId))).toHaveLength(92);
-    expect(actual.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(14);
+    expect(actual.inventory.discoveredSites.filter(s => exemptions.some(e => e.id === s.exemptionId))).toHaveLength(91);
+    expect(actual.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(13);
     expect(actual.inventory.exemptions.find(e => e.id === EXEMPTION)?.expiresOn).toBe("2026-11-17");
     expect(() => scanPersistentStores({ rootDir: ROOT, stores: withoutOwner })).toThrow(/unregistered persistence site/);
     expect(() => scanPersistentStores({ rootDir: ROOT, exemptions: broadExemptions })).toThrow(/ambiguous persistence site/);

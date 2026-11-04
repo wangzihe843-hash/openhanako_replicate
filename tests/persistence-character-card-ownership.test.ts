@@ -45,11 +45,11 @@ describe("character-card persistence ownership", () => {
     const remaining = actual.exemptions.filter((e: { expiresOn: string }) => e.expiresOn === "2026-11-17");
     const ids = new Set(remaining.map((e: { id: string }) => e.id));
     expect(remaining).toHaveLength(6);
-    expect(actual.discoveredSites.filter((s: { exemptionId: string | null }) => ids.has(s.exemptionId))).toHaveLength(92);
+    expect(actual.discoveredSites.filter((s: { exemptionId: string | null }) => ids.has(s.exemptionId))).toHaveLength(91);
     expect(remaining.map((e: { id: string }) => [e.id, actual.discoveredSites.filter((s: { exemptionId: string | null }) => s.exemptionId === e.id).length])).toEqual([
       ["compat-directory-seeding", 1], ["conditional-plugin-install-cleanup", 1],
       ["config-scope-migration-helper", 1],
-      ["cross-store-first-run-bootstrap", 14], ["cross-store-legacy-migrations", 70],
+      ["cross-store-first-run-bootstrap", 13], ["cross-store-legacy-migrations", 70],
       ["data-epoch-durable-json-primitive", 5],
     ]);
     const previous = scanPersistentStores({ rootDir: ROOT, stores: previousStores, exemptions: [...PERSISTENCE_EXEMPTIONS, oldExemption] });

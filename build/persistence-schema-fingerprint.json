@@ -53,7 +53,7 @@
         "secret-write",
         "write-file"
       ],
-      "linePattern": "^(?:fs\\.copyFileSync\\(configSrc, cfgDest\\)|fs\\.copyFileSync\\(publicAgentsSrc, path\\.join\\(agentDir, PUBLIC_PERSONA_FILE_NAME\\)\\)|fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"avatars\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|writeSecretFileSync\\(cfgDest, YAML\\.dump\\(raw, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' \\}\\)\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
+      "linePattern": "^(?:fs\\.copyFileSync\\(configSrc, cfgDest\\)|fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"avatars\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|writeSecretFileSync\\(cfgDest, YAML\\.dump\\(raw, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' \\}\\)\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
       "ownerModule": "core/first-run.ts",
       "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
       "sourceFile": "core/first-run.ts"
@@ -594,7 +594,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:0909080127002e9457127ca44ded9e72e2cb1f52e872415108280a98d39163f6",
+  "payloadFingerprint": "sha256:79d3f1983f136b6017af61233672d66a943987f11d11586f3b077915b19f3299",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -874,6 +874,8 @@
         "core/agent.ts",
         "core/persona-source.ts",
         "core/first-run.ts",
+        "server/index.ts",
+        "shared/hana-runtime-paths.cjs",
         "core/agents-md-migration.ts",
         "core/engine.ts",
         "shared/config-schema.ts",
@@ -2526,7 +2528,9 @@
         "server-info.json"
       ],
       "preCoordinatorReadProjection": null,
-      "protocolModules": [],
+      "protocolModules": [
+        "shared/hana-runtime-paths.cjs"
+      ],
       "restorePolicy": "Regenerate after transport binding.",
       "schemaContract": {
         "compatibility": "The named runtime reader is canonical; this inventory does not imply stricter validation than runtime currently performs.",
@@ -3075,7 +3079,8 @@
       },
       "protocolModules": [
         "core/first-run.ts",
-        "server/index.ts"
+        "server/index.ts",
+        "shared/hana-runtime-paths.cjs"
       ],
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
       "schemaContract": {
@@ -3346,8 +3351,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Classifies the existing first-run preferences seed under user-preferences and binds its executable first-run and server call sources; paths, runtime writes, formats, DATA_EPOCH, checkpoint and restore policies remain unchanged. See docs/audits/2026-11-04-first-run-preferences-ownership.md; prior compatible reviews remain applicable.",
-    "payloadFingerprint": "sha256:0909080127002e9457127ca44ded9e72e2cb1f52e872415108280a98d39163f6"
+    "compatibilityReason": "Assign the existing first-run default public persona copy to agent-profile and bind the server home resolver implementation for agent-profile, user-preferences, and server-runtime-info. No runtime behavior, persistence paths, formats, DATA_EPOCH, checkpoint, or restore policies change. See docs/audits/2026-11-04-first-run-public-persona-ownership.md; prior compatible reviews remain applicable.",
+    "payloadFingerprint": "sha256:79d3f1983f136b6017af61233672d66a943987f11d11586f3b077915b19f3299"
   },
   "schemas": [
     {
@@ -3548,8 +3553,16 @@
           "sourceHash": "sha256:65d2a9c931cddced01d501197c4c394dbbde254e1292f64bc33514f5079026ef"
         },
         {
+          "module": "server/index.ts",
+          "sourceHash": "sha256:8f233b38548e5ea62d8599ff632beddcefe4e8e8ca9c880324deb54c932c545c"
+        },
+        {
           "module": "shared/config-schema.ts",
           "sourceHash": "sha256:6320dce8ed7d1fd176c6095439fcdf122a8cc0f3b39002a9d0ae9b2d67a7a880"
+        },
+        {
+          "module": "shared/hana-runtime-paths.cjs",
+          "sourceHash": "sha256:4ad68b9a2f14af0cf4b1c6d8e6c3ffa85e2b57033192c8750d363fc2194c08ab"
         },
         {
           "module": "shared/migrate-config-scope.ts",
@@ -3953,6 +3966,12 @@
       "contract": "server-info writer and desktop bootstrap reader",
       "kind": "runtime-contract",
       "module": "server/index.ts",
+      "protocolModules": [
+        {
+          "module": "shared/hana-runtime-paths.cjs",
+          "sourceHash": "sha256:4ad68b9a2f14af0cf4b1c6d8e6c3ffa85e2b57033192c8750d363fc2194c08ab"
+        }
+      ],
       "sourceHash": "sha256:8f233b38548e5ea62d8599ff632beddcefe4e8e8ca9c880324deb54c932c545c",
       "storeId": "server-runtime-info"
     },
@@ -4177,6 +4196,10 @@
         {
           "module": "server/index.ts",
           "sourceHash": "sha256:8f233b38548e5ea62d8599ff632beddcefe4e8e8ca9c880324deb54c932c545c"
+        },
+        {
+          "module": "shared/hana-runtime-paths.cjs",
+          "sourceHash": "sha256:4ad68b9a2f14af0cf4b1c6d8e6c3ffa85e2b57033192c8750d363fc2194c08ab"
         }
       ],
       "sourceHash": "sha256:77297fa68814896ca9b50d3747c98f5c2f7678424d9232bfdd8aba205d61b442",
@@ -4998,12 +5021,12 @@
       "storeId": null
     },
     {
-      "exemptionId": "cross-store-first-run-bootstrap",
+      "exemptionId": null,
       "kind": "copy-file",
       "ordinal": 0,
-      "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
+      "reason": "Copies the default agent public persona template during first-run seeding or repair.",
       "sourceFile": "core/first-run.ts",
-      "storeId": null
+      "storeId": "agent-profile"
     },
     {
       "exemptionId": "cross-store-first-run-bootstrap",

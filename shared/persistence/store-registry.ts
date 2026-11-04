@@ -229,6 +229,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     pathPatterns: ["server-info.json"],
     format: "json",
     schemaSource: runtimeSource("server/index.ts", "server-info writer and desktop bootstrap reader"),
+    protocolModules: ["shared/hana-runtime-paths.cjs"],
     openEntry: ["server/index.ts bootstrap"],
     firstPossibleOpenPhase: "home_guard",
     firstPossibleWritePhase: "home_guard",
@@ -435,7 +436,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     format: "json",
     schemaSource: runtimeSource("core/preferences-manager.ts", "PreferencesManager defaults, coercion, and _dataVersion migration driver"),
     openEntry: ["new PreferencesManager"],
-    protocolModules: ["core/first-run.ts", "server/index.ts"],
+    protocolModules: ["core/first-run.ts", "server/index.ts", "shared/hana-runtime-paths.cjs"],
     migrationEntry: ["core/preferences-manager.ts unreadable-source preservation", "core/migrations.ts runMigrations"],
     firstPossibleOpenPhase: "desktop_bootstrap",
     firstPossibleWritePhase: "first_run_seed",
@@ -508,7 +509,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     pathKind: "file",
     format: "mixed-directory",
     schemaSource: directorySource("core/agent-manager.ts", "agent config and authored Markdown/image profile protocol"),
-    protocolModules: ["core/agent.ts", "core/persona-source.ts", "core/first-run.ts", "core/agents-md-migration.ts", "core/engine.ts", "shared/config-schema.ts", "shared/migrate-config-scope.ts"],
+    protocolModules: ["core/agent.ts", "core/persona-source.ts", "core/first-run.ts", "server/index.ts", "shared/hana-runtime-paths.cjs", "core/agents-md-migration.ts", "core/engine.ts", "shared/config-schema.ts", "shared/migrate-config-scope.ts"],
     openEntry: ["AgentManager.loadAgents", "new HanaAgent"],
     migrationEntry: ["lib/compat/checks/config-yaml.ts", "core/agents-md-migration.ts"],
     firstPossibleOpenPhase: "first_run_seed",
@@ -516,6 +517,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     identityContract: "agentId owns the profile; each filename has a fixed semantic role.",
     siteRules: [
       ...rules(["core/agent-manager.ts"], "Creates, rolls back, or edits agent profile material; Xingye initialization is owned separately.", ["write-file", "copy-file", "mkdir", "remove-path"], "^(?!.*xingyeDir)"),
+      ...rules(["core/first-run.ts"], "Copies the default agent public persona template during first-run seeding or repair.", ["copy-file"], "^fs\\.copyFileSync\\(publicAgentsSrc, path\\.join\\(agentDir, PUBLIC_PERSONA_FILE_NAME\\)\\)$"),
       // Startup pass that moves each agent's persona file from its former name
       // onto AGENTS.md / AGENTS.public.md. It only ever renames within one
       // agent directory, which is why "rename" is the single kind it may use.
@@ -1676,7 +1678,7 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
     "2026-11-17",
     ["copy-file", "mkdir", "rename", "secret-write", "write-file"],
-    "^(?:fs\\.copyFileSync\\(configSrc, cfgDest\\)|fs\\.copyFileSync\\(publicAgentsSrc, path\\.join\\(agentDir, PUBLIC_PERSONA_FILE_NAME\\)\\)|fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"avatars\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|writeSecretFileSync\\(cfgDest, YAML\\.dump\\(raw, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' \\}\\)\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
+    "^(?:fs\\.copyFileSync\\(configSrc, cfgDest\\)|fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"avatars\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|writeSecretFileSync\\(cfgDest, YAML\\.dump\\(raw, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' \\}\\)\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
   ),
   exemption(
     "cross-store-legacy-migrations",
