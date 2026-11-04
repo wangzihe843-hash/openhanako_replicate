@@ -36,12 +36,12 @@
       "expiresOn": "2026-11-17",
       "id": "conditional-upload-target",
       "kinds": [
-        "mkdir",
         "copy-file",
         "write-file"
       ],
+      "linePattern": "(?:fs[.]copyFile\\(srcPath, destPath\\)|fs[.]writeFile\\(destPath, buf\\))",
       "ownerModule": "server/routes/upload.ts",
-      "reason": "resolveUploadTarget sends the same syntactic write sites to registered session-files storage when sessionPath is present or to the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
+      "reason": "The file copy and blob write target registered session-files storage when sessionPath is present or the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
       "sourceFile": "server/routes/upload.ts"
     },
     {
@@ -622,7 +622,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:2a04f007c9028ca74edffb9de264a3a6b109317893d03053dc1b2731c3e766a5",
+  "payloadFingerprint": "sha256:3ca2591eaca4c30cc33a190c9e860fed7858c1acf263cfda29f136a2711a23f9",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -2623,7 +2623,9 @@
         "session-files/{sessionHash}"
       ],
       "preCoordinatorReadProjection": null,
-      "protocolModules": [],
+      "protocolModules": [
+        "server/routes/upload.ts"
+      ],
       "restorePolicy": "Restore by sessionId ownership and rebuild locators through SessionFileRegistry.",
       "schemaContract": {
         "compatibility": "The named runtime reader is canonical; this inventory does not imply stricter validation than runtime currently performs.",
@@ -3362,8 +3364,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Split the existing identity writer into fixed-target helpers while preserving paths, formats, permissions, ordering and failure behavior; pin the existing shared atomic writer protocol.",
-    "payloadFingerprint": "sha256:2a04f007c9028ca74edffb9de264a3a6b109317893d03053dc1b2731c3e766a5"
+    "compatibilityReason": "Preserve the fixed-target identity writer and shared atomic protocol review; split upload directory creation into fixed session and legacy targets without changing paths, formats, ordering, cleanup, authorization, or failure behavior; see docs/audits/2026-11-04-upload-directory-ownership.md.",
+    "payloadFingerprint": "sha256:3ca2591eaca4c30cc33a190c9e860fed7858c1acf263cfda29f136a2711a23f9"
   },
   "schemas": [
     {
@@ -3810,7 +3812,7 @@
       "contract": "sessionless upload naming and age-based cleanup protocol",
       "kind": "directory-contract",
       "module": "server/routes/upload.ts",
-      "sourceHash": "sha256:af5551e953b3f2d4a78c8ef7810d22e49f6503dc06ad2df7fb2efeac6ce56495",
+      "sourceHash": "sha256:f6e35e8edf9e22ad3babbd8d44d51d1498494b6f064652227ab91a880c7fce8b",
       "storeId": "legacy-upload-cache"
     },
     {
@@ -3967,6 +3969,12 @@
       "contract": "SessionFile payload naming, v1 sidecar, ownership, and 72-hour cold-session cleanup protocol",
       "kind": "directory-contract",
       "module": "lib/session-files/session-file-registry.ts",
+      "protocolModules": [
+        {
+          "module": "server/routes/upload.ts",
+          "sourceHash": "sha256:f6e35e8edf9e22ad3babbd8d44d51d1498494b6f064652227ab91a880c7fce8b"
+        }
+      ],
       "sourceHash": "sha256:b45edf5121b19472b33c7c4a8e73f75d26b574ce09cc8844304a83103f472f5c",
       "storeId": "session-files"
     },
@@ -10753,25 +10761,25 @@
       "exemptionId": "conditional-upload-target",
       "kind": "copy-file",
       "ordinal": 0,
-      "reason": "resolveUploadTarget sends the same syntactic write sites to registered session-files storage when sessionPath is present or to the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
+      "reason": "The file copy and blob write target registered session-files storage when sessionPath is present or the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
       "sourceFile": "server/routes/upload.ts",
       "storeId": null
     },
     {
-      "exemptionId": "conditional-upload-target",
+      "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
-      "reason": "resolveUploadTarget sends the same syntactic write sites to registered session-files storage when sessionPath is present or to the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
+      "reason": "Creates the sessionless legacy upload cache directory.",
       "sourceFile": "server/routes/upload.ts",
-      "storeId": null
+      "storeId": "legacy-upload-cache"
     },
     {
-      "exemptionId": "conditional-upload-target",
+      "exemptionId": null,
       "kind": "mkdir",
-      "ordinal": 1,
-      "reason": "resolveUploadTarget sends the same syntactic write sites to registered session-files storage when sessionPath is present or to the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
+      "ordinal": 0,
+      "reason": "Creates the session-owned upload cache directory.",
       "sourceFile": "server/routes/upload.ts",
-      "storeId": null
+      "storeId": "session-files"
     },
     {
       "exemptionId": null,
@@ -10785,7 +10793,7 @@
       "exemptionId": "conditional-upload-target",
       "kind": "write-file",
       "ordinal": 0,
-      "reason": "resolveUploadTarget sends the same syntactic write sites to registered session-files storage when sessionPath is present or to the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
+      "reason": "The file copy and blob write target registered session-files storage when sessionPath is present or the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
       "sourceFile": "server/routes/upload.ts",
       "storeId": null
     },

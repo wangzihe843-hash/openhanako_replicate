@@ -196,17 +196,21 @@ function normalizeSessionPath(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function resolveUploadTarget(engine, sessionPath) {
+async function resolveUploadTarget(engine, sessionPath) {
   if (sessionPath) {
     const sessionId = engine?.getSessionIdForPath?.(sessionPath) || null;
+    const sessionFilesDir = sessionFilesCacheDir(engine.hanakoHome, { sessionId, sessionPath });
+    await fs.mkdir(sessionFilesDir, { recursive: true });
     return {
-      dir: sessionFilesCacheDir(engine.hanakoHome, { sessionId, sessionPath }),
+      dir: sessionFilesDir,
       storageKind: "managed_cache",
       shouldCleanOldUploads: false,
     };
   }
+  const legacyUploadsDir = path.join(engine.hanakoHome, "uploads");
+  await fs.mkdir(legacyUploadsDir, { recursive: true });
   return {
-    dir: path.join(engine.hanakoHome, "uploads"),
+    dir: legacyUploadsDir,
     storageKind: undefined,
     shouldCleanOldUploads: true,
   };
@@ -273,10 +277,8 @@ export function createUploadRoute(engine) {
       return c.json({ error: t("error.pathsRequired") }, 400);
     }
 
-    const uploadTarget = resolveUploadTarget(engine, sessionPath);
+    const uploadTarget = await resolveUploadTarget(engine, sessionPath);
     const uploadsDir = uploadTarget.dir;
-
-    await fs.mkdir(uploadsDir, { recursive: true });
 
     if (uploadTarget.shouldCleanOldUploads) {
       // 后台清理旧上传（不阻塞当前请求）
@@ -434,9 +436,8 @@ export function createUploadRoute(engine) {
     }
     if (blobs.length === 0) return c.json({ error: t("error.pathsRequired") }, 400);
 
-    const uploadTarget = resolveUploadTarget(engine, sessionPath);
+    const uploadTarget = await resolveUploadTarget(engine, sessionPath);
     const uploadsDir = uploadTarget.dir;
-    await fs.mkdir(uploadsDir, { recursive: true });
     if (uploadTarget.shouldCleanOldUploads) {
       cleanOldUploads(uploadsDir).catch(() => {});
     }

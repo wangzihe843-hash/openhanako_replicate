@@ -45,10 +45,10 @@ describe("character-card persistence ownership", () => {
     const remaining = actual.exemptions.filter((e: { expiresOn: string }) => e.expiresOn === "2026-11-17");
     const ids = new Set(remaining.map((e: { id: string }) => e.id));
     expect(remaining).toHaveLength(8);
-    expect(actual.discoveredSites.filter((s: { exemptionId: string | null }) => ids.has(s.exemptionId))).toHaveLength(100);
+    expect(actual.discoveredSites.filter((s: { exemptionId: string | null }) => ids.has(s.exemptionId))).toHaveLength(98);
     expect(remaining.map((e: { id: string }) => [e.id, actual.discoveredSites.filter((s: { exemptionId: string | null }) => s.exemptionId === e.id).length])).toEqual([
       ["compat-directory-seeding", 1], ["conditional-plugin-install-cleanup", 2],
-      ["conditional-upload-target", 4], ["config-scope-migration-helper", 1],
+      ["conditional-upload-target", 2], ["config-scope-migration-helper", 1],
       ["cross-store-first-run-bootstrap", 15], ["cross-store-legacy-migrations", 70],
       ["data-epoch-durable-json-primitive", 5], ["desktop-legacy-update-path-cleanup", 2],
     ]);

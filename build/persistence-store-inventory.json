@@ -2046,7 +2046,9 @@
       "migrationEntry": [
         "core/migrations.ts SessionFile migrations"
       ],
-      "protocolModules": [],
+      "protocolModules": [
+        "server/routes/upload.ts"
+      ],
       "firstPossibleOpenPhase": "engine_construct",
       "firstPossibleWritePhase": "runtime_ready",
       "epochPolicy": "epoch-managed",
@@ -9924,7 +9926,7 @@
       "sourceFile": "server/routes/upload.ts",
       "kind": "copy-file",
       "excerpt": "fs.copyFile(srcPath, destPath)",
-      "reason": "resolveUploadTarget sends the same syntactic write sites to registered session-files storage when sessionPath is present or to the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
+      "reason": "The file copy and blob write target registered session-files storage when sessionPath is present or the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
       "storeId": null,
       "exemptionId": "conditional-upload-target",
       "ordinal": 0
@@ -9932,20 +9934,20 @@
     {
       "sourceFile": "server/routes/upload.ts",
       "kind": "mkdir",
-      "excerpt": "fs.mkdir(uploadsDir, { recursive: true })",
-      "reason": "resolveUploadTarget sends the same syntactic write sites to registered session-files storage when sessionPath is present or to the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
-      "storeId": null,
-      "exemptionId": "conditional-upload-target",
+      "excerpt": "fs.mkdir(legacyUploadsDir, { recursive: true })",
+      "reason": "Creates the sessionless legacy upload cache directory.",
+      "storeId": "legacy-upload-cache",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
       "sourceFile": "server/routes/upload.ts",
       "kind": "mkdir",
-      "excerpt": "fs.mkdir(uploadsDir, { recursive: true })",
-      "reason": "resolveUploadTarget sends the same syntactic write sites to registered session-files storage when sessionPath is present or to the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
-      "storeId": null,
-      "exemptionId": "conditional-upload-target",
-      "ordinal": 1
+      "excerpt": "fs.mkdir(sessionFilesDir, { recursive: true })",
+      "reason": "Creates the session-owned upload cache directory.",
+      "storeId": "session-files",
+      "exemptionId": null,
+      "ordinal": 0
     },
     {
       "sourceFile": "server/routes/upload.ts",
@@ -9960,7 +9962,7 @@
       "sourceFile": "server/routes/upload.ts",
       "kind": "write-file",
       "excerpt": "fs.writeFile(destPath, buf)",
-      "reason": "resolveUploadTarget sends the same syntactic write sites to registered session-files storage when sessionPath is present or to the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
+      "reason": "The file copy and blob write target registered session-files storage when sessionPath is present or the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
       "storeId": null,
       "exemptionId": "conditional-upload-target",
       "ordinal": 0
@@ -10947,13 +10949,13 @@
       "id": "conditional-upload-target",
       "ownerModule": "server/routes/upload.ts",
       "sourceFile": "server/routes/upload.ts",
-      "reason": "resolveUploadTarget sends the same syntactic write sites to registered session-files storage when sessionPath is present or to the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
+      "reason": "The file copy and blob write target registered session-files storage when sessionPath is present or the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
       "expiresOn": "2026-11-17",
       "kinds": [
-        "mkdir",
         "copy-file",
         "write-file"
-      ]
+      ],
+      "linePattern": "(?:fs[.]copyFile\\(srcPath, destPath\\)|fs[.]writeFile\\(destPath, buf\\))"
     },
     {
       "id": "config-scope-migration-helper",

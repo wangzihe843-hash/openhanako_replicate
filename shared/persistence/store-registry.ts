@@ -728,17 +728,21 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     pathKind: "tree",
     format: "mixed-directory",
     schemaSource: directorySource("lib/session-files/session-file-registry.ts", "SessionFile payload naming, v1 sidecar, ownership, and 72-hour cold-session cleanup protocol"),
+    protocolModules: ["server/routes/upload.ts"],
     openEntry: ["SessionFileRegistry"],
     migrationEntry: ["core/migrations.ts SessionFile migrations"],
     checkpointPolicy: "Checkpoint sidecar and payload bytes together; exclude expired cold-session cache entries.",
     restorePolicy: "Restore by sessionId ownership and rebuild locators through SessionFileRegistry.",
     identityContract: "SessionFile ID and owning sessionId are identities; the hash directory and payload paths are locators.",
-    siteRules: rules([
-      "lib/session-files/bridge-inbound-files.ts",
-      "lib/session-files/browser-screenshot-file.ts",
-      "lib/session-files/session-file-registry.ts",
-      "hub/index.ts",
-    ], "Stages payload bytes or updates SessionFile sidecars under the managed cache."),
+    siteRules: [
+      ...rules(["server/routes/upload.ts"], "Creates the session-owned upload cache directory.", ["mkdir"], "sessionFilesDir"),
+      ...rules([
+        "lib/session-files/bridge-inbound-files.ts",
+        "lib/session-files/browser-screenshot-file.ts",
+        "lib/session-files/session-file-registry.ts",
+        "hub/index.ts",
+      ], "Stages payload bytes or updates SessionFile sidecars under the managed cache."),
+    ],
   }),
   defineStore({
     id: "session-drafts-and-projects",
@@ -1447,7 +1451,10 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     restorePolicy: "Discard and ask the caller to upload again; age cleanup removes stale entries.",
     affectedByEpochMigration: false,
     identityContract: "Generated uploadName is a cache locator, not a durable file or session identity.",
-    siteRules: rules(["server/routes/upload.ts"], "Expires a sessionless legacy upload cache entry.", ["remove-path"], "fullPath"),
+    siteRules: [
+      ...rules(["server/routes/upload.ts"], "Creates the sessionless legacy upload cache directory.", ["mkdir"], "legacyUploadsDir"),
+      ...rules(["server/routes/upload.ts"], "Expires a sessionless legacy upload cache entry.", ["remove-path"], "fullPath"),
+    ],
   }),
   defineStore({
     id: "character-card-staging",
@@ -1679,9 +1686,10 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "conditional-upload-target",
     "server/routes/upload.ts",
     "server/routes/upload.ts",
-    "resolveUploadTarget sends the same syntactic write sites to registered session-files storage when sessionPath is present or to the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
+    "The file copy and blob write target registered session-files storage when sessionPath is present or the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
     "2026-11-17",
-    ["mkdir", "copy-file", "write-file"],
+    ["copy-file", "write-file"],
+    "(?:fs[.]copyFile\\(srcPath, destPath\\)|fs[.]writeFile\\(destPath, buf\\))",
   ),
   exemption(
     "external-desk-workspace-roots",
