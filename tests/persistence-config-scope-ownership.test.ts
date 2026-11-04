@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import ts from "typescript";
@@ -21,6 +22,8 @@ const oldExemption = { id: EXEMPTION, ownerModule: MODULE, sourceFile: MODULE, r
 const oldStores = PERSISTENT_STORES.map((s) => s.id !== OWNER ? s : { ...s, siteRules: s.siteRules.filter((r) => r.reason !== reason), protocolModules: s.protocolModules.filter((p) => ![MODULE, "shared/config-schema.ts", "core/engine.ts"].includes(p)) });
 const oldExemptions = PERSISTENCE_EXEMPTIONS.map((e) => e.id === EXEMPTION ? oldExemption : e);
 const overrides = (s: string) => new Map([[MODULE, s]]);
+const CALLER_PARTITIONS = 8;
+const callerPartition = (file: string) => createHash("sha256").update(file).digest().readUInt32BE(0) % CALLER_PARTITIONS;
 function usesMigration(file: string, text: string): boolean {
   const ast = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
   let found = false;
@@ -76,12 +79,20 @@ describe("config scope migration ownership", () => {
     expect(() => scanPersistentStores({ rootDir: ROOT, exemptions: oldExemptions })).toThrow(/ambiguous persistence site/);
   });
 
-  it("locks the unique production caller and the agent root", () => {
+  it("locks the agent root and recognizes migration callers", () => {
     const engine = fs.readFileSync(path.join(ROOT, "core/engine.ts"), "utf8");
     expect(engine.match(/migrateConfigScope\s*\(/g)).toHaveLength(1);
     expect(engine).toContain('this.agentsDir = path.join(hanakoHome, "agents")');
     expect(engine).toContain('agentsDir: this.agentsDir');
     expect(source).toContain('path.join(agentsDir, entry.name, "config.yaml")');
+    expect(usesMigration("other.ts", 'import { migrateConfigScope as alias } from "./migrate-config-scope.ts"; alias({});')).toBe(true);
+    expect(usesMigration("other.ts", 'import * as scope from "./migrate-config-scope.ts"; scope.migrateConfigScope({});')).toBe(true);
+    expect(usesMigration("other.ts", 'const scope = require("./migrate-config-scope.ts");')).toBe(true);
+    expect(usesMigration("other.ts", 'import { CONFIG_SCOPE_BACKUP_SUFFIX } from "./migrate-config-scope.ts";')).toBe(false);
+  });
+
+  // Re-enumerate the same roots in each partition; every path maps to exactly one test.
+  it.each(Array.from({ length: CALLER_PARTITIONS }, (_, i) => i))("locks the unique production caller in partition %i", (partition) => {
     const files: string[] = [];
     function visit(dir: string) {
       for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
@@ -91,12 +102,8 @@ describe("config scope migration ownership", () => {
       }
     }
     for (const dir of ["server", "core", "hub", "lib", "shared", "plugins", "desktop", "cli"]) visit(dir);
-    const callers = files.filter((f) => f !== MODULE && usesMigration(f, fs.readFileSync(path.join(ROOT, f), "utf8")));
-    expect(callers).toEqual(["core/engine.ts"]);
-    expect(usesMigration("other.ts", 'import { migrateConfigScope as alias } from "./migrate-config-scope.ts"; alias({});')).toBe(true);
-    expect(usesMigration("other.ts", 'import * as scope from "./migrate-config-scope.ts"; scope.migrateConfigScope({});')).toBe(true);
-    expect(usesMigration("other.ts", 'const scope = require("./migrate-config-scope.ts");')).toBe(true);
-    expect(usesMigration("other.ts", 'import { CONFIG_SCOPE_BACKUP_SUFFIX } from "./migrate-config-scope.ts";')).toBe(false);
+    const callers = files.filter((f) => f !== MODULE && callerPartition(f) === partition && usesMigration(f, fs.readFileSync(path.join(ROOT, f), "utf8")));
+    expect(callers).toEqual(callerPartition("core/engine.ts") === partition ? ["core/engine.ts"] : []);
   });
 
   it.each([
