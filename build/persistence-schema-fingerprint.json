@@ -522,18 +522,6 @@
       "sourceFile": "lib/sandbox/win32-exec.ts"
     },
     {
-      "expiresOn": "2026-11-17",
-      "id": "server-identity-atomic-helper",
-      "kinds": [
-        "mkdir",
-        "atomic-write"
-      ],
-      "linePattern": "(?:path[.]dirname\\(filePath\\)|atomicWriteSync\\(filePath)",
-      "ownerModule": "core/server-identity.ts",
-      "reason": "The file-local atomic helper receives paths only from the separately registered server-node and user/studio registry call sites.",
-      "sourceFile": "core/server-identity.ts"
-    },
-    {
       "expiresOn": "2027-01-31",
       "id": "url-provider-download-temp",
       "kinds": [
@@ -634,7 +622,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:4895791c8105884a99c2540fff75feabb75cb5cef001fce66f509fb12ac3b3f3",
+  "payloadFingerprint": "sha256:2a04f007c9028ca74edffb9de264a3a6b109317893d03053dc1b2731c3e766a5",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -2517,7 +2505,9 @@
         "server-node.json"
       ],
       "preCoordinatorReadProjection": null,
-      "protocolModules": [],
+      "protocolModules": [
+        "shared/safe-fs.ts"
+      ],
       "restorePolicy": "Restore before remote transport accepts identity-bound requests.",
       "schemaContract": {
         "compatibility": "The named runtime reader is canonical; this inventory does not imply stricter validation than runtime currently performs.",
@@ -3150,7 +3140,8 @@
       "preCoordinatorReadProjection": null,
       "protocolModules": [
         "core/local-user-account.ts",
-        "shared/secret-fs.ts"
+        "shared/secret-fs.ts",
+        "shared/safe-fs.ts"
       ],
       "restorePolicy": "Restore users/studios before dependent grants or mounts; never project newer studio state back into spaces.json.",
       "schemaContract": {
@@ -3371,8 +3362,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Split the existing account writer into fixed-target helpers without changing file format, paths, permissions, ordering, or failure behavior; correct entry declarations and pin existing shared writer protocol.",
-    "payloadFingerprint": "sha256:4895791c8105884a99c2540fff75feabb75cb5cef001fce66f509fb12ac3b3f3"
+    "compatibilityReason": "Split the existing identity writer into fixed-target helpers while preserving paths, formats, permissions, ordering and failure behavior; pin the existing shared atomic writer protocol.",
+    "payloadFingerprint": "sha256:2a04f007c9028ca74edffb9de264a3a6b109317893d03053dc1b2731c3e766a5"
   },
   "schemas": [
     {
@@ -3949,7 +3940,13 @@
       "contract": "server-node identity parser and ensureLocalIdentityRegistries seed",
       "kind": "runtime-contract",
       "module": "core/server-identity.ts",
-      "sourceHash": "sha256:c2ea6e4fb07c4f7a0a8d3af2252662d9532739e1fbfa2bb72b30b571fc9c15cf",
+      "protocolModules": [
+        {
+          "module": "shared/safe-fs.ts",
+          "sourceHash": "sha256:c801fa7edc43b06a08148be31745744c44e77e16003dc36ee54066aa5b6ab8b5"
+        }
+      ],
+      "sourceHash": "sha256:5a3f53f0bfbfffcbfec45f279cd23566f817f69ec74f8d094a8ba5e650aedb6b",
       "storeId": "server-node-identity"
     },
     {
@@ -4179,11 +4176,15 @@
           "sourceHash": "sha256:6eb6047ccb71d7f82b9cd0b9401034ea4d3e1a54b11da07f39c7156405e333ff"
         },
         {
+          "module": "shared/safe-fs.ts",
+          "sourceHash": "sha256:c801fa7edc43b06a08148be31745744c44e77e16003dc36ee54066aa5b6ab8b5"
+        },
+        {
           "module": "shared/secret-fs.ts",
           "sourceHash": "sha256:23e8eada81dc1c2db780bace27b66e827f09f5e21d5706d282b09735774abdd8"
         }
       ],
-      "sourceHash": "sha256:c2ea6e4fb07c4f7a0a8d3af2252662d9532739e1fbfa2bb72b30b571fc9c15cf",
+      "sourceHash": "sha256:5a3f53f0bfbfffcbfec45f279cd23566f817f69ec74f8d094a8ba5e650aedb6b",
       "storeId": "user-studio-registries"
     },
     {
@@ -6189,14 +6190,6 @@
       "storeId": "security-audit-log"
     },
     {
-      "exemptionId": "server-identity-atomic-helper",
-      "kind": "atomic-write",
-      "ordinal": 0,
-      "reason": "The file-local atomic helper receives paths only from the separately registered server-node and user/studio registry call sites.",
-      "sourceFile": "core/server-identity.ts",
-      "storeId": null
-    },
-    {
       "exemptionId": null,
       "kind": "atomic-write",
       "ordinal": 0,
@@ -6208,7 +6201,7 @@
       "exemptionId": null,
       "kind": "atomic-write",
       "ordinal": 0,
-      "reason": "Seeds user or studio identity registries.",
+      "reason": "Seeds or repairs the user and studio identity registries.",
       "sourceFile": "core/server-identity.ts",
       "storeId": "user-studio-registries"
     },
@@ -6216,33 +6209,33 @@
       "exemptionId": null,
       "kind": "atomic-write",
       "ordinal": 0,
-      "reason": "Seeds user or studio identity registries.",
+      "reason": "Seeds or repairs the user and studio identity registries.",
       "sourceFile": "core/server-identity.ts",
       "storeId": "user-studio-registries"
     },
     {
       "exemptionId": null,
-      "kind": "atomic-write",
-      "ordinal": 1,
-      "reason": "Seeds user or studio identity registries.",
-      "sourceFile": "core/server-identity.ts",
-      "storeId": "user-studio-registries"
-    },
-    {
-      "exemptionId": null,
-      "kind": "atomic-write",
-      "ordinal": 1,
-      "reason": "Seeds user or studio identity registries.",
-      "sourceFile": "core/server-identity.ts",
-      "storeId": "user-studio-registries"
-    },
-    {
-      "exemptionId": "server-identity-atomic-helper",
       "kind": "mkdir",
       "ordinal": 0,
-      "reason": "The file-local atomic helper receives paths only from the separately registered server-node and user/studio registry call sites.",
+      "reason": "Seeds the server-node identity registry.",
       "sourceFile": "core/server-identity.ts",
-      "storeId": null
+      "storeId": "server-node-identity"
+    },
+    {
+      "exemptionId": null,
+      "kind": "mkdir",
+      "ordinal": 0,
+      "reason": "Seeds or repairs the user and studio identity registries.",
+      "sourceFile": "core/server-identity.ts",
+      "storeId": "user-studio-registries"
+    },
+    {
+      "exemptionId": null,
+      "kind": "mkdir",
+      "ordinal": 0,
+      "reason": "Seeds or repairs the user and studio identity registries.",
+      "sourceFile": "core/server-identity.ts",
+      "storeId": "user-studio-registries"
     },
     {
       "exemptionId": null,

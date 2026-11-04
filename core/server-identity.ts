@@ -85,11 +85,11 @@ export function ensureLocalIdentityRegistries(hanakoHome) {
 
   validateIdentityRegistryLinks(users, studios);
 
-  if (!existingServerNode) writeJsonAtomic(serverNodePath, serverNode);
-  if (!existingUsers) writeJsonAtomic(usersPath, users);
-  else if (repairedIdentityLinks.users) writeJsonAtomic(usersPath, users);
-  if (!existingStudios) writeJsonAtomic(studiosPath, studios);
-  else if (repairedIdentityLinks.studios) writeJsonAtomic(studiosPath, studios);
+  if (!existingServerNode) writeServerNode(hanakoHome, serverNode);
+  if (!existingUsers) writeIdentityUsers(hanakoHome, users);
+  else if (repairedIdentityLinks.users) writeIdentityUsers(hanakoHome, users);
+  if (!existingStudios) writeIdentityStudios(hanakoHome, studios);
+  else if (repairedIdentityLinks.studios) writeIdentityStudios(hanakoHome, studios);
 
   const foundationRegistries = ensureRemoteAccessFoundationRegistries(hanakoHome, { now });
 
@@ -184,9 +184,19 @@ function readIdentityJsonIfPresent(filePath, label) {
   }
 }
 
-function writeJsonAtomic(filePath, data) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  atomicWriteSync(filePath, JSON.stringify(data, null, 2) + "\n");
+function writeServerNode(hanakoHome, data) {
+  fs.mkdirSync(path.dirname(path.join(hanakoHome, SERVER_NODE_FILE)), { recursive: true });
+  atomicWriteSync(path.join(hanakoHome, SERVER_NODE_FILE), JSON.stringify(data, null, 2) + "\n");
+}
+
+function writeIdentityUsers(hanakoHome, data) {
+  fs.mkdirSync(path.dirname(path.join(hanakoHome, USERS_FILE)), { recursive: true });
+  atomicWriteSync(path.join(hanakoHome, USERS_FILE), JSON.stringify(data, null, 2) + "\n");
+}
+
+function writeIdentityStudios(hanakoHome, data) {
+  fs.mkdirSync(path.dirname(path.join(hanakoHome, STUDIOS_FILE)), { recursive: true });
+  atomicWriteSync(path.join(hanakoHome, STUDIOS_FILE), JSON.stringify(data, null, 2) + "\n");
 }
 
 function createLocalServerNodeIdentity({ now }) {

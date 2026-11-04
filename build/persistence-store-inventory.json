@@ -1928,7 +1928,9 @@
         "ensureLocalIdentityRegistries"
       ],
       "migrationEntry": [],
-      "protocolModules": [],
+      "protocolModules": [
+        "shared/safe-fs.ts"
+      ],
       "firstPossibleOpenPhase": "identity_seed",
       "firstPossibleWritePhase": "identity_seed",
       "epochPolicy": "epoch-managed",
@@ -2561,7 +2563,8 @@
       ],
       "protocolModules": [
         "core/local-user-account.ts",
-        "shared/secret-fs.ts"
+        "shared/secret-fs.ts",
+        "shared/safe-fs.ts"
       ],
       "firstPossibleOpenPhase": "identity_seed",
       "firstPossibleWritePhase": "identity_seed",
@@ -4790,16 +4793,7 @@
     {
       "sourceFile": "core/server-identity.ts",
       "kind": "atomic-write",
-      "excerpt": "atomicWriteSync(filePath, JSON.stringify(data, null, 2) + \"\\n\")",
-      "reason": "The file-local atomic helper receives paths only from the separately registered server-node and user/studio registry call sites.",
-      "storeId": null,
-      "exemptionId": "server-identity-atomic-helper",
-      "ordinal": 0
-    },
-    {
-      "sourceFile": "core/server-identity.ts",
-      "kind": "atomic-write",
-      "excerpt": "writeJsonAtomic(serverNodePath, serverNode)",
+      "excerpt": "atomicWriteSync(path.join(hanakoHome, SERVER_NODE_FILE), JSON.stringify(data, null, 2) + \"\\n\")",
       "reason": "Seeds the server-node identity registry.",
       "storeId": "server-node-identity",
       "exemptionId": null,
@@ -4808,8 +4802,8 @@
     {
       "sourceFile": "core/server-identity.ts",
       "kind": "atomic-write",
-      "excerpt": "writeJsonAtomic(studiosPath, studios)",
-      "reason": "Seeds user or studio identity registries.",
+      "excerpt": "atomicWriteSync(path.join(hanakoHome, STUDIOS_FILE), JSON.stringify(data, null, 2) + \"\\n\")",
+      "reason": "Seeds or repairs the user and studio identity registries.",
       "storeId": "user-studio-registries",
       "exemptionId": null,
       "ordinal": 0
@@ -4817,37 +4811,37 @@
     {
       "sourceFile": "core/server-identity.ts",
       "kind": "atomic-write",
-      "excerpt": "writeJsonAtomic(studiosPath, studios)",
-      "reason": "Seeds user or studio identity registries.",
-      "storeId": "user-studio-registries",
-      "exemptionId": null,
-      "ordinal": 1
-    },
-    {
-      "sourceFile": "core/server-identity.ts",
-      "kind": "atomic-write",
-      "excerpt": "writeJsonAtomic(usersPath, users)",
-      "reason": "Seeds user or studio identity registries.",
+      "excerpt": "atomicWriteSync(path.join(hanakoHome, USERS_FILE), JSON.stringify(data, null, 2) + \"\\n\")",
+      "reason": "Seeds or repairs the user and studio identity registries.",
       "storeId": "user-studio-registries",
       "exemptionId": null,
       "ordinal": 0
-    },
-    {
-      "sourceFile": "core/server-identity.ts",
-      "kind": "atomic-write",
-      "excerpt": "writeJsonAtomic(usersPath, users)",
-      "reason": "Seeds user or studio identity registries.",
-      "storeId": "user-studio-registries",
-      "exemptionId": null,
-      "ordinal": 1
     },
     {
       "sourceFile": "core/server-identity.ts",
       "kind": "mkdir",
-      "excerpt": "fs.mkdirSync(path.dirname(filePath), { recursive: true })",
-      "reason": "The file-local atomic helper receives paths only from the separately registered server-node and user/studio registry call sites.",
-      "storeId": null,
-      "exemptionId": "server-identity-atomic-helper",
+      "excerpt": "fs.mkdirSync(path.dirname(path.join(hanakoHome, SERVER_NODE_FILE)), { recursive: true })",
+      "reason": "Seeds the server-node identity registry.",
+      "storeId": "server-node-identity",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "core/server-identity.ts",
+      "kind": "mkdir",
+      "excerpt": "fs.mkdirSync(path.dirname(path.join(hanakoHome, STUDIOS_FILE)), { recursive: true })",
+      "reason": "Seeds or repairs the user and studio identity registries.",
+      "storeId": "user-studio-registries",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "core/server-identity.ts",
+      "kind": "mkdir",
+      "excerpt": "fs.mkdirSync(path.dirname(path.join(hanakoHome, USERS_FILE)), { recursive: true })",
+      "reason": "Seeds or repairs the user and studio identity registries.",
+      "storeId": "user-studio-registries",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -11437,18 +11431,6 @@
         "secret-write",
         "persistent-store-constructor"
       ]
-    },
-    {
-      "id": "server-identity-atomic-helper",
-      "ownerModule": "core/server-identity.ts",
-      "sourceFile": "core/server-identity.ts",
-      "reason": "The file-local atomic helper receives paths only from the separately registered server-node and user/studio registry call sites.",
-      "expiresOn": "2026-11-17",
-      "kinds": [
-        "mkdir",
-        "atomic-write"
-      ],
-      "linePattern": "(?:path[.]dirname\\(filePath\\)|atomicWriteSync\\(filePath)"
     },
     {
       "id": "url-provider-download-temp",
