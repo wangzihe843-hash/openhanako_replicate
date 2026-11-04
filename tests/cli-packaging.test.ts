@@ -2,8 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildCliBundle, copyServerBootstrap, writeServerWrapperScripts } from "../scripts/build-server-phases.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -13,6 +14,20 @@ let packageDir: string;
 let packageAlias: string;
 let unrelatedCwd: string;
 let env: NodeJS.ProcessEnv;
+
+async function removeScratch(directory: string) {
+  for (let retries = 0; ; retries++) {
+    try {
+      fs.rmSync(directory, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      // Windows can surface a permission-denied removal as EPERM even when
+      // rmSync's native retry options do not retry the underlying error.
+      if ((error as NodeJS.ErrnoException | null)?.code !== "EPERM" || retries >= 5) throw error;
+      await delay((retries + 1) * 100);
+    }
+  }
+}
 
 beforeAll(() => {
   // Outside the source checkout: neither relative requires nor node_modules
@@ -54,8 +69,66 @@ beforeAll(() => {
   env.HANA_SERVER_ENTRY = path.join(env.HANA_ROOT, "server", "main-full.ts");
 }, 60_000);
 
-afterAll(() => {
-  if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
+afterAll(async () => {
+  if (scratch) await removeScratch(scratch);
+});
+
+describe("packaged CLI scratch cleanup", () => {
+  it("removes a partially deleted directory after transient EPERM failures", async () => {
+    const directory = path.join(scratch, "cleanup fixture");
+    fs.mkdirSync(path.join(directory, "nested"), { recursive: true });
+    const file = path.join(directory, "nested", "file.txt");
+    fs.writeFileSync(file, "fixture");
+    const failure = Object.assign(new Error("transient removal failure"), { code: "EPERM" });
+    const originalRm = fs.rmSync;
+    const rm = vi.spyOn(fs, "rmSync")
+      .mockImplementationOnce(() => {
+        originalRm(file);
+        throw failure;
+      })
+      .mockImplementationOnce(() => {
+        expect(fs.existsSync(file)).toBe(false);
+        expect(fs.existsSync(directory)).toBe(true);
+        throw failure;
+      })
+      .mockImplementation(originalRm);
+    try {
+      await removeScratch(directory);
+      expect(rm).toHaveBeenCalledTimes(3);
+      expect(rm).toHaveBeenCalledWith(directory, { recursive: true, force: true });
+    } finally {
+      rm.mockRestore();
+    }
+
+    expect(fs.lstatSync(directory, { throwIfNoEntry: false })).toBeUndefined();
+  });
+
+  it("propagates persistent EPERM after the bounded retries", async () => {
+    const directory = path.join(scratch, "denied cleanup fixture");
+    fs.mkdirSync(directory);
+    const file = path.join(directory, "file.txt");
+    fs.writeFileSync(file, "fixture");
+    const failure = Object.assign(new Error("persistent removal failure"), { code: "EPERM" });
+    const rm = vi.spyOn(fs, "rmSync").mockImplementation(() => { throw failure; });
+    try {
+      await expect(removeScratch(directory)).rejects.toBe(failure);
+      expect(rm).toHaveBeenCalledTimes(6);
+    } finally {
+      rm.mockRestore();
+    }
+    expect(fs.readFileSync(file, "utf8")).toBe("fixture");
+  });
+
+  it("does not retry other removal failures", async () => {
+    const failure = Object.assign(new Error("non-retryable removal failure"), { code: "EIO" });
+    const rm = vi.spyOn(fs, "rmSync").mockImplementation(() => { throw failure; });
+    try {
+      await expect(removeScratch(path.join(scratch, "io failure"))).rejects.toBe(failure);
+      expect(rm).toHaveBeenCalledOnce();
+    } finally {
+      rm.mockRestore();
+    }
+  });
 });
 
 function runWrapper(args: string[], cwd: string, directory = packageDir) {
