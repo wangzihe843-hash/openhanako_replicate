@@ -65,14 +65,28 @@ describe("first-run public persona ownership", () => {
     expect(dated).toHaveLength(6);
     expect(actual.inventory.discoveredSites.filter(s => dated.some(e => e.id === s.exemptionId))).toHaveLength(91);
     expect(actual.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(13);
+  });
+
+  it("rejects the copy site without an owner or exemption", () => {
     expect(() => scanPersistentStores({ rootDir: ROOT, stores: noOwner })).toThrow(/unregistered persistence site/);
+  });
+
+  it("rejects the copy site with both an owner and exemption", () => {
     expect(() => scanPersistentStores({ rootDir: ROOT, exemptions: priorExemptions })).toThrow(/ambiguous persistence site/);
   });
 
-  it("detects deleted, duplicated and unknown copy targets", () => {
+  it("detects a deleted copy target", () => {
     expect(source.split(call)).toHaveLength(2);
     expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(call, "void 0")) })).toThrow(/dangling/);
+  });
+
+  it("detects a duplicated copy target", () => {
+    expect(source.split(call)).toHaveLength(2);
     expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(call, `${call}; ${call}`)) }).inventory).not.toEqual(inventory);
+  });
+
+  it("detects an unknown copy target", () => {
+    expect(source.split(call)).toHaveLength(2);
     expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(call, `${call}; fs.copyFileSync(publicAgentsSrc, "unknown")`)) })).toThrow(/unregistered persistence site/);
   });
 
