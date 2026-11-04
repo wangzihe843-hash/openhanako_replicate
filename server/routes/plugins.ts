@@ -390,18 +390,21 @@ function getInstallTargetDir(pm: any, desc: any, stagedDir: string, userPluginsD
   return targetDir;
 }
 
+function cleanupPluginInstallDirs(installStagingDir: string, extractDir: string | null) {
+  fs.rmSync(installStagingDir, { recursive: true, force: true });
+  if (extractDir) fs.rmSync(extractDir, { recursive: true, force: true });
+}
+
 async function stagePluginSource({ pm, sourcePath, userPluginsDir }: { pm: any; sourcePath: string; userPluginsDir: string }) {
   const stat = fs.statSync(sourcePath);
-  const cleanupPaths = [];
   fs.mkdirSync(userPluginsDir, { recursive: true });
-  const tmpTarget = fs.mkdtempSync(path.join(userPluginsDir, ".installing-"));
-  cleanupPaths.push(tmpTarget);
+  const installStagingDir = fs.mkdtempSync(path.join(userPluginsDir, ".installing-"));
+  let extractDir: string | null = null;
 
   try {
     let pluginSrc = null;
     if (sourcePath.endsWith(".zip")) {
-      const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-install-"));
-      cleanupPaths.push(extractDir);
+      extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-install-"));
       await extractZip(sourcePath, extractDir);
       const entries = fs.readdirSync(extractDir, { withFileTypes: true });
       pluginSrc = entries.length === 1 && entries[0].isDirectory()
@@ -417,15 +420,13 @@ async function stagePluginSource({ pm, sourcePath, userPluginsDir }: { pm: any; 
     if (formatIssue) {
       throw createPluginRouteError(formatIssue.message, 400, formatIssue.code);
     }
-    fs.cpSync(pluginSrc, tmpTarget, { recursive: true });
-    if (!pm.isValidPluginDir(tmpTarget)) {
+    fs.cpSync(pluginSrc, installStagingDir, { recursive: true });
+    if (!pm.isValidPluginDir(installStagingDir)) {
       throw createPluginRouteError("Not a valid plugin directory", 400, "PLUGIN_INVALID");
     }
-    return { stagedDir: tmpTarget, cleanupPaths };
+    return { stagedDir: installStagingDir, extractDir };
   } catch (err) {
-    for (const cleanupPath of cleanupPaths) {
-      fs.rmSync(cleanupPath, { recursive: true, force: true });
-    }
+    cleanupPluginInstallDirs(installStagingDir, extractDir);
     throw err;
   }
 }
@@ -507,7 +508,7 @@ async function installPluginFromPath({
     storageKind: "install_source",
   } as any);
   const userPluginsDir = pm.getUserPluginsDir();
-  const { stagedDir, cleanupPaths } = await stagePluginSource({ pm, sourcePath, userPluginsDir });
+  const { stagedDir, extractDir } = await stagePluginSource({ pm, sourcePath, userPluginsDir });
   let desc = null;
   let targetDir = null;
   let backup = null;
@@ -557,9 +558,7 @@ async function installPluginFromPath({
       ...(sourceFile ? { sourceFile } : {}),
     };
   } finally {
-    for (const cleanupPath of cleanupPaths) {
-      fs.rmSync(cleanupPath, { recursive: true, force: true });
-    }
+    cleanupPluginInstallDirs(stagedDir, extractDir);
   }
 }
 

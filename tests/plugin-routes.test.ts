@@ -2576,3 +2576,81 @@ describe("plugin route request-level principal and capability context", () => {
     }
   });
 });
+
+describe("plugin install temporary directory ownership", () => {
+  it.each(["success", "extract", "validate", "load", "sync", "staging cleanup", "extract cleanup", "staging cleanup on validation", "extract cleanup on validation"])(
+    "cleans only this request's directories on %s", async (scenario) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-owner-test-"));
+      const plugins = path.join(root, "plugins");
+      const formal = path.join(plugins, "demo");
+      const sibling = path.join(plugins, ".installing-sibling");
+      fs.mkdirSync(formal, { recursive: true });
+      fs.mkdirSync(sibling);
+      fs.writeFileSync(path.join(formal, "manifest.json"), JSON.stringify({ id: "demo", name: "Demo", version: "1.0.0" }));
+      fs.writeFileSync(path.join(formal, "old.txt"), "old");
+      fs.writeFileSync(path.join(sibling, "keep"), "keep");
+      const sourcePath = path.join(root, "source.zip");
+      fs.writeFileSync(sourcePath, scenario === "extract" ? Buffer.from("invalid zip") : makeStoredZip({
+        "demo/manifest.json": JSON.stringify({ id: "demo", name: "Demo", version: "2.0.0" }),
+        "demo/new.txt": "new",
+      }));
+      const adjacentExtract = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-install-neighbor-"));
+      fs.writeFileSync(path.join(adjacentExtract, "keep"), "keep");
+      const created: string[] = [];
+      const removed: string[] = [];
+      const originalMkdtemp = fs.mkdtempSync;
+      const originalRm = fs.rmSync;
+      const mkdirSpy = vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix, options) => {
+        const result = originalMkdtemp(prefix, options) as string;
+        if (String(prefix).includes(".installing-") || String(prefix).includes("plugin-install-")) created.push(result);
+        return result;
+      }) as typeof fs.mkdtempSync);
+      const rmSpy = vi.spyOn(fs, "rmSync").mockImplementation(((target, options) => {
+        const p = String(target);
+        if (created.includes(p)) {
+          removed.push(p);
+          if ((scenario.startsWith("staging cleanup") && p === created[0]) || (scenario.startsWith("extract cleanup") && p === created[1])) throw new Error("cleanup failed");
+        }
+        return originalRm(target, options);
+      }) as typeof fs.rmSync);
+      try {
+        const installPlugin = vi.fn()
+          .mockImplementationOnce(async () => {
+            if (scenario === "load") throw new Error("load failed");
+            return { id: "demo", version: "2.0.0", status: "loaded" };
+          })
+          .mockResolvedValue({ id: "demo", version: "1.0.0", status: "loaded" });
+        const engine = mockEngine({ hanakoHome: root, pm: {
+          getUserPluginsDir: () => plugins,
+          listPlugins: () => [{ id: "demo", version: "1.0.0", pluginDir: formal, source: "community" }],
+          isValidPluginDir: () => scenario !== "validate" && !scenario.endsWith("on validation"),
+          installPlugin,
+        } });
+        if (scenario === "sync") engine.syncPluginExtensions.mockRejectedValueOnce(new Error("sync failed"));
+        const res = await createApp(engine).request("/api/plugins/install", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: sourcePath }),
+        });
+        expect(res.status).toBe(scenario === "success" ? 200 : scenario === "validate" ? 400 : 500);
+        expect(created).toHaveLength(2);
+        expect(removed).toEqual(scenario.startsWith("staging cleanup") ? [created[0]] : created);
+        expect(fs.existsSync(created[0])).toBe(scenario === "staging cleanup on validation");
+        expect(fs.existsSync(created[1])).toBe(scenario.includes("cleanup"));
+        expect(fs.readFileSync(path.join(sibling, "keep"), "utf8")).toBe("keep");
+        expect(fs.readFileSync(path.join(adjacentExtract, "keep"), "utf8")).toBe("keep");
+        if (["extract", "validate", "load", "sync"].includes(scenario) || scenario.endsWith("on validation")) {
+          expect(fs.readFileSync(path.join(formal, "old.txt"), "utf8")).toBe("old");
+          expect(fs.existsSync(path.join(formal, "new.txt"))).toBe(false);
+        } else {
+          expect(fs.readFileSync(path.join(formal, "new.txt"), "utf8")).toBe("new");
+        }
+        if (scenario.includes("cleanup")) expect((await res.json()).error).toBe("cleanup failed");
+      } finally {
+        mkdirSpy.mockRestore();
+        rmSpy.mockRestore();
+        for (const dir of created) originalRm(dir, { recursive: true, force: true });
+        originalRm(root, { recursive: true, force: true });
+        originalRm(adjacentExtract, { recursive: true, force: true });
+      }
+    },
+  );
+});

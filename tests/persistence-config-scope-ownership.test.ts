@@ -66,7 +66,7 @@ describe("config scope migration ownership", () => {
     const remaining = actual.inventory.exemptions.filter((e) => e.expiresOn === "2026-11-17");
     const ids = new Set(remaining.map((e) => e.id));
     expect(remaining).toHaveLength(7);
-    expect(actual.inventory.discoveredSites.filter((s) => ids.has(s.exemptionId))).toHaveLength(96);
+    expect(actual.inventory.discoveredSites.filter((s) => ids.has(s.exemptionId))).toHaveLength(95);
     expect(actual.inventory.discoveredSites.filter((s) => s.exemptionId === EXEMPTION)).toHaveLength(1);
     expect(() => scanPersistentStores({ rootDir: ROOT, stores: oldStores })).toThrow(/unregistered persistence site/);
     expect(() => scanPersistentStores({ rootDir: ROOT, exemptions: oldExemptions })).toThrow(/ambiguous persistence site/);
@@ -114,12 +114,19 @@ describe("config scope migration ownership", () => {
   it("accepts comments and line movement", async () => {
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, committedFingerprint: committed, sourceOverrides: overrides(`// comment\n\n${source}`) })).resolves.toEqual(committed);
   });
-  it("rejects missing, ordinary, duplicate and unregistered writes", () => {
+  it.each(["missing formal", "ordinary formal", "missing backup", "unknown"])("rejects %s write", (kind) => {
     const formal = 'writeSecretFileSync(ac.path, YAML.dump(ac.config, { lineWidth: -1 }))';
     const backup = 'writeSecretFileSync(backupPath, ac.content)';
-    for (const mutation of [source.replace(formal, 'void ac.path'), source.replace(formal, 'fs.writeFileSync(ac.path, YAML.dump(ac.config))'), source.replace(backup, 'void backupPath'), source.replace(formal, `${formal};\n      fs.writeFileSync("unknown", "x")`)]) {
-      expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(mutation) })).toThrow();
-    }
+    const mutations = {
+      "missing formal": source.replace(formal, 'void ac.path'),
+      "ordinary formal": source.replace(formal, 'fs.writeFileSync(ac.path, YAML.dump(ac.config))'),
+      "missing backup": source.replace(backup, 'void backupPath'),
+      "unknown": source.replace(formal, `${formal};\n      fs.writeFileSync("unknown", "x")`),
+    };
+    expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(mutations[kind]) })).toThrow();
+  });
+  it("detects a duplicate formal write", () => {
+    const formal = 'writeSecretFileSync(ac.path, YAML.dump(ac.config, { lineWidth: -1 }))';
     const duplicate = scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(formal, `${formal};\n      ${formal}`)) }).inventory;
     expect(duplicate.discoveredSites).not.toEqual(inventory.discoveredSites);
     expect(duplicate.discoveredSites.filter((s) => s.sourceFile === MODULE && s.storeId === OWNER)).toHaveLength(2);

@@ -1072,11 +1072,12 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     format: "mixed-directory",
     schemaSource: directorySource("core/plugin-manager.ts", "installed manifest, install receipt, backup, and source-package directory protocols"),
     openEntry: ["PluginManager.loadPlugins"],
+    protocolModules: ["server/routes/plugins.ts"],
     migrationEntry: ["plugin installation compatibility checks"],
     identityContract: "pluginId from manifest is identity; versions and directories are locators/generations.",
     siteRules: [
       ...rules(["lib/plugin-install-backups.ts", "lib/plugin-install-records.ts"], "Backs up or records an installed plugin package."),
-      ...rules(["server/routes/plugins.ts"], "Creates, promotes, rolls back, or removes an installed plugin directory.", ["mkdir", "copy-file", "rename", "remove-path"], "(?:userPluginsDir|pluginSrc|stagedDir|targetDir|pluginDir)"),
+      ...rules(["server/routes/plugins.ts"], "Creates, promotes, rolls back, or removes an installed plugin directory.", ["mkdir", "copy-file", "rename", "remove-path"], "(?:userPluginsDir|pluginSrc|stagedDir|targetDir|pluginDir|installStagingDir)"),
     ],
   }),
   defineStore({
@@ -1651,10 +1652,10 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "conditional-plugin-install-cleanup",
     "server/routes/plugins.ts",
     "server/routes/plugins.ts",
-    "One bounded cleanup list contains both HANA_HOME .installing staging and operating-system extraction temp; flow-sensitive attribution must replace this exact conditional site.",
+    "Removes the request-scoped operating-system extraction directory created by mkdtempSync.",
     "2026-11-17",
     ["remove-path"],
-    "cleanupPath",
+    "rmSync\\(extractDir",
   ),
   exemption(
     "in-memory-confirm-registry",

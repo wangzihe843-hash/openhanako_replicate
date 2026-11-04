@@ -27,9 +27,9 @@
       "kinds": [
         "remove-path"
       ],
-      "linePattern": "cleanupPath",
+      "linePattern": "rmSync\\(extractDir",
       "ownerModule": "server/routes/plugins.ts",
-      "reason": "One bounded cleanup list contains both HANA_HOME .installing staging and operating-system extraction temp; flow-sensitive attribution must replace this exact conditional site.",
+      "reason": "Removes the request-scoped operating-system extraction directory created by mkdtempSync.",
       "sourceFile": "server/routes/plugins.ts"
     },
     {
@@ -610,7 +610,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:510044d175965c5d01c6aee18e68cb524d39987b02d1bd0caee3ea016f0c541d",
+  "payloadFingerprint": "sha256:6e4986b5acd12f93f659714217cf79ed33556397ed2bb0a57c3ebdbfa086231c",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -1756,7 +1756,9 @@
         "plugin-marketplace/marketplace.json"
       ],
       "preCoordinatorReadProjection": null,
-      "protocolModules": [],
+      "protocolModules": [
+        "server/routes/plugins.ts"
+      ],
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
       "schemaContract": {
         "compatibility": "The named runtime reader is canonical; this inventory does not imply stricter validation than runtime currently performs.",
@@ -3352,8 +3354,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Split the existing upload copy and blob writes by the already resolved managed cache target, preserving paths, bytes, registration, cleanup and recovery behavior; this changes site attribution only.",
-    "payloadFingerprint": "sha256:510044d175965c5d01c6aee18e68cb524d39987b02d1bd0caee3ea016f0c541d"
+    "compatibilityReason": "Plugin install staging and extraction cleanup retain their previous order and failure behavior; the installed-plugins protocol now fingerprints its route. No persisted format or epoch changes; see 2026-11-04-plugin-install-staging-ownership review.",
+    "payloadFingerprint": "sha256:6e4986b5acd12f93f659714217cf79ed33556397ed2bb0a57c3ebdbfa086231c"
   },
   "schemas": [
     {
@@ -3786,6 +3788,12 @@
       "contract": "installed manifest, install receipt, backup, and source-package directory protocols",
       "kind": "directory-contract",
       "module": "core/plugin-manager.ts",
+      "protocolModules": [
+        {
+          "module": "server/routes/plugins.ts",
+          "sourceHash": "sha256:3081074eefda41e6089fc7380d7c8da979fe4127d923db6c9051f1c70a6be093"
+        }
+      ],
       "sourceHash": "sha256:9fd5aa86de24d42745cfffa6db2ccf3acfbd1f8be10a09527e3edf6f7c69b12d",
       "storeId": "installed-plugins"
     },
@@ -3868,7 +3876,7 @@
       "contract": "verified plugin release ZIP naming by pluginId/version and expected sha256",
       "kind": "directory-contract",
       "module": "server/routes/plugins.ts",
-      "sourceHash": "sha256:be11f033d0b88f0c528cf84e27f875106dfa7ff615bfe5bcfe3c10d3fd895258",
+      "sourceHash": "sha256:3081074eefda41e6089fc7380d7c8da979fe4127d923db6c9051f1c70a6be093",
       "storeId": "plugin-download-cache"
     },
     {
@@ -10573,7 +10581,7 @@
       "exemptionId": "conditional-plugin-install-cleanup",
       "kind": "remove-path",
       "ordinal": 0,
-      "reason": "One bounded cleanup list contains both HANA_HOME .installing staging and operating-system extraction temp; flow-sensitive attribution must replace this exact conditional site.",
+      "reason": "Removes the request-scoped operating-system extraction directory created by mkdtempSync.",
       "sourceFile": "server/routes/plugins.ts",
       "storeId": null
     },
@@ -10594,12 +10602,12 @@
       "storeId": "installed-plugins"
     },
     {
-      "exemptionId": "conditional-plugin-install-cleanup",
+      "exemptionId": null,
       "kind": "remove-path",
-      "ordinal": 1,
-      "reason": "One bounded cleanup list contains both HANA_HOME .installing staging and operating-system extraction temp; flow-sensitive attribution must replace this exact conditional site.",
+      "ordinal": 0,
+      "reason": "Creates, promotes, rolls back, or removes an installed plugin directory.",
       "sourceFile": "server/routes/plugins.ts",
-      "storeId": null
+      "storeId": "installed-plugins"
     },
     {
       "exemptionId": null,

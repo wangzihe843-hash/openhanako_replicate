@@ -1191,7 +1191,9 @@
       "migrationEntry": [
         "plugin installation compatibility checks"
       ],
-      "protocolModules": [],
+      "protocolModules": [
+        "server/routes/plugins.ts"
+      ],
       "firstPossibleOpenPhase": "engine_construct",
       "firstPossibleWritePhase": "runtime_ready",
       "epochPolicy": "epoch-managed",
@@ -9700,7 +9702,7 @@
     {
       "sourceFile": "server/routes/plugins.ts",
       "kind": "copy-file",
-      "excerpt": "fs.cpSync(pluginSrc, tmpTarget, { recursive: true })",
+      "excerpt": "fs.cpSync(pluginSrc, installStagingDir, { recursive: true })",
       "reason": "Creates, promotes, rolls back, or removes an installed plugin directory.",
       "storeId": "installed-plugins",
       "exemptionId": null,
@@ -9727,8 +9729,8 @@
     {
       "sourceFile": "server/routes/plugins.ts",
       "kind": "remove-path",
-      "excerpt": "fs.rmSync(cleanupPath, { recursive: true, force: true })",
-      "reason": "One bounded cleanup list contains both HANA_HOME .installing staging and operating-system extraction temp; flow-sensitive attribution must replace this exact conditional site.",
+      "excerpt": "fs.rmSync(extractDir, { recursive: true, force: true })",
+      "reason": "Removes the request-scoped operating-system extraction directory created by mkdtempSync.",
       "storeId": null,
       "exemptionId": "conditional-plugin-install-cleanup",
       "ordinal": 0
@@ -9736,11 +9738,11 @@
     {
       "sourceFile": "server/routes/plugins.ts",
       "kind": "remove-path",
-      "excerpt": "fs.rmSync(cleanupPath, { recursive: true, force: true })",
-      "reason": "One bounded cleanup list contains both HANA_HOME .installing staging and operating-system extraction temp; flow-sensitive attribution must replace this exact conditional site.",
-      "storeId": null,
-      "exemptionId": "conditional-plugin-install-cleanup",
-      "ordinal": 1
+      "excerpt": "fs.rmSync(installStagingDir, { recursive: true, force: true })",
+      "reason": "Creates, promotes, rolls back, or removes an installed plugin directory.",
+      "storeId": "installed-plugins",
+      "exemptionId": null,
+      "ordinal": 0
     },
     {
       "sourceFile": "server/routes/plugins.ts",
@@ -10956,12 +10958,12 @@
       "id": "conditional-plugin-install-cleanup",
       "ownerModule": "server/routes/plugins.ts",
       "sourceFile": "server/routes/plugins.ts",
-      "reason": "One bounded cleanup list contains both HANA_HOME .installing staging and operating-system extraction temp; flow-sensitive attribution must replace this exact conditional site.",
+      "reason": "Removes the request-scoped operating-system extraction directory created by mkdtempSync.",
       "expiresOn": "2026-11-17",
       "kinds": [
         "remove-path"
       ],
-      "linePattern": "cleanupPath"
+      "linePattern": "rmSync\\(extractDir"
     },
     {
       "id": "config-scope-migration-helper",
