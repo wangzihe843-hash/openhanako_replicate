@@ -62,8 +62,10 @@ describe("desktop legacy update cleanup ownership", () => {
   it.each(statements)("rejects unknown target for %s", statement => {
     expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(statement, statement.replace(/wrongFile|wrongDir/, '"unknown"'))) })).toThrow(/unregistered persistence site/);
   });
-  it("accepts the committed fingerprint and comment-only drift", async () => {
+  it("accepts the committed fingerprint", async () => {
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT })).resolves.toBeDefined();
+  });
+  it("accepts comment-only drift", async () => {
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, sourceOverrides: overrides(`// comment\n${source}`) })).resolves.toBeDefined();
   });
   it.each([
