@@ -34,18 +34,6 @@
     },
     {
       "expiresOn": "2026-11-17",
-      "id": "conditional-upload-target",
-      "kinds": [
-        "copy-file",
-        "write-file"
-      ],
-      "linePattern": "(?:fs[.]copyFile\\(srcPath, destPath\\)|fs[.]writeFile\\(destPath, buf\\))",
-      "ownerModule": "server/routes/upload.ts",
-      "reason": "The file copy and blob write target registered session-files storage when sessionPath is present or the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
-      "sourceFile": "server/routes/upload.ts"
-    },
-    {
-      "expiresOn": "2026-11-17",
       "id": "config-scope-migration-helper",
       "kinds": [
         "secret-write"
@@ -622,7 +610,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:3ca2591eaca4c30cc33a190c9e860fed7858c1acf263cfda29f136a2711a23f9",
+  "payloadFingerprint": "sha256:510044d175965c5d01c6aee18e68cb524d39987b02d1bd0caee3ea016f0c541d",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3364,8 +3352,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Preserve the fixed-target identity writer and shared atomic protocol review; split upload directory creation into fixed session and legacy targets without changing paths, formats, ordering, cleanup, authorization, or failure behavior; see docs/audits/2026-11-04-upload-directory-ownership.md.",
-    "payloadFingerprint": "sha256:3ca2591eaca4c30cc33a190c9e860fed7858c1acf263cfda29f136a2711a23f9"
+    "compatibilityReason": "Split the existing upload copy and blob writes by the already resolved managed cache target, preserving paths, bytes, registration, cleanup and recovery behavior; this changes site attribution only.",
+    "payloadFingerprint": "sha256:510044d175965c5d01c6aee18e68cb524d39987b02d1bd0caee3ea016f0c541d"
   },
   "schemas": [
     {
@@ -3812,7 +3800,7 @@
       "contract": "sessionless upload naming and age-based cleanup protocol",
       "kind": "directory-contract",
       "module": "server/routes/upload.ts",
-      "sourceHash": "sha256:f6e35e8edf9e22ad3babbd8d44d51d1498494b6f064652227ab91a880c7fce8b",
+      "sourceHash": "sha256:c5741ddffe6a0b5c3ff923a42f411f736572902e9a8d13e86c16cfda9fc6ad9f",
       "storeId": "legacy-upload-cache"
     },
     {
@@ -3972,7 +3960,7 @@
       "protocolModules": [
         {
           "module": "server/routes/upload.ts",
-          "sourceHash": "sha256:f6e35e8edf9e22ad3babbd8d44d51d1498494b6f064652227ab91a880c7fce8b"
+          "sourceHash": "sha256:c5741ddffe6a0b5c3ff923a42f411f736572902e9a8d13e86c16cfda9fc6ad9f"
         }
       ],
       "sourceHash": "sha256:b45edf5121b19472b33c7c4a8e73f75d26b574ce09cc8844304a83103f472f5c",
@@ -10758,12 +10746,20 @@
       "storeId": "skill-state"
     },
     {
-      "exemptionId": "conditional-upload-target",
+      "exemptionId": null,
       "kind": "copy-file",
       "ordinal": 0,
-      "reason": "The file copy and blob write target registered session-files storage when sessionPath is present or the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
+      "reason": "Copies a file into the sessionless upload cache.",
       "sourceFile": "server/routes/upload.ts",
-      "storeId": null
+      "storeId": "legacy-upload-cache"
+    },
+    {
+      "exemptionId": null,
+      "kind": "copy-file",
+      "ordinal": 0,
+      "reason": "Copies a file into the session-owned upload cache.",
+      "sourceFile": "server/routes/upload.ts",
+      "storeId": "session-files"
     },
     {
       "exemptionId": null,
@@ -10790,12 +10786,20 @@
       "storeId": "legacy-upload-cache"
     },
     {
-      "exemptionId": "conditional-upload-target",
+      "exemptionId": null,
       "kind": "write-file",
       "ordinal": 0,
-      "reason": "The file copy and blob write target registered session-files storage when sessionPath is present or the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
+      "reason": "Writes a blob into the sessionless upload cache.",
       "sourceFile": "server/routes/upload.ts",
-      "storeId": null
+      "storeId": "legacy-upload-cache"
+    },
+    {
+      "exemptionId": null,
+      "kind": "write-file",
+      "ordinal": 0,
+      "reason": "Writes a blob into the session-owned upload cache.",
+      "sourceFile": "server/routes/upload.ts",
+      "storeId": "session-files"
     },
     {
       "exemptionId": null,

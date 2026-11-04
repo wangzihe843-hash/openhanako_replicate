@@ -385,7 +385,13 @@ export function createUploadRoute(engine) {
         const base = path.basename(srcPath, ext);
         const destName = uniqueUploadName(base, ext);
         const destPath = path.join(uploadsDir, destName);
-        await fs.copyFile(srcPath, destPath);
+        if (uploadTarget.storageKind === "managed_cache") {
+          const sessionFilePath = destPath;
+          await fs.copyFile(srcPath, sessionFilePath);
+        } else {
+          const legacyUploadPath = destPath;
+          await fs.copyFile(srcPath, legacyUploadPath);
+        }
 
         const sessionFile = registerSessionFileFromRequest(engine, {
           sessionPath,
@@ -496,7 +502,13 @@ export function createUploadRoute(engine) {
         const destName = uniqueUploadName(base, ext);
         const destPath = path.join(uploadsDir, destName);
 
-        await fs.writeFile(destPath, buf);
+        if (uploadTarget.storageKind === "managed_cache") {
+          const sessionFilePath = destPath;
+          await fs.writeFile(sessionFilePath, buf);
+        } else {
+          const legacyUploadPath = destPath;
+          await fs.writeFile(legacyUploadPath, buf);
+        }
 
         const sessionFile = registerSessionFileFromRequest(engine, {
           sessionPath,

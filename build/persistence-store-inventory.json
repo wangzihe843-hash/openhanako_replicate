@@ -9925,10 +9925,19 @@
     {
       "sourceFile": "server/routes/upload.ts",
       "kind": "copy-file",
-      "excerpt": "fs.copyFile(srcPath, destPath)",
-      "reason": "The file copy and blob write target registered session-files storage when sessionPath is present or the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
-      "storeId": null,
-      "exemptionId": "conditional-upload-target",
+      "excerpt": "fs.copyFile(srcPath, legacyUploadPath)",
+      "reason": "Copies a file into the sessionless upload cache.",
+      "storeId": "legacy-upload-cache",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "server/routes/upload.ts",
+      "kind": "copy-file",
+      "excerpt": "fs.copyFile(srcPath, sessionFilePath)",
+      "reason": "Copies a file into the session-owned upload cache.",
+      "storeId": "session-files",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -9961,10 +9970,19 @@
     {
       "sourceFile": "server/routes/upload.ts",
       "kind": "write-file",
-      "excerpt": "fs.writeFile(destPath, buf)",
-      "reason": "The file copy and blob write target registered session-files storage when sessionPath is present or the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
-      "storeId": null,
-      "exemptionId": "conditional-upload-target",
+      "excerpt": "fs.writeFile(legacyUploadPath, buf)",
+      "reason": "Writes a blob into the sessionless upload cache.",
+      "storeId": "legacy-upload-cache",
+      "exemptionId": null,
+      "ordinal": 0
+    },
+    {
+      "sourceFile": "server/routes/upload.ts",
+      "kind": "write-file",
+      "excerpt": "fs.writeFile(sessionFilePath, buf)",
+      "reason": "Writes a blob into the session-owned upload cache.",
+      "storeId": "session-files",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -10944,18 +10962,6 @@
         "remove-path"
       ],
       "linePattern": "cleanupPath"
-    },
-    {
-      "id": "conditional-upload-target",
-      "ownerModule": "server/routes/upload.ts",
-      "sourceFile": "server/routes/upload.ts",
-      "reason": "The file copy and blob write target registered session-files storage when sessionPath is present or the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
-      "expiresOn": "2026-11-17",
-      "kinds": [
-        "copy-file",
-        "write-file"
-      ],
-      "linePattern": "(?:fs[.]copyFile\\(srcPath, destPath\\)|fs[.]writeFile\\(destPath, buf\\))"
     },
     {
       "id": "config-scope-migration-helper",

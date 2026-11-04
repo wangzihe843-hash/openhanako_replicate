@@ -23,7 +23,7 @@ describe("GPU persistence ownership", () => {
     const { inventory: actual } = scanPersistentStores({ rootDir: ROOT });
     expect(actual).toEqual(inventory);
     expect(actual.stores).toHaveLength(65);
-    expect(actual.discoveredSites).toHaveLength(903);
+    expect(actual.discoveredSites).toHaveLength(905);
     expect(actual.exemptions.some((item: { id: string }) => item.id === retired)).toBe(false);
     const targets = actual.discoveredSites.filter((site: { sourceFile: string; storeId: string; kind: string }) =>
       site.sourceFile === GPU && site.storeId === OWNER && ["mkdir", "write-file", "rename"].includes(site.kind));
@@ -34,8 +34,8 @@ describe("GPU persistence ownership", () => {
     ]);
     const remaining = actual.exemptions.filter((item: { expiresOn: string }) => item.expiresOn === "2026-11-17");
     const remainingIds = new Set(remaining.map((item: { id: string }) => item.id));
-    expect(remaining).toHaveLength(8);
-    expect(actual.discoveredSites.filter((site: { exemptionId: string | null }) => remainingIds.has(site.exemptionId)).length).toBe(98);
+    expect(remaining).toHaveLength(7);
+    expect(actual.discoveredSites.filter((site: { exemptionId: string | null }) => remainingIds.has(site.exemptionId)).length).toBe(96);
 
     // Reconstruct the previous rules only in memory, then compare every row.
     const previousStores = PERSISTENT_STORES.map((store) => store.id !== OWNER ? store : {

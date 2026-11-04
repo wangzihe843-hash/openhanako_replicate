@@ -19,8 +19,8 @@ describe("identity persistence ownership", () => {
     const result = scanPersistentStores({ rootDir: ROOT });
     expect(result.inventory).toEqual(inventory);
     expect(result.startupReceipt).toEqual(JSON.parse(fs.readFileSync(path.join(ROOT, "build/persistence-startup-receipt.json"), "utf8")));
-    expect(result.inventory.discoveredSites).toHaveLength(903);
-    expect(result.inventory.discoveredSites.filter((site: {sourceFile: string}) => site.sourceFile !== MODULE)).toHaveLength(897);
+    expect(result.inventory.discoveredSites).toHaveLength(905);
+    expect(result.inventory.discoveredSites.filter((site: {sourceFile: string}) => site.sourceFile !== MODULE)).toHaveLength(899);
     const sites = result.inventory.discoveredSites.filter((site: {sourceFile: string}) => site.sourceFile === MODULE);
     expect(sites.map((site: {kind: string; storeId: string; exemptionId: string | null; excerpt: string}) => [site.kind, site.storeId, site.exemptionId, site.excerpt])).toEqual([
       ["atomic-write", "server-node-identity", null, 'atomicWriteSync(path.join(hanakoHome, SERVER_NODE_FILE), JSON.stringify(data, null, 2) + "\\n")'],

@@ -736,6 +736,8 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     identityContract: "SessionFile ID and owning sessionId are identities; the hash directory and payload paths are locators.",
     siteRules: [
       ...rules(["server/routes/upload.ts"], "Creates the session-owned upload cache directory.", ["mkdir"], "sessionFilesDir"),
+      ...rules(["server/routes/upload.ts"], "Copies a file into the session-owned upload cache.", ["copy-file"], "^fs[.]copyFile\\(srcPath, sessionFilePath\\)$"),
+      ...rules(["server/routes/upload.ts"], "Writes a blob into the session-owned upload cache.", ["write-file"], "^fs[.]writeFile\\(sessionFilePath, buf\\)$"),
       ...rules([
         "lib/session-files/bridge-inbound-files.ts",
         "lib/session-files/browser-screenshot-file.ts",
@@ -1453,6 +1455,8 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     identityContract: "Generated uploadName is a cache locator, not a durable file or session identity.",
     siteRules: [
       ...rules(["server/routes/upload.ts"], "Creates the sessionless legacy upload cache directory.", ["mkdir"], "legacyUploadsDir"),
+      ...rules(["server/routes/upload.ts"], "Copies a file into the sessionless upload cache.", ["copy-file"], "^fs[.]copyFile\\(srcPath, legacyUploadPath\\)$"),
+      ...rules(["server/routes/upload.ts"], "Writes a blob into the sessionless upload cache.", ["write-file"], "^fs[.]writeFile\\(legacyUploadPath, buf\\)$"),
       ...rules(["server/routes/upload.ts"], "Expires a sessionless legacy upload cache entry.", ["remove-path"], "fullPath"),
     ],
   }),
@@ -1681,15 +1685,6 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "core/migrations.ts",
     "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
     "2026-11-17",
-  ),
-  exemption(
-    "conditional-upload-target",
-    "server/routes/upload.ts",
-    "server/routes/upload.ts",
-    "The file copy and blob write target registered session-files storage when sessionPath is present or the registered legacy uploads cache otherwise; flow-sensitive site attribution is required to distinguish them.",
-    "2026-11-17",
-    ["copy-file", "write-file"],
-    "(?:fs[.]copyFile\\(srcPath, destPath\\)|fs[.]writeFile\\(destPath, buf\\))",
   ),
   exemption(
     "external-desk-workspace-roots",

@@ -17,12 +17,12 @@ const overrides = (value: string) => new Map([[MODULE, value]]);
 vi.setConfig({ testTimeout: 30_000 });
 
 describe("upload directory ownership", () => {
-  it("pins the two owners, remaining narrow exception, other 898 sites, paths and startup receipt", () => {
+  it("pins the seven upload sites, other 898 sites, paths and startup receipt", () => {
     const actual = scanPersistentStores({ rootDir: ROOT });
     expect(actual.inventory).toEqual(inventory);
     expect(actual.startupReceipt).toEqual(receipt);
     expect(actual.inventory.stores).toHaveLength(65);
-    expect(actual.inventory.discoveredSites).toHaveLength(903);
+    expect(actual.inventory.discoveredSites).toHaveLength(905);
     const other = actual.inventory.discoveredSites.filter((site: { sourceFile: string }) => site.sourceFile !== MODULE);
     expect(other).toHaveLength(898);
     // Baseline 858ef1c8: exact JSON rows and all registered store path patterns.
@@ -30,35 +30,39 @@ describe("upload directory ownership", () => {
     expect(digest(actual.inventory.stores.map((s: { id: string; pathPatterns: string[] }) => [s.id, s.pathPatterns]))).toBe("c01545dd61d741bb1f3ad259081292443f3b673671274d50ad65a59c0cda8f53");
     const sites = actual.inventory.discoveredSites.filter((site: { sourceFile: string }) => site.sourceFile === MODULE);
     expect(sites.map((s: { kind: string; excerpt: string; storeId: string | null; exemptionId: string | null }) => [s.kind, s.excerpt, s.storeId, s.exemptionId])).toEqual([
-      ["copy-file", "fs.copyFile(srcPath, destPath)", null, "conditional-upload-target"],
+      ["copy-file", "fs.copyFile(srcPath, legacyUploadPath)", "legacy-upload-cache", null],
+      ["copy-file", "fs.copyFile(srcPath, sessionFilePath)", "session-files", null],
       ["mkdir", "fs.mkdir(legacyUploadsDir, { recursive: true })", "legacy-upload-cache", null],
       ["mkdir", "fs.mkdir(sessionFilesDir, { recursive: true })", "session-files", null],
       ["remove-path", "fs.rm(fullPath, { recursive: true, force: true })", "legacy-upload-cache", null],
-      ["write-file", "fs.writeFile(destPath, buf)", null, "conditional-upload-target"],
+      ["write-file", "fs.writeFile(legacyUploadPath, buf)", "legacy-upload-cache", null],
+      ["write-file", "fs.writeFile(sessionFilePath, buf)", "session-files", null],
     ]);
-    const exception = PERSISTENCE_EXEMPTIONS.find((e) => e.id === "conditional-upload-target");
-    expect(exception?.expiresOn).toBe("2026-11-17");
-    expect(exception?.kinds).toEqual(["copy-file", "write-file"]);
+    expect(PERSISTENCE_EXEMPTIONS.some((e) => e.id === "conditional-upload-target")).toBe(false);
     expect(PERSISTENT_STORES.find((s) => s.id === "session-files")?.protocolModules).toContain(MODULE);
   });
 
   it("rejects missing owner, overlapping exemption, missing mkdir and unknown writes", () => {
     const noOwner = PERSISTENT_STORES.map((s) => s.id !== "session-files" ? s : { ...s, siteRules: s.siteRules.filter((r) => r.linePattern !== "sessionFilesDir") });
     expect(() => scanPersistentStores({ rootDir: ROOT, stores: noOwner })).toThrow(/unregistered persistence site/);
-    const wide = PERSISTENCE_EXEMPTIONS.map((e) => e.id !== "conditional-upload-target" ? e : { ...e, kinds: ["mkdir", "copy-file", "write-file"], linePattern: undefined });
+    const wide = [...PERSISTENCE_EXEMPTIONS, { id: "test-upload-overlap", ownerModule: MODULE, sourceFile: MODULE, reason: "Test-only overlapping exemption.", expiresOn: "2027-01-31", kinds: ["mkdir"], linePattern: "sessionFilesDir" }];
     expect(() => scanPersistentStores({ rootDir: ROOT, exemptions: wide })).toThrow(/ambiguous persistence site/);
     for (const dir of ["sessionFilesDir", "legacyUploadsDir"]) {
       const statement = `await fs.mkdir(${dir}, { recursive: true });`;
       expect(source.split(statement)).toHaveLength(2);
       expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(statement, `void ${dir};`)) })).toThrow(/dangling/);
     }
-    const write = "await fs.writeFile(destPath, buf);";
-    expect(source.split(write)).toHaveLength(2);
+    const statements = [
+      "await fs.copyFile(srcPath, sessionFilePath);", "await fs.copyFile(srcPath, legacyUploadPath);",
+      "await fs.writeFile(sessionFilePath, buf);", "await fs.writeFile(legacyUploadPath, buf);",
+    ];
+    for (const statement of statements) {
+      expect(source.split(statement)).toHaveLength(2);
+      expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(statement, "void destPath;")) })).toThrow(/dangling/);
+      expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(statement, `${statement}\n        ${statement}`)) }).inventory).not.toEqual(inventory);
+    }
+    const write = statements[2];
     expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(write, `${write}\n        await fs.writeFile("unknown", buf);`)) })).toThrow(/unregistered persistence site/);
-    expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(write, `${write}\n        ${write}`)) }).inventory).not.toEqual(inventory);
-    const copy = "await fs.copyFile(srcPath, destPath);";
-    expect(source.split(copy)).toHaveLength(2);
-    expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replace(copy, "void destPath;")) }).inventory).not.toEqual(inventory);
   });
 
   it("fingerprints routing changes while accepting comment-only drift", async () => {
@@ -68,6 +72,12 @@ describe("upload directory ownership", () => {
       ['path.join(engine.hanakoHome, "uploads")', 'path.join(engine.hanakoHome, "other")'],
       ["shouldCleanOldUploads: false", "shouldCleanOldUploads: true"],
       ["if (sessionPath) {", "if (!sessionPath) {"],
+      [`if (uploadTarget.storageKind === "managed_cache") {\n          const sessionFilePath = destPath;\n          await fs.copyFile`, `if (uploadTarget.storageKind !== "managed_cache") {\n          const sessionFilePath = destPath;\n          await fs.copyFile`],
+      [`if (uploadTarget.storageKind === "managed_cache") {\n          const sessionFilePath = destPath;\n          await fs.writeFile`, `if (uploadTarget.storageKind !== "managed_cache") {\n          const sessionFilePath = destPath;\n          await fs.writeFile`],
+      [`const sessionFilePath = destPath;\n          await fs.copyFile`, `const sessionFilePath = path.join(uploadsDir, "other");\n          await fs.copyFile`],
+      [`const legacyUploadPath = destPath;\n          await fs.copyFile`, `const legacyUploadPath = path.join(uploadsDir, "other");\n          await fs.copyFile`],
+      [`const sessionFilePath = destPath;\n          await fs.writeFile`, `const sessionFilePath = path.join(uploadsDir, "other");\n          await fs.writeFile`],
+      [`const legacyUploadPath = destPath;\n          await fs.writeFile`, `const legacyUploadPath = path.join(uploadsDir, "other");\n          await fs.writeFile`],
     ]) {
       expect(source.split(before)).toHaveLength(2);
       await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, sourceOverrides: overrides(source.replace(before, after)) })).rejects.toThrow(/fingerprint mismatch/);
