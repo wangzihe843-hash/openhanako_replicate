@@ -594,7 +594,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:cbd9b92c81dfd9ba55297cb48ba9065cf6f4a012892a2b05a63c2afe3aabb79f",
+  "payloadFingerprint": "sha256:149c9513f08e60e35eb636fb522b5968675920c0f691f0a35da367a925a1aaed",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -877,6 +877,7 @@
         "shared/agent-id.ts",
         "shared/reserved-agent-scopes.ts",
         "server/index.ts",
+        "desktop/bootstrap.cjs",
         "shared/hana-runtime-paths.ts",
         "shared/hana-runtime-paths.cjs",
         "shared/hana-root.ts",
@@ -3361,8 +3362,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Register the known agent identity and reserved scope source dependencies used by agent-profile first-run classification. This adds dependency coverage only; persisted formats, runtime behavior, DATA_EPOCH, site mappings, exemptions, checkpoint and restore policies are unchanged. Protocol hashes cover each whole file, so unrelated executable changes in these files also require review. Prior compatible reviews remain applicable.",
-    "payloadFingerprint": "sha256:cbd9b92c81dfd9ba55297cb48ba9065cf6f4a012892a2b05a63c2afe3aabb79f"
+    "compatibilityReason": "Register desktop/bootstrap.cjs as an agent-profile protocol dependency for its existing resolved HANA_HOME forwarding to desktop main before server first-run; the existing agent ID and reserved scope classification dependencies remain registered. This adds dependency coverage only; persisted formats, runtime behavior, DATA_EPOCH, site mappings, exemptions, checkpoint and restore policies are unchanged. Protocol hashes cover each whole file, so unrelated executable changes in these files also require review. Prior compatible reviews remain applicable.",
+    "payloadFingerprint": "sha256:149c9513f08e60e35eb636fb522b5968675920c0f691f0a35da367a925a1aaed"
   },
   "schemas": [
     {
@@ -3561,6 +3562,10 @@
         {
           "module": "core/persona-source.ts",
           "sourceHash": "sha256:65d2a9c931cddced01d501197c4c394dbbde254e1292f64bc33514f5079026ef"
+        },
+        {
+          "module": "desktop/bootstrap.cjs",
+          "sourceHash": "sha256:627c61448d0041e49c9583dcfafa98a5246b58ee65597466efcdd790a50801f6"
         },
         {
           "module": "server/index.ts",

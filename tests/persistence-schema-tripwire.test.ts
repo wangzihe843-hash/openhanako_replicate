@@ -161,6 +161,94 @@ describe("persistence schema tripwire", () => {
     })).rejects.toThrow(/persistence schema fingerprint mismatch/);
   });
 
+  it("guards desktop bootstrap home forwarding through the default agent-profile fingerprint", async () => {
+    const module = "desktop/bootstrap.cjs";
+    const fingerprint = JSON.parse(fs.readFileSync(FINGERPRINT_PATH, "utf-8"));
+    const profile = fingerprint.schemas.find((entry) => entry.storeId === "agent-profile");
+    expect(profile.protocolModules).toEqual(expect.arrayContaining([
+      { module, sourceHash: executableSourceHash(ROOT, module) },
+    ]));
+    const source = fs.readFileSync(path.join(ROOT, module), "utf-8");
+    const target = "process.env.HANA_HOME = hanakoHome;";
+    expect(source.split(target)).toHaveLength(2);
+    const redirected = source.replace(target, 'process.env.HANA_HOME = path.join(hanakoHome, "redirected");');
+    await expect(assertCommittedPersistenceSchemaFingerprint({
+      rootDir: ROOT, sourceOverrides: new Map([[module, redirected]]),
+    })).rejects.toThrow(/persistence schema fingerprint mismatch/);
+
+    // The dependency is at whole-file granularity, including changes outside
+    // home forwarding; those changes also require a fingerprint review.
+    const unrelated = source.replace("arch: process.arch,", 'arch: "changed",');
+    expect(unrelated).not.toBe(source);
+    expect(executableSourceHash(ROOT, module, new Map([[module, unrelated]])))
+      .not.toBe(executableSourceHash(ROOT, module));
+  });
+
+  it("rejects combined classifier and desktop home forwarding drift in the profile fingerprint", async () => {
+    const mutations = [
+      ["shared/agent-id.ts", '  if (typeof value !== "string") return false;', '  if (typeof value !== "string") return false;\n  if (value === "hanako") return false;'],
+      ["shared/reserved-agent-scopes.ts", 'return /^__.+__$/.test(id);', 'return id === "hanako" || /^__.+__$/.test(id);'],
+      ["desktop/bootstrap.cjs", "process.env.HANA_HOME = hanakoHome;", 'process.env.HANA_HOME = path.join(hanakoHome, "redirected");'],
+    ];
+    const sourceOverrides = new Map<string, string>();
+    for (const [module, before, after] of mutations) {
+      const source = fs.readFileSync(path.join(ROOT, module), "utf-8");
+      expect(source.split(before)).toHaveLength(2);
+      sourceOverrides.set(module, source.replace(before, after));
+    }
+    const committed = JSON.parse(fs.readFileSync(FINGERPRINT_PATH, "utf-8"));
+    const inventory = JSON.parse(fs.readFileSync(INVENTORY_PATH, "utf-8"));
+    const changed = await generatePersistenceSchemaFingerprint({
+      rootDir: ROOT, inventory, sourceOverrides,
+      review: { classification: "compatible", compatibilityReason: "Test-only combined dependency mutation." },
+    });
+    const profile = committed.schemas.find((entry) => entry.storeId === "agent-profile");
+    const changedProfile = changed.schemas.find((entry) => entry.storeId === "agent-profile");
+    for (const [module] of mutations) {
+      const before = profile.protocolModules.find((entry) => entry.module === module);
+      const after = changedProfile.protocolModules.find((entry) => entry.module === module);
+      expect(before).toBeDefined();
+      expect(after.sourceHash).not.toBe(before.sourceHash);
+    }
+    expect(changed.schemas.filter((entry) => JSON.stringify(entry) !== JSON.stringify(committed.schemas.find((other) => other.storeId === entry.storeId)))
+      .map((entry) => entry.storeId)).toEqual(["agent-profile"]);
+    expect(changed.registry).toEqual(committed.registry);
+    expect(changed.siteMappings).toEqual(committed.siteMappings);
+    expect(changed.exemptions).toEqual(committed.exemptions);
+    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, sourceOverrides }))
+      .rejects.toThrow(/persistence schema fingerprint mismatch/);
+  });
+
+  it("keeps ordinary bootstrap comments and shifted lines fingerprint-compatible", async () => {
+    const module = "desktop/bootstrap.cjs";
+    const source = fs.readFileSync(path.join(ROOT, module), "utf-8");
+    const target = "process.env.HANA_HOME = hanakoHome;";
+    expect(source.split(target)).toHaveLength(2);
+    const shifted = `// ordinary header\n\n${source.replace(target, `/* ordinary comment */\n  ${target}`)}`;
+    await expect(assertCommittedPersistenceSchemaFingerprint({
+      rootDir: ROOT, sourceOverrides: new Map([[module, shifted]]),
+    })).resolves.not.toThrow();
+  });
+
+  it("keeps bootstrap site mappings stable when comments shift its lines", () => {
+    const module = "desktop/bootstrap.cjs";
+    const source = fs.readFileSync(path.join(ROOT, module), "utf-8");
+    const result = scanPersistentStores({ rootDir: ROOT, sourceOverrides: new Map([[module, `// ordinary header\n\n${source}`]]) });
+    expect(result.inventory).toEqual(JSON.parse(fs.readFileSync(INVENTORY_PATH, "utf-8")));
+    expect(result.startupReceipt).toEqual(JSON.parse(fs.readFileSync(path.join(ROOT, "build/persistence-startup-receipt.json"), "utf-8")));
+  });
+
+  it("rejects an effective build annotation in the registered desktop bootstrap", async () => {
+    const module = "desktop/bootstrap.cjs";
+    const source = fs.readFileSync(path.join(ROOT, module), "utf-8");
+    const target = "enableWindowsSystemCaForCurrentProcess();";
+    expect(source.split(target)).toHaveLength(2);
+    const annotated = source.replace(target, `/* @__PURE__ */ ${target}`);
+    await expect(assertCommittedPersistenceSchemaFingerprint({
+      rootDir: ROOT, sourceOverrides: new Map([[module, annotated]]),
+    })).rejects.toThrow(/effective PURE or NO_SIDE_EFFECTS build annotation.*desktop\/bootstrap\.cjs/);
+  });
+
   it("rejects scope or scoped-manifest protocol drift rather than treating it as an untracked cache", async () => {
     const committed = JSON.parse(fs.readFileSync(FINGERPRINT_PATH, "utf-8"));
     const inventory = JSON.parse(fs.readFileSync(INVENTORY_PATH, "utf-8"));

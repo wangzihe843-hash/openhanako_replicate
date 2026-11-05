@@ -328,6 +328,7 @@
         "shared/agent-id.ts",
         "shared/reserved-agent-scopes.ts",
         "server/index.ts",
+        "desktop/bootstrap.cjs",
         "shared/hana-runtime-paths.ts",
         "shared/hana-runtime-paths.cjs",
         "shared/hana-root.ts",

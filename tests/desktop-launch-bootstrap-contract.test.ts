@@ -17,6 +17,68 @@ afterEach(() => {
   }
 });
 
+function bootstrapHomeSeenByMain(packaged: boolean, configured: boolean, redirect = false, useCwdAlias = false) {
+  const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-bootstrap-home-"));
+  tmpHomesToCleanup.push(tmpHome);
+  const input = ["nested", "..", "selected-home"].join(path.sep);
+  const cwd = useCwdAlias ? path.join(tmpHome, "cwd-alias") : tmpHome;
+  if (useCwdAlias) fs.symlinkSync(tmpHome, cwd, process.platform === "win32" ? "junction" : "dir");
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: tmpHome, USERPROFILE: tmpHome };
+  delete env.HANA_HOME;
+  if (configured) env.HANA_HOME = input;
+
+  // Compile the repository's actual bootstrap source in a child process.
+  // Electron and the desktop main are the boundaries, so this observes the
+  // environment at the instant the selected main would be loaded.
+  const driver = `
+const fs = require("node:fs");
+const Module = require("node:module");
+const path = require("node:path");
+const initialCwd = process.cwd();
+const filename = ${JSON.stringify(bootstrapPath)};
+let source = fs.readFileSync(filename, "utf8");
+if (${JSON.stringify(redirect)}) {
+  const target = "process.env.HANA_HOME = hanakoHome;";
+  if (source.split(target).length !== 2) throw new Error("home forwarding target changed");
+  source = source.replace(target, 'process.env.HANA_HOME = path.join(hanakoHome, "redirected");');
+}
+const originalLoad = Module._load;
+Module._load = function(request, parent, isMain) {
+  if (parent?.filename === filename) {
+    if (request === "electron") return { app: { isPackaged: ${JSON.stringify(packaged)}, exit() {} }, dialog: { showErrorBox() {} } };
+    if (request === "./src/shared/windows-system-ca.cjs") return { enableWindowsSystemCaForCurrentProcess() {} };
+    if (request === "./src/shared/launch-integrity.cjs") return {
+      appendLaunchLog() {}, writeLaunchDiagnostic() {}, checkWindowsInstallSurface() { return { ok: true }; },
+    };
+    if (request === "./src/office-pdf-helper.cjs") return { isOfficePdfHelperInvocation() { return false; } };
+    if (request === "./main.cjs" || request === "./main.bundle.cjs") {
+      process.stdout.write(JSON.stringify({ request, home: process.env.HANA_HOME, initialCwd }));
+      return {};
+    }
+  }
+  return originalLoad.call(this, request, parent, isMain);
+};
+const bootstrap = new Module(filename, module);
+bootstrap.filename = filename;
+bootstrap.paths = Module._nodeModulePaths(path.dirname(filename));
+bootstrap._compile(source, filename);
+`;
+  const result = spawnSync(process.execPath, ["-e", driver], {
+    cwd, env, windowsHide: true, encoding: "utf-8", timeout: 15000,
+  });
+  expect(result.status, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(0);
+  const { initialCwd, ...observed } = JSON.parse(result.stdout);
+  // A child may report the physical spelling of cwd rather than its symlink.
+  // Verify it is the requested directory before using it to resolve relative input.
+  expect(fs.realpathSync(initialCwd)).toBe(fs.realpathSync(tmpHome));
+  const expectedHome = configured ? path.resolve(initialCwd, input) : path.join(tmpHome, ".hanako");
+  return { expectedHome, observed };
+}
+
+function expectForwardedHome(observed: unknown, packaged: boolean, home: string) {
+  expect(observed).toEqual({ request: packaged ? "./main.bundle.cjs" : "./main.cjs", home });
+}
+
 describe("desktop launch bootstrap contract", () => {
   it("routes dev and packaged Electron through the pre-main bootstrap", () => {
     expect(packageJson.main).toBe("desktop/bootstrap.cjs");
@@ -27,6 +89,26 @@ describe("desktop launch bootstrap contract", () => {
     expect(packageJson.build?.files).toContain("shared/hana-runtime-paths.cjs");
     expect(packageJson.build?.files).toContain("desktop/main.bundle.cjs");
   });
+
+  it.each([false, true])("passes the resolved configured or default home to desktop main (packaged=%s)", packaged => {
+    for (const configured of [false, true]) {
+      const { expectedHome, observed } = bootstrapHomeSeenByMain(packaged, configured);
+      expectForwardedHome(observed, packaged, expectedHome);
+    }
+  });
+
+  it.each([false, true])("resolves a relative home from a directory link (packaged=%s)", packaged => {
+    const { expectedHome, observed } = bootstrapHomeSeenByMain(packaged, true, false, true);
+    expectForwardedHome(observed, packaged, expectedHome);
+  });
+
+  it.each([[false, false], [false, true], [true, false], [true, true]])(
+    "rejects a redirected home (packaged=%s, configured=%s)", (packaged, configured) => {
+      const { expectedHome, observed } = bootstrapHomeSeenByMain(packaged, configured, true, true);
+      expectForwardedHome(observed, packaged, path.join(expectedHome, "redirected"));
+      expect(() => expectForwardedHome(observed, packaged, expectedHome)).toThrow();
+    },
+  );
 
   it("bootstrap.cjs registers process diagnostics before loading the main bundle (subprocess behavior test)", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hana-bootstrap-behavior-"));

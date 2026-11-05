@@ -12,7 +12,7 @@ const WORKSPACE = "shared/default-workspace.ts";
 const CONSTANTS = "shared/default-workspace-constants.ts";
 const ADDED = [WORKSPACE, CONSTANTS];
 const oldModules = [
-  "core/agent.ts", "core/persona-source.ts", "core/first-run.ts", "shared/agent-id.ts", "shared/reserved-agent-scopes.ts", "server/index.ts",
+  "core/agent.ts", "core/persona-source.ts", "core/first-run.ts", "shared/agent-id.ts", "shared/reserved-agent-scopes.ts", "server/index.ts", "desktop/bootstrap.cjs",
   "shared/hana-runtime-paths.ts", "shared/hana-runtime-paths.cjs", "shared/hana-root.ts",
   "core/agents-md-migration.ts", "core/engine.ts", "shared/config-schema.ts", "shared/migrate-config-scope.ts",
 ];
@@ -60,7 +60,7 @@ describe("agent profile default workspace protocol dependencies", () => {
     expect(profile.pathPatterns).toContain("agents/{agentId}/config.yaml");
     expect(profile.firstPossibleOpenPhase).toBe("first_run_seed");
     expect(profile.firstPossibleWritePhase).toBe("first_run_seed");
-    expect(profile.protocolModules).toEqual([...oldModules.slice(0, 10), ...ADDED, ...oldModules.slice(10)]);
+    expect(profile.protocolModules).toEqual([...oldModules.slice(0, 11), ...ADDED, ...oldModules.slice(11)]);
   });
 
   it("changes no owner, site mapping, exemption or startup phase when the registrations are removed", () => {
