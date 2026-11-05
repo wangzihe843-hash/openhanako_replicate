@@ -3,6 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { version as esbuildVersion } from "esbuild";
+import { VERSION as rollupVersion, rollup } from "rollup";
 import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -206,12 +208,8 @@ describe("persistence schema tripwire", () => {
   });
 
   it("ignores comment-only drift in the sources it hashes", async () => {
-    // The tripwire exists to catch changes to what lands on disk, and a comment
-    // cannot change a persisted byte. Hashing whole files meant it fired on
-    // every comment edit anyway, which is most of what it ever fired on — so
-    // the reviews it demanded became a copied sentence, and a guard answered by
-    // reflex stops being a guard. Hash the parse tree instead: comments and
-    // whitespace between tokens drop out, everything executable stays.
+    // Ordinary comments and whitespace between tokens do not change the
+    // digest. Effective bundler annotations are tested separately below.
     const committed = JSON.parse(fs.readFileSync(FINGERPRINT_PATH, "utf-8"));
     const inventory = JSON.parse(fs.readFileSync(INVENTORY_PATH, "utf-8"));
 
@@ -251,6 +249,110 @@ describe("persistence schema tripwire", () => {
         sourceOverrides: new Map([[module, mutated]]),
       })).resolves.not.toThrow();
     }
+  });
+
+  it("rejects the real first-run write annotation through the default fingerprint assertion even after caching", async () => {
+    const module = "core/first-run.ts";
+    const original = fs.readFileSync(path.join(ROOT, module), "utf-8");
+    const target = "writeSecretFileSync(cfgDest, YAML.dump(";
+    expect(original.split(target)).toHaveLength(2);
+    const modified = original.replace(target, `/* @__PURE__ */ ${target}`);
+    resetPersistenceSchemaCaches();
+    const originalHash = executableSourceHash(ROOT, module);
+    const sourceOverrides = new Map([[module, modified]]);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect(() => executableSourceHash(ROOT, module, sourceOverrides))
+        .toThrow(/effective PURE or NO_SIDE_EFFECTS build annotation.*core\/first-run\.ts/);
+    }
+    expect(executableSourceHash(ROOT, module)).toBe(originalHash);
+    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, sourceOverrides }))
+      .rejects.toThrow(/effective PURE or NO_SIDE_EFFECTS build annotation.*core\/first-run\.ts/);
+  });
+
+  it("checks object source overrides as well as Map overrides", async () => {
+    const module = "core/first-run.ts";
+    const original = fs.readFileSync(path.join(ROOT, module), "utf-8");
+    const target = "writeSecretFileSync(cfgDest, YAML.dump(";
+    const sourceOverrides = { [module]: original.replace(target, `// #__PURE__\n  ${target}`) };
+    const committedFingerprint = JSON.parse(fs.readFileSync(FINGERPRINT_PATH, "utf-8"));
+    const inventory = JSON.parse(fs.readFileSync(INVENTORY_PATH, "utf-8"));
+    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, committedFingerprint, inventory, sourceOverrides }))
+      .rejects.toThrow(/effective PURE or NO_SIDE_EFFECTS build annotation.*core\/first-run\.ts/);
+  });
+
+  it.each([
+    ["PURE at block", "probe.ts", "/* @__PURE__ */ sideEffect<string>();"],
+    ["PURE hash block constructor", "probe.ts", "/* #__PURE__ */ new Thing<string>();"],
+    ["PURE at line and parentheses", "probe.ts", "// @__PURE__\n((sideEffect<string>()));"],
+    ["PURE hash line and adjacent comments", "probe.ts", "// #__PURE__\n/* other */ sideEffect<string>();"],
+    ["PURE between new and callee", "probe.ts", "new /* @__PURE__ */ Thing<string>();"],
+    ["PURE in direct CommonJS", "probe.cjs", "new /* #__PURE__ */ Thing();"],
+    ["PURE in template interpolation", "probe.ts", "const a = `${ /* @__PURE__ */ sideEffect<string>() }`;"],
+    ["PURE in JSX expression", "probe.tsx", "const a = <div>{/* #__PURE__ */ sideEffect()}</div>;"],
+    ["NO_SIDE_EFFECTS at block function", "probe.ts", "/* @__NO_SIDE_EFFECTS__ */ function f<T>() { sideEffect(); } f<number>();"],
+    ["NO_SIDE_EFFECTS hash block arrow", "probe.ts", "/* #__NO_SIDE_EFFECTS__ */ const f: () => void = () => sideEffect(); f();"],
+    ["NO_SIDE_EFFECTS at line", "probe.ts", "// @__NO_SIDE_EFFECTS__\n/* other */ function f<T>() { sideEffect(); } f<number>();"],
+    ["NO_SIDE_EFFECTS hash line", "probe.ts", "// #__NO_SIDE_EFFECTS__\nfunction f<T>() { sideEffect(); } f<number>();"],
+    ["NO_SIDE_EFFECTS on exported function", "probe.ts", "/* #__NO_SIDE_EFFECTS__ */ export function f<T>() { sideEffect(); }"],
+    ["PURE in a file with bigint", "probe.ts", "const n = 42n; /* @__PURE__ */ sideEffect();"],
+    ["PURE after CRLF and a supplementary character", "probe.ts", "const s = '😀'; // #__PURE__\r\nsideEffect();"],
+    ["explanatory text in an effective position", "probe.js", "/* example of @__PURE__ in prose */ sideEffect();"],
+    ["JSDoc in an effective position", "probe.js", "/** example @__PURE__ */ sideEffect();"],
+  ])("rejects effective build annotation: %s", (_name, module, source) => {
+    expect(() => executableSourceHash(ROOT, module, new Map([[module, source]])))
+      .toThrow(/effective PURE or NO_SIDE_EFFECTS build annotation/);
+  });
+
+  it.each([
+    ["block PURE at", "/* @__PURE__ */ globalThis.sideEffect();"],
+    ["line PURE hash", "// #__PURE__\nglobalThis.sideEffect();"],
+    ["block NO_SIDE_EFFECTS hash", "/* #__NO_SIDE_EFFECTS__ */ function f() { globalThis.sideEffect(); } f();"],
+    ["line NO_SIDE_EFFECTS at", "// @__NO_SIDE_EFFECTS__\nfunction f() { globalThis.sideEffect(); } f();"],
+    ["annotation inside prose", "/* example of @__PURE__ in prose */ globalThis.sideEffect();"],
+    ["annotation after new", "new /* @__PURE__ */ globalThis.Thing();"],
+  ])("confirms Rollup actually removes the side effect: %s", async (_name, source) => {
+    const bundle = await rollup({
+      input: "annotation-probe",
+      plugins: [{
+        name: "annotation-probe",
+        resolveId: (id) => id === "annotation-probe" ? id : null,
+        load: (id) => id === "annotation-probe" ? source : null,
+      }],
+      onwarn: () => {},
+    });
+    try {
+      const output = await bundle.generate({ format: "es" });
+      expect(output.output[0].code).not.toMatch(/sideEffect|globalThis\.Thing/);
+      expect(() => executableSourceHash(ROOT, "probe.js", new Map([["probe.js", source]])))
+        .toThrow(/effective PURE or NO_SIDE_EFFECTS build annotation/);
+    } finally {
+      await bundle.close();
+    }
+  });
+
+  it.each([
+    ["ordinary prose example", "probe.ts", "// Example: @__PURE__ is a marker\nconst n = 1;\nsideEffect();", "const n = 1;\nsideEffect();"],
+    ["ineffective block example", "probe.ts", "/* example: #__NO_SIDE_EFFECTS__ */ const n = 1;", "const n = 1;"],
+    ["example after the final statement", "probe.js", "const n = 1; // @__PURE__ example\n", "const n = 1;"],
+    ["non-adjacent annotation", "probe.js", "const n = /* @__PURE__ */ 1; sideEffect();", "const n = 1; sideEffect();"],
+    ["example before compiler-generated JSX annotation", "probe.tsx", "// @__PURE__ example\nconst n = <div />;", "const n = <div />;"],
+    ["example in a file with bigint", "probe.ts", "// @__PURE__ example\r\nconst n = 42n;", "const n = 42n;"],
+  ])("keeps harmless annotation examples compatible: %s", (_name, module, withComment, withoutComment) => {
+    const digest = (code: string) => executableSourceHash(ROOT, module, new Map([[module, code]]));
+    expect(digest(withComment)).toBe(digest(withoutComment));
+  });
+
+  it.each([
+    ["string and regular expression", "probe.ts", "const s = '/* @__PURE__ */'; const r = /[/*]#__PURE__/;"],
+    ["template text and substitution string", "probe.ts", "const s = `/* @__PURE__ */ ${'#__NO_SIDE_EFFECTS__'}`;"],
+    ["JSX text", "probe.tsx", "const s = <div>/* @__PURE__ */</div>;"],
+    ["shebang", "probe.cjs", "#!/usr/bin/env node @__PURE__\nconst n = 1;"],
+  ])("does not mistake literal content for comments: %s", (_name, module, source) => {
+    const digest = (code: string) => executableSourceHash(ROOT, module, new Map([[module, code]]));
+    const commented = source.startsWith("#!")
+      ? source.replace("\n", "\n// ordinary comment\n")
+      : `// ordinary comment\n${source}`;
+    expect(digest(commented)).toBe(digest(source));
   });
 
   it("opens each SQLite store once per repository root, however many payloads one run computes", async () => {
@@ -419,6 +521,7 @@ describe("persistence schema tripwire", () => {
       review: committed.review,
     });
     expect(generated.sourceDigest).toEqual({
+      annotationTools: { esbuild: esbuildVersion, rollup: rollupVersion },
       compiler: `typescript@${ts.version}`,
       method: SOURCE_DIGEST_METHOD,
     });

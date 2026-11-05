@@ -5,6 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
+import { transformSync, version as esbuildVersion } from "esbuild";
+import { VERSION as rollupVersion } from "rollup";
+import { parseAst } from "rollup/parseAst";
 
 import { scanPersistentStores } from "./scan-persistent-stores.mjs";
 
@@ -97,7 +100,7 @@ function readRepositorySource(rootDir, relativePath, sourceOverrides) {
  * anything else means the toolchain moved and every hash is incomparable for
  * reasons that have nothing to do with persisted shape.
  */
-export const SOURCE_DIGEST_METHOD = "parse-tree-v1";
+export const SOURCE_DIGEST_METHOD = "parse-tree-v2-build-annotations";
 
 const SCRIPT_KINDS = new Map([
   [".ts", ts.ScriptKind.TS],
@@ -121,6 +124,144 @@ function isJsDocKind(kind) {
   return kind >= ts.SyntaxKind.FirstJSDocNode && kind <= ts.SyntaxKind.LastJSDocNode;
 }
 
+// Rollup and esbuild interpret these exact markers even inside otherwise
+// explanatory comments. Finding a marker in raw text is not enough: a string,
+// regexp, template, JSX text, shebang, or an example at an ineffective comment
+// position must keep the ordinary comment-only digest behavior.
+const BUILD_ANNOTATION_MARKER = /[@#]__(?:PURE|NO_SIDE_EFFECTS)__/g;
+
+function neutralizeBuildAnnotationComments(source, text, sourcePath) {
+  if (!/[@#]__(?:PURE|NO_SIDE_EFFECTS)__/.test(text)) return undefined;
+  const positions = [];
+  let previousEnd = 0;
+
+  // The parser's leaf spans cover string/regexp/template/JSX contents. Only
+  // inspect gaps between leaves; the TypeScript scanner then identifies actual
+  // comments there, including JSDoc, adjacent comments, and comments inside
+  // template substitutions. If a gap is not trivia, refuse to guess.
+  const scanGap = (end) => {
+    const gap = text.slice(previousEnd, end);
+    if (!/[@#]__(?:PURE|NO_SIDE_EFFECTS)__/.test(gap)) return;
+    const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, gap);
+    let kind;
+    while ((kind = scanner.scan()) !== ts.SyntaxKind.EndOfFileToken) {
+      if (kind === ts.SyntaxKind.SingleLineCommentTrivia || kind === ts.SyntaxKind.MultiLineCommentTrivia) {
+        const comment = scanner.getTokenText();
+        for (const match of comment.matchAll(BUILD_ANNOTATION_MARKER)) {
+          positions.push(previousEnd + scanner.getTokenPos() + match.index);
+        }
+      } else if (kind !== ts.SyntaxKind.WhitespaceTrivia && kind !== ts.SyntaxKind.NewLineTrivia
+        && kind !== ts.SyntaxKind.ShebangTrivia) {
+        throw new Error(`persistence schema annotation scan encountered non-trivia: ${sourcePath}`);
+      }
+    }
+  };
+  const walk = (node) => {
+    if (isJsDocKind(node.kind)) return;
+    const children = node.getChildren(source).filter((child) => !isJsDocKind(child.kind));
+    if (children.length) {
+      for (const child of children) walk(child);
+      return;
+    }
+    const start = node.getStart(source);
+    const end = node.getEnd();
+    if (end <= start) return;
+    if (start < previousEnd) {
+      throw new Error(`persistence schema annotation scan encountered overlapping tokens: ${sourcePath}`);
+    }
+    scanGap(start);
+    previousEnd = end;
+  };
+  walk(source);
+  scanGap(text.length);
+  if (!positions.length) return undefined;
+
+  // Replace only the marker prefix, preserving character offsets and every
+  // other byte. Comparing both parses distinguishes an effective annotation
+  // from a harmless example without trying to reimplement attachment rules.
+  let neutralized = text;
+  for (let index = positions.length - 1; index >= 0; index -= 1) {
+    const position = positions[index];
+    neutralized = `${neutralized.slice(0, position)}x${neutralized.slice(position + 1)}`;
+  }
+  return neutralized;
+}
+
+function rollupSemanticTree(text) {
+  // Rollup records effective annotations on AST nodes and separately records
+  // invalid annotations under _rollupRemoved. Ignore positions and removed
+  // annotations, while retaining effective annotation types and tree shape.
+  return JSON.stringify(parseAst(text, { allowReturnOutsideFunction: true }), (key, value) => {
+    if (key === "start" || key === "end" || key === "_rollupRemoved") return undefined;
+    // Rollup exposes bigint literal values as BigInt, which JSON cannot encode.
+    if (typeof value === "bigint") return `bigint:${value}`;
+    return value;
+  });
+}
+
+let rollupAnnotationContractVerified = false;
+
+function verifyRollupAnnotationContract() {
+  if (rollupAnnotationContractVerified) return;
+  // These parser fields are Rollup internals. Refuse to infer a verdict if a
+  // future toolchain stops distinguishing attached from removed annotations.
+  for (const [withMarker, withoutMarker, shouldDiffer] of [
+    ["/* @__PURE__ */ f();", "/* x__PURE__ */ f();", true],
+    ["/* @__NO_SIDE_EFFECTS__ */ function f() {}", "/* x__NO_SIDE_EFFECTS__ */ function f() {}", true],
+    ["/* @__PURE__ */ const n = 1;", "/* x__PURE__ */ const n = 1;", false],
+    ["/* @__NO_SIDE_EFFECTS__ */ const n = 1;", "/* x__NO_SIDE_EFFECTS__ */ const n = 1;", false],
+  ]) {
+    if ((rollupSemanticTree(withMarker) !== rollupSemanticTree(withoutMarker)) !== shouldDiffer) {
+      throw new Error("Rollup annotation parser contract changed");
+    }
+  }
+  rollupAnnotationContractVerified = true;
+}
+
+function rejectEffectiveBuildAnnotations(source, text, sourcePath) {
+  const neutralized = neutralizeBuildAnnotationComments(source, text, sourcePath);
+  if (neutralized === undefined) return;
+  const extension = path.extname(sourcePath).toLowerCase();
+  const loader = extension === ".tsx" ? "tsx" : extension === ".jsx" ? "jsx"
+    : [".ts", ".mts", ".cts"].includes(extension) ? "ts" : "js";
+  try {
+    verifyRollupAnnotationContract();
+    // JavaScript may reach Rollup directly, including JavaScript valid in a
+    // .ts file. Raw TypeScript/JSX may be unparseable by Rollup; in that case
+    // the two actual compiler outputs below provide the parseable inputs.
+    let rawTree;
+    try {
+      rawTree = rollupSemanticTree(text);
+    } catch (error) {
+      if (loader === "js" || error.code !== "PARSE_ERROR") throw error;
+    }
+    if (rawTree !== undefined && rawTree !== rollupSemanticTree(neutralized)) {
+      throw new Error("effective build annotation");
+    }
+    const esbuildOutput = (input) => transformSync(input, {
+      loader, sourcefile: sourcePath, target: "esnext", format: "esm", treeShaking: false,
+    }).code;
+    if (rollupSemanticTree(esbuildOutput(text)) !== rollupSemanticTree(esbuildOutput(neutralized))) {
+      throw new Error("effective build annotation");
+    }
+    // TypeScript's emitter retains some valid Rollup annotations which esbuild
+    // removes (e.g. between `new` and its callee). Checking both makes the
+    // rejection conservative without copying either tool's attachment rules.
+    const typescriptOutput = (input) => ts.transpileModule(input, {
+      fileName: sourcePath,
+      compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.React },
+    }).outputText;
+    if (rollupSemanticTree(typescriptOutput(text)) !== rollupSemanticTree(typescriptOutput(neutralized))) {
+      throw new Error("effective build annotation");
+    }
+  } catch (error) {
+    if (error.message === "effective build annotation") {
+      throw new Error(`persistence schema source contains an effective PURE or NO_SIDE_EFFECTS build annotation: ${sourcePath}`);
+    }
+    throw new Error(`persistence schema could not verify build annotations in ${sourcePath}: ${error.message}`);
+  }
+}
+
 // Parsing is where verifying this tripwire spends most of its time, and a run
 // that verifies several payloads re-reads a nearly identical inventory each
 // time. The digest below is a pure function of the source path and the exact
@@ -133,11 +274,9 @@ let executableSourceParses = 0;
 /**
  * Hash what executes, not what the file happens to say.
  *
- * This tripwire guards the shape of what reaches disk. A comment cannot change
- * a persisted byte, yet hashing raw file bytes made every comment edit demand a
- * schema review — which is what most reviews here ended up being, until the
- * recorded reasoning became a sentence people copied forward. A guard answered
- * by reflex has stopped guarding.
+ * This tripwire guards the shape of what reaches disk. Ordinary comment edits
+ * should not demand schema review, but effective build annotations can remove
+ * calls and so must fail closed before the otherwise comment-insensitive digest.
  *
  * So the digest is taken over the parse tree, not the raw bytes and not a flat
  * token stream. A flat token stream is not enough: whitespace between tokens is
@@ -153,9 +292,9 @@ let executableSourceParses = 0;
  * interpreter-selecting and therefore executable; it is digested too, even
  * though the parser files it under trivia.
  *
- * Comments never enter the digest: line and block comments are trivia the
- * walk never sees, and JSDoc — which getChildren() does serve as nodes — is
- * skipped explicitly. Doc edits in guarded modules require no schema review.
+ * Ordinary comments never enter the digest: line and block comments are trivia
+ * and JSDoc nodes are skipped explicitly. Effective PURE and NO_SIDE_EFFECTS
+ * annotations are rejected separately, because bundlers give them semantics.
  *
  * The kind names come from the pinned TypeScript's SyntaxKind table, so a
  * TypeScript upgrade may shift them and demand one honest repin; that failure
@@ -187,6 +326,7 @@ export function executableSourceHash(rootDir, relativePath, sourceOverrides) {
     const detail = ts.flattenDiagnosticMessageText(diagnostics[0].messageText, " ");
     throw new Error(`persistence schema source failed to parse: ${sourcePath}: ${detail}`);
   }
+  rejectEffectiveBuildAnnotations(source, text, sourcePath);
   const pieces = [];
   const shebang = text.match(/^#![^\r\n]*/);
   if (shebang) pieces.push(`#!${shebang[0].length}:${shebang[0]}`);
@@ -568,6 +708,7 @@ async function generatePersistenceSchemaPayload({
     // diff as the compiler line changing — and the mismatch error below can
     // name the real cause instead of implying persisted shape drifted.
     sourceDigest: {
+      annotationTools: { esbuild: esbuildVersion, rollup: rollupVersion },
       compiler: `typescript@${ts.version}`,
       method: SOURCE_DIGEST_METHOD,
     },
@@ -717,7 +858,7 @@ export async function assertCommittedPersistenceSchemaFingerprint({
   });
   if (canonicalJson(actualPayload) !== canonicalJson(expectedPayload)) {
     const describeDigest = (digest) => (digest
-      ? `${digest.compiler} (method ${digest.method})`
+      ? `${digest.compiler} (method ${digest.method}, annotation tools ${JSON.stringify(digest.annotationTools ?? null)})`
       : "a fingerprint format without digest provenance (payload v2 or older)");
     if (canonicalJson(expectedPayload.sourceDigest ?? null) !== canonicalJson(actualPayload.sourceDigest ?? null)) {
       // Module hashes computed by different parsers (or digest methods) are

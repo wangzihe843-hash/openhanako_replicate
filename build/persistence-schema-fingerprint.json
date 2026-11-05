@@ -594,7 +594,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:dbd8a81e58e6f5b7333b8f523c7c1a01c741f1ce6058e7c42eef40b1ecb87400",
+  "payloadFingerprint": "sha256:ddb97c764421e982fbbba6d4cd86a66b4c5ea7037ea0dc8a16c14b37dfe64cf4",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3357,8 +3357,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Assign the first-run default config template copy to agent-profile and bind the product-root resolver and home-path forwarding implementation used by server startup for agent-profile, user-preferences, and server-runtime-info. The later secret write and damaged-config backup retain their existing exemptions. No runtime behavior, persistence paths, formats, DATA_EPOCH, checkpoint or restore policies change. Prior compatible reviews remain applicable.",
-    "payloadFingerprint": "sha256:dbd8a81e58e6f5b7333b8f523c7c1a01c741f1ce6058e7c42eef40b1ecb87400"
+    "compatibilityReason": "Reject effective PURE and NO_SIDE_EFFECTS build annotations in fingerprinted repository sources and record the checked tool versions. The existing parse-tree hashes and runtime behavior are unchanged; stores, write sites, exemptions, DATA_EPOCH, checkpoint and restore policies are unchanged. Prior compatible reviews remain applicable.",
+    "payloadFingerprint": "sha256:ddb97c764421e982fbbba6d4cd86a66b4c5ea7037ea0dc8a16c14b37dfe64cf4"
   },
   "schemas": [
     {
@@ -11716,8 +11716,12 @@
     }
   ],
   "sourceDigest": {
+    "annotationTools": {
+      "esbuild": "0.27.4",
+      "rollup": "4.59.0"
+    },
     "compiler": "typescript@5.9.3",
-    "method": "parse-tree-v1"
+    "method": "parse-tree-v2-build-annotations"
   },
   "version": 3
 }
