@@ -53,7 +53,7 @@
         "secret-write",
         "write-file"
       ],
-      "linePattern": "^(?:fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"avatars\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|writeSecretFileSync\\(cfgDest, YAML\\.dump\\(raw, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' \\}\\)\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
+      "linePattern": "^(?:fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|writeSecretFileSync\\(cfgDest, YAML\\.dump\\(raw, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' \\}\\)\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
       "ownerModule": "core/first-run.ts",
       "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
       "sourceFile": "core/first-run.ts"
@@ -594,7 +594,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:149c9513f08e60e35eb636fb522b5968675920c0f691f0a35da367a925a1aaed",
+  "payloadFingerprint": "sha256:d40886f4afb726967ac9ad23ba9c8ff8527089ae4c547407b10f84babbda1b67",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3362,8 +3362,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Register desktop/bootstrap.cjs as an agent-profile protocol dependency for its existing resolved HANA_HOME forwarding to desktop main before server first-run; the existing agent ID and reserved scope classification dependencies remain registered. This adds dependency coverage only; persisted formats, runtime behavior, DATA_EPOCH, site mappings, exemptions, checkpoint and restore policies are unchanged. Protocol hashes cover each whole file, so unrelated executable changes in these files also require review. Prior compatible reviews remain applicable.",
-    "payloadFingerprint": "sha256:149c9513f08e60e35eb636fb522b5968675920c0f691f0a35da367a925a1aaed"
+    "compatibilityReason": "Classifies the existing first-run default agent avatar parent directory creation under agent-profile; existing dependency coverage continues at whole file scope; runtime, paths, persisted formats, checkpoint and restore policies are unchanged.",
+    "payloadFingerprint": "sha256:d40886f4afb726967ac9ad23ba9c8ff8527089ae4c547407b10f84babbda1b67"
   },
   "schemas": [
     {
@@ -5100,12 +5100,12 @@
       "storeId": null
     },
     {
-      "exemptionId": "cross-store-first-run-bootstrap",
+      "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
-      "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
+      "reason": "Creates the default agent avatar file parent directory during first-run seeding or repair.",
       "sourceFile": "core/first-run.ts",
-      "storeId": null
+      "storeId": "agent-profile"
     },
     {
       "exemptionId": "cross-store-first-run-bootstrap",
