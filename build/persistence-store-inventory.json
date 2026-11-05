@@ -325,6 +325,8 @@
         "core/agent.ts",
         "core/persona-source.ts",
         "core/first-run.ts",
+        "shared/agent-id.ts",
+        "shared/reserved-agent-scopes.ts",
         "server/index.ts",
         "shared/hana-runtime-paths.ts",
         "shared/hana-runtime-paths.cjs",

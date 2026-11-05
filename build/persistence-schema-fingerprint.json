@@ -594,7 +594,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:a8e123790c0d88833d4635b2b800aed6045e2da5304453c36c8fd0c53ebed10f",
+  "payloadFingerprint": "sha256:cbd9b92c81dfd9ba55297cb48ba9065cf6f4a012892a2b05a63c2afe3aabb79f",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -874,6 +874,8 @@
         "core/agent.ts",
         "core/persona-source.ts",
         "core/first-run.ts",
+        "shared/agent-id.ts",
+        "shared/reserved-agent-scopes.ts",
         "server/index.ts",
         "shared/hana-runtime-paths.ts",
         "shared/hana-runtime-paths.cjs",
@@ -3359,8 +3361,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Register the known default workspace path and heartbeat constant source dependencies already used by agent-profile configuration writes. This adds dependency coverage only; persisted formats, runtime behavior, DATA_EPOCH, site mappings, exemptions, checkpoint and restore policies are unchanged. Protocol hashes cover each whole file, so unrelated executable changes in these files also require review. Prior compatible reviews remain applicable.",
-    "payloadFingerprint": "sha256:a8e123790c0d88833d4635b2b800aed6045e2da5304453c36c8fd0c53ebed10f"
+    "compatibilityReason": "Register the known agent identity and reserved scope source dependencies used by agent-profile first-run classification. This adds dependency coverage only; persisted formats, runtime behavior, DATA_EPOCH, site mappings, exemptions, checkpoint and restore policies are unchanged. Protocol hashes cover each whole file, so unrelated executable changes in these files also require review. Prior compatible reviews remain applicable.",
+    "payloadFingerprint": "sha256:cbd9b92c81dfd9ba55297cb48ba9065cf6f4a012892a2b05a63c2afe3aabb79f"
   },
   "schemas": [
     {
@@ -3565,6 +3567,10 @@
           "sourceHash": "sha256:8f233b38548e5ea62d8599ff632beddcefe4e8e8ca9c880324deb54c932c545c"
         },
         {
+          "module": "shared/agent-id.ts",
+          "sourceHash": "sha256:0c0bed19efc57b807ae83aca018c7d09644c6ff1432dc2c1c56e3ee971edfb69"
+        },
+        {
           "module": "shared/config-schema.ts",
           "sourceHash": "sha256:6320dce8ed7d1fd176c6095439fcdf122a8cc0f3b39002a9d0ae9b2d67a7a880"
         },
@@ -3591,6 +3597,10 @@
         {
           "module": "shared/migrate-config-scope.ts",
           "sourceHash": "sha256:e5c3efba09987d603bb4e753319dec1b05cee2dcc584ff13184bdd0d6af32b86"
+        },
+        {
+          "module": "shared/reserved-agent-scopes.ts",
+          "sourceHash": "sha256:b9b3957375f6dd648547b5b32f9cc3c0c2101df3fa5b4ef6cc318853df454dca"
         }
       ],
       "sourceHash": "sha256:218fa1ce3cc45a4c5f79c733826078a25f74564bb60660937302d5b4460827fc",
