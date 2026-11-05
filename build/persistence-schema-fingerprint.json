@@ -594,7 +594,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:ddb97c764421e982fbbba6d4cd86a66b4c5ea7037ea0dc8a16c14b37dfe64cf4",
+  "payloadFingerprint": "sha256:a8e123790c0d88833d4635b2b800aed6045e2da5304453c36c8fd0c53ebed10f",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -879,6 +879,8 @@
         "shared/hana-runtime-paths.cjs",
         "shared/hana-root.ts",
         "core/agents-md-migration.ts",
+        "shared/default-workspace.ts",
+        "shared/default-workspace-constants.ts",
         "core/engine.ts",
         "shared/config-schema.ts",
         "shared/migrate-config-scope.ts"
@@ -3357,8 +3359,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Reject effective PURE and NO_SIDE_EFFECTS build annotations in fingerprinted repository sources and record the checked tool versions. The existing parse-tree hashes and runtime behavior are unchanged; stores, write sites, exemptions, DATA_EPOCH, checkpoint and restore policies are unchanged. Prior compatible reviews remain applicable.",
-    "payloadFingerprint": "sha256:ddb97c764421e982fbbba6d4cd86a66b4c5ea7037ea0dc8a16c14b37dfe64cf4"
+    "compatibilityReason": "Register the known default workspace path and heartbeat constant source dependencies already used by agent-profile configuration writes. This adds dependency coverage only; persisted formats, runtime behavior, DATA_EPOCH, site mappings, exemptions, checkpoint and restore policies are unchanged. Protocol hashes cover each whole file, so unrelated executable changes in these files also require review. Prior compatible reviews remain applicable.",
+    "payloadFingerprint": "sha256:a8e123790c0d88833d4635b2b800aed6045e2da5304453c36c8fd0c53ebed10f"
   },
   "schemas": [
     {
@@ -3565,6 +3567,14 @@
         {
           "module": "shared/config-schema.ts",
           "sourceHash": "sha256:6320dce8ed7d1fd176c6095439fcdf122a8cc0f3b39002a9d0ae9b2d67a7a880"
+        },
+        {
+          "module": "shared/default-workspace-constants.ts",
+          "sourceHash": "sha256:f9b0d119a134900196b3b090478c08c559e9e924874d9d6d80d72d2a5ad21baa"
+        },
+        {
+          "module": "shared/default-workspace.ts",
+          "sourceHash": "sha256:89720135ebb68edb778c23afbfa5b4902c158e8066223ccf7c30e009f4514212"
         },
         {
           "module": "shared/hana-root.ts",

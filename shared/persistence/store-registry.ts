@@ -509,7 +509,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     pathKind: "file",
     format: "mixed-directory",
     schemaSource: directorySource("core/agent-manager.ts", "agent config and authored Markdown/image profile protocol"),
-    protocolModules: ["core/agent.ts", "core/persona-source.ts", "core/first-run.ts", "server/index.ts", "shared/hana-runtime-paths.ts", "shared/hana-runtime-paths.cjs", "shared/hana-root.ts", "core/agents-md-migration.ts", "core/engine.ts", "shared/config-schema.ts", "shared/migrate-config-scope.ts"],
+    protocolModules: ["core/agent.ts", "core/persona-source.ts", "core/first-run.ts", "server/index.ts", "shared/hana-runtime-paths.ts", "shared/hana-runtime-paths.cjs", "shared/hana-root.ts", "core/agents-md-migration.ts", "shared/default-workspace.ts", "shared/default-workspace-constants.ts", "core/engine.ts", "shared/config-schema.ts", "shared/migrate-config-scope.ts"],
     openEntry: ["AgentManager.loadAgents", "new HanaAgent"],
     migrationEntry: ["lib/compat/checks/config-yaml.ts", "core/agents-md-migration.ts"],
     firstPossibleOpenPhase: "first_run_seed",

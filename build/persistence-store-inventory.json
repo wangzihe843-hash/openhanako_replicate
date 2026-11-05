@@ -330,6 +330,8 @@
         "shared/hana-runtime-paths.cjs",
         "shared/hana-root.ts",
         "core/agents-md-migration.ts",
+        "shared/default-workspace.ts",
+        "shared/default-workspace-constants.ts",
         "core/engine.ts",
         "shared/config-schema.ts",
         "shared/migrate-config-scope.ts"
