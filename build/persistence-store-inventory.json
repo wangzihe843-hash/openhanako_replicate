@@ -3562,9 +3562,9 @@
       "sourceFile": "core/first-run.ts",
       "kind": "secret-write",
       "excerpt": "writeSecretFileSync(cfgDest, YAML.dump(raw, { indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' }))",
-      "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
-      "storeId": null,
-      "exemptionId": "cross-store-first-run-bootstrap",
+      "reason": "Writes the final default agent configuration during first-run seeding or repair.",
+      "storeId": "agent-profile",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -11010,10 +11010,9 @@
         "copy-file",
         "mkdir",
         "rename",
-        "secret-write",
         "write-file"
       ],
-      "linePattern": "^(?:fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|writeSecretFileSync\\(cfgDest, YAML\\.dump\\(raw, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' \\}\\)\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$"
+      "linePattern": "^(?:fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$"
     },
     {
       "id": "cross-store-legacy-migrations",

@@ -47,14 +47,14 @@ describe("agent profile default workspace protocol dependencies", () => {
     expect(inventory.exemptions).toHaveLength(32);
     const dated = inventory.exemptions.filter((e: { expiresOn: string }) => e.expiresOn === "2026-11-17");
     expect(dated).toHaveLength(6);
-    expect(inventory.discoveredSites.filter((s: { exemptionId: string | null }) => dated.some((e: { id: string }) => e.id === s.exemptionId))).toHaveLength(89);
+    expect(inventory.discoveredSites.filter((s: { exemptionId: string | null }) => dated.some((e: { id: string }) => e.id === s.exemptionId))).toHaveLength(88);
     expect(inventory.discoveredSites.filter((s: { sourceFile: string }) => s.sourceFile === WORKSPACE))
       .toEqual([
         expect.objectContaining({ kind: "mkdir", excerpt: "fs.mkdirSync(defaultPath, { recursive: true })", storeId: null, exemptionId: "external-default-workspace" }),
         expect.objectContaining({ kind: "mkdir", excerpt: "fs.mkdirSync(workspacePath, { recursive: true })", storeId: null, exemptionId: "external-default-workspace" }),
       ]);
     expect(inventory.discoveredSites).toContainEqual(expect.objectContaining({
-      sourceFile: "core/first-run.ts", kind: "secret-write", storeId: null, exemptionId: "cross-store-first-run-bootstrap",
+      sourceFile: "core/first-run.ts", kind: "secret-write", storeId: OWNER, exemptionId: null,
     }));
     const profile = inventory.stores.find((store: { id: string }) => store.id === OWNER);
     expect(profile.pathPatterns).toContain("agents/{agentId}/config.yaml");

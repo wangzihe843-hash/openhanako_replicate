@@ -50,10 +50,9 @@
         "copy-file",
         "mkdir",
         "rename",
-        "secret-write",
         "write-file"
       ],
-      "linePattern": "^(?:fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|writeSecretFileSync\\(cfgDest, YAML\\.dump\\(raw, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: '\"' \\}\\)\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
+      "linePattern": "^(?:fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
       "ownerModule": "core/first-run.ts",
       "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
       "sourceFile": "core/first-run.ts"
@@ -594,7 +593,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:d40886f4afb726967ac9ad23ba9c8ff8527089ae4c547407b10f84babbda1b67",
+  "payloadFingerprint": "sha256:7a309324fd7e8b6483665e3baec03523cea5e289b82e945d1a0183ced09f550a",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3362,8 +3361,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Classifies the existing first-run default agent avatar parent directory creation under agent-profile; existing dependency coverage continues at whole file scope; runtime, paths, persisted formats, checkpoint and restore policies are unchanged.",
-    "payloadFingerprint": "sha256:d40886f4afb726967ac9ad23ba9c8ff8527089ae4c547407b10f84babbda1b67"
+    "compatibilityReason": "This review classifies only the final first-run config secret-write under agent-profile and preserves the previously reviewed avatar directory ownership under agent-profile. Persisted formats, runtime behavior, DATA_EPOCH, store paths, startup phases, checkpoint and restore policies remain unchanged. Protocol hashes still cover each whole file; prior compatible reviews remain applicable.",
+    "payloadFingerprint": "sha256:7a309324fd7e8b6483665e3baec03523cea5e289b82e945d1a0183ced09f550a"
   },
   "schemas": [
     {
@@ -5164,12 +5163,12 @@
       "storeId": null
     },
     {
-      "exemptionId": "cross-store-first-run-bootstrap",
+      "exemptionId": null,
       "kind": "secret-write",
       "ordinal": 0,
-      "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
+      "reason": "Writes the final default agent configuration during first-run seeding or repair.",
       "sourceFile": "core/first-run.ts",
-      "storeId": null
+      "storeId": "agent-profile"
     },
     {
       "exemptionId": null,

@@ -92,8 +92,8 @@ describe("first-run agent ID classification protocol dependencies", () => {
     expect(inventory.exemptions).toHaveLength(32);
     const dated = inventory.exemptions.filter((entry: { expiresOn: string }) => entry.expiresOn === "2026-11-17");
     expect(dated).toHaveLength(6);
-    expect(inventory.discoveredSites.filter((site: { exemptionId: string | null }) => dated.some((entry: { id: string }) => entry.id === site.exemptionId))).toHaveLength(89);
-    expect(inventory.discoveredSites.filter((site: { exemptionId: string | null }) => site.exemptionId === "cross-store-first-run-bootstrap")).toHaveLength(11);
+    expect(inventory.discoveredSites.filter((site: { exemptionId: string | null }) => dated.some((entry: { id: string }) => entry.id === site.exemptionId))).toHaveLength(88);
+    expect(inventory.discoveredSites.filter((site: { exemptionId: string | null }) => site.exemptionId === "cross-store-first-run-bootstrap")).toHaveLength(10);
   });
 
   it("removes only the two registrations from the previous inventory", () => {
