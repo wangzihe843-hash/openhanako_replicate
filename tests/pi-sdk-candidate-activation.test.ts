@@ -95,12 +95,12 @@ describe("isolated Pi candidate activation", () => {
       drift === 'patch' ? /checksum mismatch/ : drift === 'partial application' ? /partially applied/ : /Unreviewed edit/);
   });
 
-  it("triggers ordinary CI for only the explicit review branch addition", () => {
+  it("includes the isolated review branch in ordinary branch-push CI", () => {
     const ci = yaml.load(fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8')) as {
       on: { push: { branches: string[] } }; permissions: Record<string, string>;
     };
-    expect(ci.on.push.branches).toContain(REVIEW_BRANCH);
-    expect(ci.on.push.branches.some((branch: string) => branch.includes('*'))).toBe(false);
+    expect(ci.on.push.branches).toEqual(['**']);
+    expect(ci.on.push.branches.some((pattern) => path.posix.matchesGlob(REVIEW_BRANCH, pattern))).toBe(true);
     expect(ci.permissions).toEqual({ contents: 'read' });
   });
 });
