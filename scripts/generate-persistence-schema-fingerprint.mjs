@@ -10,6 +10,7 @@ import { VERSION as rollupVersion } from "rollup";
 import { parseAst } from "rollup/parseAst";
 
 import { scanPersistentStores } from "./scan-persistent-stores.mjs";
+import { agentPhoneMigrationProtocol } from "./persistence-agent-phone-migration.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const REPOSITORY_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -631,6 +632,12 @@ async function schemaEntry(rootDir, store, sourceOverrides) {
       break;
     default:
       throw new Error(`unsupported persistence schema source on ${store.id}: ${store.schemaSource.kind}`);
+  }
+  if (store.id === "agent-phone") {
+    entry.migrationProtocol = agentPhoneMigrationProtocol({
+      readSource: module => readRepositorySource(rootDir, module, sourceOverrides).toString("utf-8"),
+      hashSource: (module, text) => executableSourceHash(rootDir, module, new Map([[module, text]])),
+    });
   }
   const protocolModules = (store.protocolModules || [])
     .map((module) => ({

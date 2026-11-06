@@ -24,7 +24,7 @@ const priorStores = noOwner.map(store => store.id !== OWNER ? store : {
 });
 const priorExemptions = PERSISTENCE_EXEMPTIONS.map(exemption => {
   const previous = { ...exemption };
-  if (previous.id === EXEMPTION) delete previous.linePattern;
+  if (previous.id === EXEMPTION) previous.linePattern = previous.linePattern!.replace("^(?!.*\\btitlePath\\b)", "^");
   return previous;
 });
 const overrides = (text: string) => new Map([[MODULE, text]]);
@@ -87,13 +87,13 @@ describe("session title migration persistence ownership", () => {
     const exemptionChanges = changedRows(previous.inventory.exemptions, actual.inventory.exemptions);
     expect(exemptionChanges).toHaveLength(1);
     expect(exemptionChanges[0].before).toMatchObject({ id: EXEMPTION, expiresOn: "2026-11-17" });
-    expect(exemptionChanges[0].after).toEqual({ ...exemptionChanges[0].before, linePattern: "^(?!.*\\btitlePath\\b)" });
-    expect(previous.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(70);
-    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(69);
+    expect(exemptionChanges[0].after).toEqual({ ...exemptionChanges[0].before, linePattern: `^(?!.*\\btitlePath\\b)${exemptionChanges[0].before.linePattern.slice(1)}` });
+    expect(previous.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(67);
+    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(66);
     const datedIds = new Set(actual.inventory.exemptions.filter(exemption => exemption.expiresOn === "2026-11-17").map(exemption => exemption.id));
     expect(datedIds.size).toBe(6);
-    expect(previous.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(88);
-    expect(actual.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(87);
+    expect(previous.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(85);
+    expect(actual.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(84);
     assertCurrentMetadata();
   });
 
@@ -119,7 +119,7 @@ describe("session title migration persistence ownership", () => {
     const exemptionChanges = changedRows(previous.exemptions, committed.exemptions);
     expect(exemptionChanges).toHaveLength(1);
     expect(exemptionChanges[0].before.id).toBe(EXEMPTION);
-    expect(exemptionChanges[0].after).toEqual({ ...exemptionChanges[0].before, linePattern: "^(?!.*\\btitlePath\\b)" });
+    expect(exemptionChanges[0].after).toEqual({ ...exemptionChanges[0].before, linePattern: `^(?!.*\\btitlePath\\b)${exemptionChanges[0].before.linePattern.slice(1)}` });
     assertCurrentMetadata();
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, committedFingerprint: committed })).resolves.toEqual(committed);
   });

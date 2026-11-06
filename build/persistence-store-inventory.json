@@ -273,10 +273,12 @@
       ],
       "protocolModules": [
         "lib/conversations/agent-phone-runtime.ts",
-        "hub/agent-executor.ts"
+        "hub/agent-executor.ts",
+        "shared/safe-fs.ts",
+        "shared/link-aware-fs.ts"
       ],
       "firstPossibleOpenPhase": "engine_construct",
-      "firstPossibleWritePhase": "runtime_ready",
+      "firstPossibleWritePhase": "engine_init_legacy_migrations",
       "epochPolicy": "epoch-managed",
       "checkpointPolicy": "Included in a future epoch checkpoint unless the coordinator explicitly classifies it otherwise.",
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
@@ -3913,9 +3915,9 @@
       "sourceFile": "core/migrations.ts",
       "kind": "atomic-write",
       "excerpt": "atomicWriteSync(projectionPath, nextProjection)",
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
-      "storeId": null,
-      "exemptionId": "cross-store-legacy-migrations",
+      "reason": "Moves only migration #32 projection and runtime publications into the existing Agent Phone store.",
+      "storeId": "agent-phone",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -3931,9 +3933,9 @@
       "sourceFile": "core/migrations.ts",
       "kind": "atomic-write",
       "excerpt": "atomicWriteSync(runtimePath, JSON.stringify(nextRuntime, null, 2) + \"\\n\")",
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
-      "storeId": null,
-      "exemptionId": "cross-store-legacy-migrations",
+      "reason": "Moves only migration #32 projection and runtime publications into the existing Agent Phone store.",
+      "storeId": "agent-phone",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -4039,9 +4041,9 @@
       "sourceFile": "core/migrations.ts",
       "kind": "mkdir",
       "excerpt": "fs.mkdirSync(runtimeDir, { recursive: true })",
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
-      "storeId": null,
-      "exemptionId": "cross-store-legacy-migrations",
+      "reason": "Moves only migration #32 projection and runtime publications into the existing Agent Phone store.",
+      "storeId": "agent-phone",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -11033,7 +11035,7 @@
         "secret-write",
         "persistent-store-constructor"
       ],
-      "linePattern": "^(?!.*\\btitlePath\\b)"
+      "linePattern": "^(?!.*\\btitlePath\\b)(?!(?:atomicWriteSync\\(projectionPath, nextProjection\\)|fs\\.mkdirSync\\(runtimeDir, \\{ recursive: true \\}\\)|atomicWriteSync\\(runtimePath, JSON\\.stringify\\(nextRuntime, null, 2\\) \\+ \"\\\\n\"\\))$)"
     },
     {
       "id": "data-epoch-durable-json-primitive",

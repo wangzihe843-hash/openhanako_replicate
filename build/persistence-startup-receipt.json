@@ -59,7 +59,7 @@
     {
       "id": "agent-phone",
       "firstPossibleOpenPhase": "engine_construct",
-      "firstPossibleWritePhase": "runtime_ready",
+      "firstPossibleWritePhase": "engine_init_legacy_migrations",
       "opensBeforeFutureCoordinator": false,
       "writesBeforeFutureCoordinator": false,
       "bootstrapSafety": null,
