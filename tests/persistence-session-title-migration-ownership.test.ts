@@ -92,8 +92,8 @@ describe("session title migration persistence ownership", () => {
     expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(69);
     const datedIds = new Set(actual.inventory.exemptions.filter(exemption => exemption.expiresOn === "2026-11-17").map(exemption => exemption.id));
     expect(datedIds.size).toBe(6);
-    expect(previous.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(88);
-    expect(actual.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(87);
+    expect(previous.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(87);
+    expect(actual.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(86);
     assertCurrentMetadata();
   });
 

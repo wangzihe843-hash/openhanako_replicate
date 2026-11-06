@@ -63,8 +63,8 @@ describe("first-run public persona ownership", () => {
     expect(previous.startupReceipt).toEqual(actual.startupReceipt);
     const dated = actual.inventory.exemptions.filter(e => e.expiresOn === "2026-11-17");
     expect(dated).toHaveLength(6);
-    expect(actual.inventory.discoveredSites.filter(s => dated.some(e => e.id === s.exemptionId))).toHaveLength(87);
-    expect(actual.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(10);
+    expect(actual.inventory.discoveredSites.filter(s => dated.some(e => e.id === s.exemptionId))).toHaveLength(86);
+    expect(actual.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(9);
   });
 
   it("rejects the copy site without an owner or exemption", () => {
