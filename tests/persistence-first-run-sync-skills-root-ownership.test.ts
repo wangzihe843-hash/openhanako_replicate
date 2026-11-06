@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ensureFirstRun } from "../core/first-run.ts";
 import { assertCommittedPersistenceSchemaFingerprint, generatePersistenceSchemaFingerprint } from "../scripts/generate-persistence-schema-fingerprint.mjs";
 import { scanPersistentStores } from "../scripts/scan-persistent-stores.mjs";
@@ -53,48 +53,60 @@ function setup(withSource: boolean) {
 }
 
 describe("first-run syncSkills root ownership", () => {
-  it("moves exactly dstDir and preserves descriptors, startup receipt, expiry and skillsDst", async () => {
-    const actual = scanPersistentStores({ rootDir: ROOT });
-    const previous = scanPersistentStores({ rootDir: ROOT, stores: noOwner, exemptions: priorExemptions });
-    expect(actual.inventory).toEqual(inventory);
-    expect(actual.startupReceipt).toEqual(receipt);
-    expect(actual.inventory.stores).toHaveLength(65);
-    expect(actual.inventory.discoveredSites).toHaveLength(905);
-    expect(actual.inventory.exemptions).toHaveLength(32);
-    expect(actual.inventory.discoveredSites.filter(site => site.storeId)).toHaveLength(718);
-    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId)).toHaveLength(187);
-    const changed = previous.inventory.discoveredSites.map((before, index) => ({ before, after: actual.inventory.discoveredSites[index] }))
-      .filter(({ before, after }) => JSON.stringify(before) !== JSON.stringify(after));
-    expect(changed).toHaveLength(1);
-    const { before, after } = changed[0];
-    expect(before).toMatchObject({ sourceFile: MODULE, kind: "mkdir", excerpt: call, ordinal: 0, storeId: null, exemptionId: EXEMPTION });
-    expect(after).toEqual({ ...before, reason, storeId: OWNER, exemptionId: null });
-    expect(previous.inventory.stores).toEqual(actual.inventory.stores);
-    expect(previous.startupReceipt).toEqual(receipt);
-    expect(previous.inventory.exemptions.filter(e => e.id !== EXEMPTION)).toEqual(actual.inventory.exemptions.filter(e => e.id !== EXEMPTION));
-    const oldExemption = previous.inventory.exemptions.find(e => e.id === EXEMPTION)!;
-    const exemption = actual.inventory.exemptions.find(e => e.id === EXEMPTION)!;
-    expect({ ...oldExemption, linePattern: exemption.linePattern }).toEqual(exemption);
-    expect(exemption.expiresOn).toBe("2026-11-17");
-    expect(actual.inventory.discoveredSites).toContainEqual(expect.objectContaining({
-      sourceFile: MODULE, kind: "mkdir", excerpt: "fs.mkdirSync(skillsDst, { recursive: true })", storeId: null, exemptionId: EXEMPTION,
-    }));
-    const dated = actual.inventory.exemptions.filter(e => e.expiresOn === "2026-11-17");
-    expect(dated).toHaveLength(6);
-    expect(actual.inventory.discoveredSites.filter(site => dated.some(e => e.id === site.exemptionId))).toHaveLength(84);
-    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(9);
-    const priorFingerprint = await generatePersistenceSchemaFingerprint({ rootDir: ROOT, inventory: previous.inventory,
-      review: { classification: "compatible", compatibilityReason: "Test-only reconstruction of the preceding single-site exemption." } });
-    const { siteMappings, exemptions, payloadFingerprint, review, ...unchanged } = committed;
-    const { siteMappings: oldMappings, exemptions: oldExemptions, payloadFingerprint: oldHash, review: _oldReview, ...oldUnchanged } = priorFingerprint;
-    expect(unchanged).toEqual(oldUnchanged);
-    expect(payloadFingerprint).not.toBe(oldHash);
-    const changedMappings = oldMappings.map((oldMapping, index) => ({ before: oldMapping, after: siteMappings[index] }))
-      .filter(({ before, after }) => JSON.stringify(before) !== JSON.stringify(after));
-    expect(changedMappings).toHaveLength(1);
-    expect(changedMappings[0].after).toEqual({ ...changedMappings[0].before, reason, storeId: OWNER, exemptionId: null });
-    expect(exemptions.filter((e: { id: string }) => e.id !== EXEMPTION)).toEqual(oldExemptions.filter((e: { id: string }) => e.id !== EXEMPTION));
-    expect(review.classification).toBe("compatible");
+  describe("metadata comparison", () => {
+    let actual: ReturnType<typeof scanPersistentStores>;
+    let previous: ReturnType<typeof scanPersistentStores>;
+
+    // Keep real full scans and full schema hashing in separate bounded phases.
+    beforeAll(() => {
+      actual = scanPersistentStores({ rootDir: ROOT });
+      previous = scanPersistentStores({ rootDir: ROOT, stores: noOwner, exemptions: priorExemptions });
+    }, 10_000);
+
+    it("moves exactly dstDir and preserves descriptors, startup receipt, expiry and skillsDst", () => {
+      expect(actual.inventory).toEqual(inventory);
+      expect(actual.startupReceipt).toEqual(receipt);
+      expect(actual.inventory.stores).toHaveLength(65);
+      expect(actual.inventory.discoveredSites).toHaveLength(905);
+      expect(actual.inventory.exemptions).toHaveLength(32);
+      expect(actual.inventory.discoveredSites.filter(site => site.storeId)).toHaveLength(718);
+      expect(actual.inventory.discoveredSites.filter(site => site.exemptionId)).toHaveLength(187);
+      const changed = previous.inventory.discoveredSites.map((before, index) => ({ before, after: actual.inventory.discoveredSites[index] }))
+        .filter(({ before, after }) => JSON.stringify(before) !== JSON.stringify(after));
+      expect(changed).toHaveLength(1);
+      const { before, after } = changed[0];
+      expect(before).toMatchObject({ sourceFile: MODULE, kind: "mkdir", excerpt: call, ordinal: 0, storeId: null, exemptionId: EXEMPTION });
+      expect(after).toEqual({ ...before, reason, storeId: OWNER, exemptionId: null });
+      expect(previous.inventory.stores).toEqual(actual.inventory.stores);
+      expect(previous.startupReceipt).toEqual(receipt);
+      expect(previous.inventory.exemptions.filter(e => e.id !== EXEMPTION)).toEqual(actual.inventory.exemptions.filter(e => e.id !== EXEMPTION));
+      const oldExemption = previous.inventory.exemptions.find(e => e.id === EXEMPTION)!;
+      const exemption = actual.inventory.exemptions.find(e => e.id === EXEMPTION)!;
+      expect({ ...oldExemption, linePattern: exemption.linePattern }).toEqual(exemption);
+      expect(exemption.expiresOn).toBe("2026-11-17");
+      expect(actual.inventory.discoveredSites).toContainEqual(expect.objectContaining({
+        sourceFile: MODULE, kind: "mkdir", excerpt: "fs.mkdirSync(skillsDst, { recursive: true })", storeId: null, exemptionId: EXEMPTION,
+      }));
+      const dated = actual.inventory.exemptions.filter(e => e.expiresOn === "2026-11-17");
+      expect(dated).toHaveLength(6);
+      expect(actual.inventory.discoveredSites.filter(site => dated.some(e => e.id === site.exemptionId))).toHaveLength(84);
+      expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(9);
+    });
+
+    it("changes only the syncSkills mapping and exemption in the full fingerprint", async () => {
+      const priorFingerprint = await generatePersistenceSchemaFingerprint({ rootDir: ROOT, inventory: previous.inventory,
+        review: { classification: "compatible", compatibilityReason: "Test-only reconstruction of the preceding single-site exemption." } });
+      const { siteMappings, exemptions, payloadFingerprint, review, ...unchanged } = committed;
+      const { siteMappings: oldMappings, exemptions: oldExemptions, payloadFingerprint: oldHash, review: _oldReview, ...oldUnchanged } = priorFingerprint;
+      expect(unchanged).toEqual(oldUnchanged);
+      expect(payloadFingerprint).not.toBe(oldHash);
+      const changedMappings = oldMappings.map((oldMapping, index) => ({ before: oldMapping, after: siteMappings[index] }))
+        .filter(({ before, after }) => JSON.stringify(before) !== JSON.stringify(after));
+      expect(changedMappings).toHaveLength(1);
+      expect(changedMappings[0].after).toEqual({ ...changedMappings[0].before, reason, storeId: OWNER, exemptionId: null });
+      expect(exemptions.filter((e: { id: string }) => e.id !== EXEMPTION)).toEqual(oldExemptions.filter((e: { id: string }) => e.id !== EXEMPTION));
+      expect(review.classification).toBe("compatible");
+    });
   });
 
   it("proves the helper stays private and has exactly one direct caller with the user-root argument", () => {
