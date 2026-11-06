@@ -50,17 +50,49 @@ function stepRun(step: WorkflowStep): string {
   return typeof step.run === "string" ? step.run : "";
 }
 
+interface CiTriggers {
+  push: { branches?: string[]; "branches-ignore"?: string[]; tags?: string[]; "tags-ignore"?: string[] };
+  pull_request: { branches: string[] };
+}
+
+function expectCiTriggerContract(triggers: unknown): void {
+  expect(triggers).toEqual({
+    push: { branches: ["**"] },
+    pull_request: { branches: ["main"] },
+  });
+}
+
+// These examples use only the pinned `**` and literal name patterns below;
+// this is not a general implementation of GitHub's branch-filter syntax.
+function matchesPatterns(patterns: string[] | undefined, name: string): boolean {
+  return patterns?.some((pattern) => path.posix.matchesGlob(name, pattern)) ?? false;
+}
+
+function matchesPushRef(triggers: CiTriggers, ref: string): boolean {
+  const head = ref.startsWith("refs/heads/");
+  const tag = ref.startsWith("refs/tags/");
+  if (!head && !tag) return false;
+  const name = ref.slice((head ? "refs/heads/" : "refs/tags/").length);
+  const { branches, tags } = triggers.push;
+  const branchesIgnore = triggers.push["branches-ignore"];
+  const tagsIgnore = triggers.push["tags-ignore"];
+  const included = head ? branches : tags;
+  const excluded = head ? branchesIgnore : tagsIgnore;
+  const otherIncluded = head ? tags : branches;
+  const otherExcluded = head ? tagsIgnore : branchesIgnore;
+  if (included !== undefined) return matchesPatterns(included, name);
+  if (excluded !== undefined) return !matchesPatterns(excluded, name);
+  return otherIncluded === undefined && otherExcluded === undefined;
+}
+
 describe("fork workflow safety", () => {
   const ci = loadWorkflow(CI_YAML_PATH);
   const build = loadWorkflow(BUILD_YAML_PATH);
 
-  it("checks the exact acceptance branch and feature pushes with the existing platform coverage", () => {
-    expect(ci.on).toEqual({
-      push: { branches: ["main", "feature/xingye-mvp", "review/ci22-integration-20261009", "review/pi-1.2.0-prep-20261013"] },
-      pull_request: { branches: ["main"] },
-    });
+  it("checks every branch push and main-targeted PR with the existing platform coverage", () => {
+    expectCiTriggerContract(ci.on);
     expect(ci.concurrency).toEqual({
-      group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
+      group: "${{ github.workflow }}-${{ github.event_name == 'push' && format('push-{0}', github.run_id) || (github.event.pull_request.number || github.ref) }}",
       "cancel-in-progress": true,
     });
     expect(Object.keys(ci.jobs).sort()).toEqual(["lint-open-boundary", "open-build-smoke", "test", "windows-auth-lock-native"]);
@@ -75,30 +107,51 @@ describe("fork workflow safety", () => {
   });
 
   it.each([
+    ["refs/heads/main", true],
+    ["refs/heads/feature/xingye-mvp", true],
+    ["refs/heads/feature/unrelated", true],
+    ["refs/heads/review/pi-1.2.0-prep-20261013", true],
+    ["refs/heads/review/ci22-integration-20261009/nested", true],
+    ["refs/heads/review/CI22-integration-20261009", true],
+    ["refs/tags/main", false],
+    ["refs/tags/v1.2.3", false],
+    ["refs/tags/review/ci22-integration-20261009", false],
+    ["refs/pull/42/merge", false],
+  ])("matches push ref %s: %s", (ref, expected) => {
+    expect(matchesPushRef(ci.on as CiTriggers, ref)).toBe(expected);
+  });
+
+  it("distinguishes branch-only triggers from unfiltered or tag-filtered pushes", () => {
+    const pr = { branches: ["main"] };
+    const tag = "refs/tags/v1.2.3";
+    const ignore = { push: { branches: ["**"], "tags-ignore": ["private"] }, pull_request: pr };
+    expect(matchesPushRef(ci.on as CiTriggers, tag)).toBe(false);
+    expect(matchesPushRef({ push: {}, pull_request: pr }, tag)).toBe(true);
+    expect(matchesPushRef(ignore, tag)).toBe(true);
+    expect(matchesPushRef(ignore, "refs/tags/private")).toBe(false);
+    expect(matchesPushRef({ push: { branches: ["**"], tags: ["**"] }, pull_request: pr }, tag)).toBe(true);
+  });
+
+  it.each([
     ["main", true],
-    ["feature/xingye-mvp", true],
-    ["review/ci22-integration-20261009", true],
-    ["review/pi-1.2.0-prep-20261013", true],
-    ["review/pi-1.2.0-prep-20261013-extra", false],
-    ["review/pi-1.2.0-prep-20261013/nested", false],
-    ["review/pi-1.2.0-prep-20261014", false],
-    ["feature/unrelated", false],
-    ["feature/xingye-mvp-extra", false],
     ["main-extra", false],
-    ["fix/ci22-macos-electron-init-20261009", false],
-    ["review/xingye-ci-publish-prep-20261009", false],
-    ["review/ci-smoke-20261009", false],
-    ["review/ci22-other-20261009", false],
-    ["review/ci22-integration", false],
-    ["review/ci22-integration-20261010", false],
-    ["review/ci22-integration-20261009-extra", false],
-    ["review/ci22-integration-20261009/nested", false],
-    ["review/CI22-integration-20261009", false],
-    ["other/review/ci22-integration-20261009", false],
-  ])("matches push branch %s only when explicitly allowed (%s)", (branch, expected) => {
-    const events = ci.on as { push: { branches: string[] } };
-    // The trigger assertion above pins literal names, so no glob emulation is needed.
-    expect(events.push.branches.includes(branch)).toBe(expected);
+    ["feature/xingye-mvp", false],
+    ["review/nested/branch", false],
+  ])("matches PR target %s: %s", (target, expected) => {
+    expect(matchesPatterns((ci.on as CiTriggers).pull_request.branches, target)).toBe(expected);
+  });
+
+  it.each([
+    ["single-level branch glob", { push: { branches: ["*"] }, pull_request: { branches: ["main"] } }],
+    ["old branch allowlist", { push: { branches: ["main", "feature/xingye-mvp"] }, pull_request: { branches: ["main"] } }],
+    ["tag push", { push: { branches: ["**"], tags: ["v*"] }, pull_request: { branches: ["main"] } }],
+    ["tag ignore filter", { push: { branches: ["**"], "tags-ignore": ["private"] }, pull_request: { branches: ["main"] } }],
+    ["missing branch filter", { push: {}, pull_request: { branches: ["main"] } }],
+    ["path filter", { push: { branches: ["**"], paths: ["src/**"] }, pull_request: { branches: ["main"] } }],
+    ["broader PR target", { push: { branches: ["**"] }, pull_request: { branches: ["**"] } }],
+    ["extra event", { push: { branches: ["**"] }, pull_request: { branches: ["main"] }, workflow_dispatch: null }],
+  ])("rejects unintended trigger change: %s", (_description, triggers) => {
+    expect(() => expectCiTriggerContract(triggers)).toThrow();
   });
 
   it("uses the triggering commit for every checkout without a ref input or secrets", () => {
