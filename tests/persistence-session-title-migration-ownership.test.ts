@@ -12,6 +12,8 @@ const OWNER = "session-sidecars";
 const EXEMPTION = "cross-store-legacy-migrations";
 const reason = "Removes injected-envelope titles from the registered per-agent session title sidecar in migration #53.";
 const call = "atomicWriteSync(titlePath, JSON.stringify(titles, null, 2))";
+const escapedCall = call.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const currentLegacyExemption = PERSISTENCE_EXEMPTIONS.find(exemption => exemption.id === EXEMPTION)!;
 const source = fs.readFileSync(path.join(ROOT, MODULE), "utf8");
 const inventory = JSON.parse(fs.readFileSync(path.join(ROOT, "build/persistence-store-inventory.json"), "utf8"));
 const receipt = JSON.parse(fs.readFileSync(path.join(ROOT, "build/persistence-startup-receipt.json"), "utf8"));
@@ -24,7 +26,7 @@ const priorStores = noOwner.map(store => store.id !== OWNER ? store : {
 });
 const priorExemptions = PERSISTENCE_EXEMPTIONS.map(exemption => {
   const previous = { ...exemption };
-  if (previous.id === EXEMPTION) delete previous.linePattern;
+  if (previous.id === EXEMPTION) previous.linePattern = `(?:${previous.linePattern})|(?:^${escapedCall}$)`;
   return previous;
 });
 const overrides = (text: string) => new Map([[MODULE, text]]);
@@ -87,13 +89,13 @@ describe("session title migration persistence ownership", () => {
     const exemptionChanges = changedRows(previous.inventory.exemptions, actual.inventory.exemptions);
     expect(exemptionChanges).toHaveLength(1);
     expect(exemptionChanges[0].before).toMatchObject({ id: EXEMPTION, expiresOn: "2026-11-17" });
-    expect(exemptionChanges[0].after).toEqual({ ...exemptionChanges[0].before, linePattern: "^(?!.*\\btitlePath\\b)" });
-    expect(previous.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(70);
-    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(69);
+    expect(exemptionChanges[0].after).toEqual({ ...exemptionChanges[0].before, linePattern: currentLegacyExemption.linePattern });
+    expect(previous.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(68);
+    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(67);
     const datedIds = new Set(actual.inventory.exemptions.filter(exemption => exemption.expiresOn === "2026-11-17").map(exemption => exemption.id));
     expect(datedIds.size).toBe(6);
-    expect(previous.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(88);
-    expect(actual.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(87);
+    expect(previous.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(86);
+    expect(actual.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(85);
     assertCurrentMetadata();
   });
 
@@ -119,7 +121,7 @@ describe("session title migration persistence ownership", () => {
     const exemptionChanges = changedRows(previous.exemptions, committed.exemptions);
     expect(exemptionChanges).toHaveLength(1);
     expect(exemptionChanges[0].before.id).toBe(EXEMPTION);
-    expect(exemptionChanges[0].after).toEqual({ ...exemptionChanges[0].before, linePattern: "^(?!.*\\btitlePath\\b)" });
+    expect(exemptionChanges[0].after).toEqual({ ...exemptionChanges[0].before, linePattern: currentLegacyExemption.linePattern });
     assertCurrentMetadata();
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, committedFingerprint: committed })).resolves.toEqual(committed);
   });
