@@ -52,7 +52,7 @@
         "rename",
         "write-file"
       ],
-      "linePattern": "^(?:fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
+      "linePattern": "^(?:fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
       "ownerModule": "core/first-run.ts",
       "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
       "sourceFile": "core/first-run.ts"
@@ -594,7 +594,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:9daa7791fae0d18e6ce4d0f55c350f90ce7ea94f1f315495e083a4a507099da9",
+  "payloadFingerprint": "sha256:89f19191d4152bb7076c3db1adaeb8771df54caa061415728d2e69fd954a5c5b",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3362,8 +3362,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Attribute only the existing migration #53 session-titles.json atomic-write site to session-sidecars and exclude titlePath writes from the legacy migration exemption. Correct the store earliest write phase to engine_construct because existing session-manifest startup backfill can write titles in the Engine constructor; #53 itself remains an engine_init_legacy_migrations writer. This is ownership and phase metadata only: persisted formats and runtime behavior are unchanged, DATA_EPOCH stays 1, all schema source hashes and protocol dependencies remain unchanged, and the other 69 legacy migration exemption sites retain their expiry. The preceding first-run final config and avatar ownership registrations remain unchanged. No core/migrations.ts semantic fingerprint is added; path construction, envelope filtering, and migration dispatch still require targeted tests and review. Prior compatible reviews remain applicable; existing protocol hashes cover each whole file.",
-    "payloadFingerprint": "sha256:9daa7791fae0d18e6ce4d0f55c350f90ce7ea94f1f315495e083a4a507099da9"
+    "compatibilityReason": "Register only the syncSkills dstDir mkdir under existing skill-state and narrow its dated first-run exemption. Retain the baseline review to attribute migration #53 session title writes to session-sidecars and its existing engine_construct write phase. Persisted formats, runtime behavior, startup phases, checkpoint and restore policies, DATA_EPOCH and all schema entries are unchanged by this candidate. Existing protocol hashes still cover each whole file; previous compatible reviews remain applicable.",
+    "payloadFingerprint": "sha256:89f19191d4152bb7076c3db1adaeb8771df54caa061415728d2e69fd954a5c5b"
   },
   "schemas": [
     {
@@ -5092,12 +5092,12 @@
       "storeId": null
     },
     {
-      "exemptionId": "cross-store-first-run-bootstrap",
+      "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
-      "reason": "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
+      "reason": "Ensures the user skill root before syncing bundled skills.",
       "sourceFile": "core/first-run.ts",
-      "storeId": null
+      "storeId": "skill-state"
     },
     {
       "exemptionId": null,

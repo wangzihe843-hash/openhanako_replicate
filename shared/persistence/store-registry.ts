@@ -1191,6 +1191,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     identityContract: "skillName is identity within the user skill root; bundle IDs are registry keys.",
     siteRules: [
       ...rules(["lib/skill-bundles/package-service.ts", "lib/skill-bundles/store.ts", "lib/skills/skill-package-installer.ts", "server/utils/uploaded-skill-package.ts"], "Installs, exports, uploads, or records skill packages."),
+      ...rules(["core/first-run.ts"], "Ensures the user skill root before syncing bundled skills.", ["mkdir"], "^fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)$"),
       ...rules(["core/engine.ts"], "Creates the user skill root.", ["mkdir"], "skillsDir"),
       ...rules(["lib/character-cards/service.ts"], "Installs, rolls back, or renames a skill imported from a character card.", ["mkdir", "write-file", "remove-path"], "(?:engine[.]userSkillsDir|skillMdPath|item[.]dir)"),
       ...rules(["server/routes/skills.ts"], "Removes an installed user skill through the skill owner route.", ["remove-path"], "rmSync\\(dir"),
@@ -1690,7 +1691,7 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "First-run seeds several registered stores from packaged templates. Flow-sensitive attribution moves into the future coordinator; this exact composition file is not ignored by directory.",
     "2026-11-17",
     ["copy-file", "mkdir", "rename", "write-file"],
-    "^(?:fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(dstDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
+    "^(?:fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
   ),
   exemption(
     "cross-store-legacy-migrations",
