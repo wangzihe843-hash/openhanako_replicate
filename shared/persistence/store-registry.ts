@@ -840,11 +840,14 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     format: "mixed-directory",
     schemaSource: directorySource("lib/desk/cron-store.ts", "CronStore job registry and run receipt protocol"),
     openEntry: ["new CronStore", "StudioCronService"],
-    migrationEntry: ["core/migrations.ts cron migrations"],
+    migrationEntry: ["core/migrations.ts #30/#38 patchCronJobsFileForAutomation", "core/migrations.ts #39 repairAutomationOwnershipFile"],
+    protocolModules: ["lib/desk/automation-normalizer.ts", "lib/desk/agent-run-automation.ts", "shared/safe-fs.ts"],
+    firstPossibleWritePhase: "engine_init_legacy_migrations",
     identityContract: "jobId and runId are scoped to their agentId or studioId owner.",
     siteRules: [
       ...rules(["lib/desk/cron-store.ts", "core/studio-cron-service.ts"], "Writes cron jobs or execution receipts."),
       ...rules(["core/agent.ts"], "Constructs an agent or studio CronStore.", ["persistent-store-constructor"], "CronStore"),
+      ...rules(["core/migrations.ts"], "Upgrades the registered agent/studio cron job document through #30/#38 and repairs automation ownership through #39.", ["atomic-write"], "^atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$"),
     ],
   }),
   defineStore({
@@ -1699,7 +1702,7 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
     "2026-11-17",
     ALL_SITE_KINDS,
-    "^(?!.*\\btitlePath\\b)",
+    "^(?!.*\\btitlePath\\b)(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)",
   ),
   exemption(
     "external-desk-workspace-roots",
