@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
-import { assertCommittedPersistenceSchemaFingerprint, generatePersistenceSchemaFingerprint } from "../scripts/generate-persistence-schema-fingerprint.mjs";
+import { assertCommittedPersistenceSchemaFingerprint, executableSourceHash, generatePersistenceSchemaFingerprint } from "../scripts/generate-persistence-schema-fingerprint.mjs";
 import { scanPersistentStores } from "../scripts/scan-persistent-stores.mjs";
 import { PERSISTENCE_EXEMPTIONS, PERSISTENT_STORES } from "../shared/persistence/store-registry.ts";
 
@@ -30,6 +30,14 @@ const priorExemptions = PERSISTENCE_EXEMPTIONS.map(entry => entry.id !== EXEMPTI
 });
 const review = { classification: "compatible", compatibilityReason: "Test-only Cron migration attribution mutation." };
 const overrides = (text: string) => new Map([[MODULE, text]]);
+// #35 pins this whole source and the shared writer. Keep the preceding Cron
+// matcher oracle in a read-only fixture, while the real proof must reject first.
+const cronMutationExemptions = PERSISTENCE_EXEMPTIONS.map(entry => { const copy = { ...entry }; delete copy.excludedSites; return copy; });
+const pinnedModules = [MODULE, "shared/safe-fs.ts", "shared/secret-fs.ts"];
+function scanCronMutation(sourceOverrides) {
+  expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides })).toThrow(/MiniMax #35 ownership/);
+  return scanPersistentStores({ rootDir: ROOT, sourceOverrides, exemptions: cronMutationExemptions });
+}
 vi.setConfig({ testTimeout: 30_000 });
 
 function changedRows(before, after) {
@@ -46,6 +54,14 @@ function assertMetadata() {
 }
 
 async function rejectsChangedFingerprint(sourceOverrides) {
+  if (pinnedModules.some(module => sourceOverrides.has(module))) {
+    const changedInventory = scanCronMutation(sourceOverrides).inventory;
+    await expect(generatePersistenceSchemaFingerprint({ rootDir: ROOT, inventory, sourceOverrides, review }))
+      .rejects.toThrow(/MiniMax #35 ownership/);
+    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, sourceOverrides, committedFingerprint: committed }))
+      .rejects.toThrow(/MiniMax #35 ownership/);
+    return changedInventory;
+  }
   const changedInventory = scanPersistentStores({ rootDir: ROOT, sourceOverrides }).inventory;
   await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory: changedInventory, sourceOverrides, committedFingerprint: committed }))
     .rejects.toThrow(/persistence schema fingerprint mismatch/);
@@ -53,7 +69,7 @@ async function rejectsChangedFingerprint(sourceOverrides) {
 }
 
 // This finite guard covers caller paths/slots in the migration composition file.
-// It does not claim that the schema fingerprint hashes all of migrations.ts.
+// The independent #35 proof now additionally pins the complete migrations.ts.
 function assertCallerPaths(text: string) {
   const ast = ts.createSourceFile(MODULE, text, ts.ScriptTarget.Latest, true);
   const functions = new Map(ast.statements.filter(ts.isFunctionDeclaration).map(fn => [fn.name?.text, fn.getText(ast)]));
@@ -98,11 +114,11 @@ describe("Cron migration persistence ownership", () => {
       { before: previous.inventory.exemptions.find(entry => entry.id === EXEMPTION), after: actual.inventory.exemptions.find(entry => entry.id === EXEMPTION) },
     ]);
     expect(actual.inventory.exemptions.map(entry => [entry.id, entry.expiresOn])).toEqual(previous.inventory.exemptions.map(entry => [entry.id, entry.expiresOn]));
-    expect(previous.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(69);
-    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(67);
+    expect(previous.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(68);
+    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(66);
     const dated = new Set(actual.inventory.exemptions.filter(entry => entry.expiresOn === "2026-11-17").map(entry => entry.id));
-    expect(previous.inventory.discoveredSites.filter(site => dated.has(site.exemptionId))).toHaveLength(86);
-    expect(actual.inventory.discoveredSites.filter(site => dated.has(site.exemptionId))).toHaveLength(84);
+    expect(previous.inventory.discoveredSites.filter(site => dated.has(site.exemptionId))).toHaveLength(85);
+    expect(actual.inventory.discoveredSites.filter(site => dated.has(site.exemptionId))).toHaveLength(83);
     const cronModelWrites = actual.inventory.discoveredSites.filter(site => site.sourceFile === MODULE && (
       site.excerpt === 'fs.renameSync(tmp, jobsPath)' || site.excerpt === 'fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\\n", "utf-8")'
     ));
@@ -146,7 +162,7 @@ describe("Cron migration persistence ownership", () => {
   });
 
   it("rejects both deleted calls through the dangling rule", () => {
-    expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(source.replaceAll(CALL, "void jobsPath")) })).toThrow(/dangling persistence rule for store cron-automation/);
+    expect(() => scanCronMutation(overrides(source.replaceAll(CALL, "void jobsPath")))).toThrow(/dangling persistence rule for store cron-automation/);
   });
 
   it("detects an identical third write through the inventory and committed fingerprint", async () => {
@@ -163,6 +179,11 @@ describe("Cron migration persistence ownership", () => {
     const text = fs.readFileSync(path.join(ROOT, module), "utf8");
     expect(text.split(before)).toHaveLength(2);
     const sourceOverrides = new Map([[module, text.replace(before, after)]]);
+    if (pinnedModules.includes(module)) {
+      expect(executableSourceHash(ROOT, module, sourceOverrides)).not.toBe(executableSourceHash(ROOT, module));
+      await rejectsChangedFingerprint(sourceOverrides);
+      return;
+    }
     expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides }).inventory).toEqual(inventory);
     const changed = await generatePersistenceSchemaFingerprint({ rootDir: ROOT, inventory, sourceOverrides, review });
     expect(changed.schemas.find(schema => schema.storeId === OWNER)).not.toEqual(committed.schemas.find(schema => schema.storeId === OWNER));

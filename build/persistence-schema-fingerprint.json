@@ -58,6 +58,13 @@
       "sourceFile": "core/first-run.ts"
     },
     {
+      "excludedSites": [
+        {
+          "expression": "writeSecretFileSync(ymlPath, yamlStr)",
+          "kind": "secret-write",
+          "occurrence": 0
+        }
+      ],
       "expiresOn": "2026-11-17",
       "id": "cross-store-legacy-migrations",
       "kinds": [
@@ -594,7 +601,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:bd6303278ce3fa2f2005122cd3d81d086ee9d0f5749c18a2e8be47174fd22c30",
+  "payloadFingerprint": "sha256:0a0f5f8fe6bcb9053740765dae0a18128df7a6137e43d41419d615f39f755865",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -2269,7 +2276,12 @@
         "provider-plugins/{storageId}/providers/{storageId}.json"
       ],
       "preCoordinatorReadProjection": null,
-      "protocolModules": [],
+      "protocolModules": [
+        "core/migrations.ts",
+        "shared/safe-fs.ts",
+        "shared/secret-fs.ts",
+        "scripts/persistence-minimax-endpoint.mjs"
+      ],
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
       "schemaContract": {
         "compatibility": "The named runtime reader is canonical; this inventory does not imply stricter validation than runtime currently performs.",
@@ -3367,8 +3379,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Attribute exactly two existing Cron migration writes (#30/#38 helper and #39) to cron-automation on the accepted syncSkills root baseline; retain the skill-state mkdir attribution and current CI guards. Record the Cron legacy-init write phase and imported normalizer/publisher dependencies. Runtime migrations, persisted formats, DATA_EPOCH, paths and expiry are unchanged. The whole file core/migrations.ts is not fingerprinted; finite caller-path guards cover its registered slots and targets.",
-    "payloadFingerprint": "sha256:bd6303278ce3fa2f2005122cd3d81d086ee9d0f5749c18a2e8be47174fd22c30"
+    "compatibilityReason": "Historical compatible review retained from the pre-#35 baseline (its statement that core/migrations.ts is not fingerprinted describes that prior slice): Attribute exactly two existing Cron migration writes (#30/#38 helper and #39) to cron-automation on the accepted syncSkills root baseline; retain the skill-state mkdir attribution and current CI guards. Record the Cron legacy-init write phase and imported normalizer/publisher dependencies. Runtime migrations, persisted formats, DATA_EPOCH, paths and expiry are unchanged. The whole file core/migrations.ts is not fingerprinted; finite caller-path guards cover its registered slots and targets. Current #35 attribution additionally moves only the MiniMax endpoint added-models.yaml publication and its temporary target to provider-state. The finite #35 proof now conservatively pins the complete core/migrations.ts, shared/safe-fs.ts and shared/secret-fs.ts; the prior unpinned-module statement is superseded for this candidate. #7/#14 remain legacy exemptions. Existing Cron and skills ownership, #53 metadata, all runtime code, persisted formats, startup phases, dates and DATA_EPOCH remain unchanged.",
+    "payloadFingerprint": "sha256:0a0f5f8fe6bcb9053740765dae0a18128df7a6137e43d41419d615f39f755865"
   },
   "schemas": [
     {
@@ -3969,6 +3981,24 @@
       "contract": "ProviderCatalogStore plus provider plugin/config runtime readers",
       "kind": "directory-contract",
       "module": "core/provider-catalog.ts",
+      "protocolModules": [
+        {
+          "module": "core/migrations.ts",
+          "sourceHash": "sha256:03a2750597a63ad8ac06f8a5948654a0c3d1ffe6d5e96b82619cbdb7e68f52e3"
+        },
+        {
+          "module": "scripts/persistence-minimax-endpoint.mjs",
+          "sourceHash": "sha256:4f5e58b23cec2b88a943a0911b01c4ba5be9ccdae9c9d796e88399cee3746e1e"
+        },
+        {
+          "module": "shared/safe-fs.ts",
+          "sourceHash": "sha256:c801fa7edc43b06a08148be31745744c44e77e16003dc36ee54066aa5b6ab8b5"
+        },
+        {
+          "module": "shared/secret-fs.ts",
+          "sourceHash": "sha256:23e8eada81dc1c2db780bace27b66e827f09f5e21d5706d282b09735774abdd8"
+        }
+      ],
       "sourceHash": "sha256:843021b7c33a2f815e633455b5ae7d3e1619befa6b3c7d53af9be5ca6d257b00",
       "storeId": "provider-state"
     },
@@ -5807,12 +5837,12 @@
       "storeId": null
     },
     {
-      "exemptionId": "cross-store-legacy-migrations",
+      "exemptionId": null,
       "kind": "secret-write",
       "ordinal": 0,
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
+      "reason": "Migrates only the legacy MiniMax Token Plan endpoint in migration #35; exact caller-root YAML and secret staging publication.",
       "sourceFile": "core/migrations.ts",
-      "storeId": null
+      "storeId": "provider-state"
     },
     {
       "exemptionId": "cross-store-legacy-migrations",

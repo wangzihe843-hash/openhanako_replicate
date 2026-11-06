@@ -79,7 +79,7 @@ describe("first-run config template copy ownership", () => {
     expect(actualExemption.expiresOn).toBe("2026-11-17");
     const dated = actual.inventory.exemptions.filter(e => e.expiresOn === "2026-11-17");
     expect(dated).toHaveLength(6);
-    expect(actual.inventory.discoveredSites.filter(s => dated.some(e => e.id === s.exemptionId))).toHaveLength(84);
+    expect(actual.inventory.discoveredSites.filter(s => dated.some(e => e.id === s.exemptionId))).toHaveLength(83);
     expect(actual.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(9);
     expect(actual.inventory.discoveredSites.filter(s => s.sourceFile === MODULE && s.exemptionId === EXEMPTION).map(s => s.kind)).not.toContain("secret-write");
     expect(actual.inventory.discoveredSites.filter(s => s.sourceFile === MODULE && s.exemptionId === EXEMPTION).map(s => s.kind)).toContain("rename");

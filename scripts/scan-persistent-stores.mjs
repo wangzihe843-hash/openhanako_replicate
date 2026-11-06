@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { assertMiniMaxEndpointReceipt, resolveMiniMaxEndpoint } from "./persistence-minimax-endpoint.mjs";
 
 import {
   PERSISTENCE_EXEMPTIONS,
@@ -321,6 +322,8 @@ function ruleMatches(site, rule) {
   if (site.sourceFile !== rule.sourceFile) return false;
   if (rule.kinds && !rule.kinds.includes(site.kind)) return false;
   if (rule.linePattern && !new RegExp(rule.linePattern).test(site.excerpt)) return false;
+  if (rule.excludedSites?.some(excluded => excluded.kind === site.kind
+    && excluded.expression === site.excerpt && excluded.occurrence === site.ordinal)) return false;
   return true;
 }
 
@@ -540,7 +543,7 @@ function validateRuleCoverage(sites, stores, exemptions) {
   }
 }
 
-function classifySites(sites, stores, exemptions) {
+function classifySites(sites, stores, exemptions, minimaxBindings) {
   const classified = [];
   for (const site of sites) {
     const storeMatches = stores.flatMap((store) => {
@@ -551,6 +554,7 @@ function classifySites(sites, stores, exemptions) {
       .filter((exemption) => ruleMatches(site, exemption))
       .map((exemption) => ({ id: exemption.id, reason: exemption.reason }));
     const matches = [
+      ...(minimaxBindings.has(site) ? [{ type: "store", id: minimaxBindings.get(site).storeId, reason: minimaxBindings.get(site).reason }] : []),
       ...storeMatches.map((match) => ({ type: "store", ...match })),
       ...exemptionMatches.map((match) => ({ type: "exemption", ...match })),
     ];
@@ -572,6 +576,7 @@ function classifySites(sites, stores, exemptions) {
       reason: match.reason,
       storeId: match.type === "store" ? match.id : null,
       exemptionId: match.type === "exemption" ? match.id : null,
+      ...(minimaxBindings.has(site) ? { minimaxEndpointBinding: minimaxBindings.get(site).binding } : {}),
     });
   }
   return classified;
@@ -621,8 +626,9 @@ export function scanPersistentStores({
 } = {}) {
   validateRegistry({ stores, exemptions, today });
   const discoveredSites = discoverSites(rootDir, sourceOverrides);
+  const minimaxBindings = resolveMiniMaxEndpoint({ rootDir, sites: discoveredSites, stores, exemptions, sourceOverrides });
   validateRuleCoverage(discoveredSites, stores, exemptions);
-  const sites = classifySites(discoveredSites, stores, exemptions);
+  const sites = classifySites(discoveredSites, stores, exemptions, minimaxBindings);
   const inventory = {
     // version 3 anchors sites by ordinal instead of absolute line number.
     version: 3,
@@ -642,6 +648,7 @@ function stableJson(value) {
 
 export function writeReceipts({ rootDir = REPOSITORY_ROOT, ...scanOptions } = {}) {
   const result = scanPersistentStores({ rootDir, ...scanOptions });
+  assertMiniMaxEndpointReceipt({ rootDir, inventory: result.inventory, sourceOverrides: scanOptions.sourceOverrides });
   const inventoryPath = path.join(rootDir, "build", "persistence-store-inventory.json");
   const startupPath = path.join(rootDir, "build", "persistence-startup-receipt.json");
   fs.mkdirSync(path.dirname(inventoryPath), { recursive: true });

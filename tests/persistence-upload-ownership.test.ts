@@ -26,7 +26,7 @@ describe("upload directory ownership", () => {
     const other = actual.inventory.discoveredSites.filter((site: { sourceFile: string }) => site.sourceFile !== MODULE);
     expect(other).toHaveLength(898);
     // Pins exact non-upload rows after the syncSkills and two-site Cron ownership reviews and all registered store path patterns.
-    expect(digest(other)).toBe("63cce4c9c5d556381034cd45370a914cc5bdb39398c222a228df7348472f6b2e");
+    expect(digest(other)).toBe("b79ecb64722b5ce94280eff12ee7795c08a4fa2f9567d118cce28f3be25c30a7");
     expect(digest(actual.inventory.stores.map((s: { id: string; pathPatterns: string[] }) => [s.id, s.pathPatterns]))).toBe("c01545dd61d741bb1f3ad259081292443f3b673671274d50ad65a59c0cda8f53");
     const sites = actual.inventory.discoveredSites.filter((site: { sourceFile: string }) => site.sourceFile === MODULE);
     expect(sites.map((s: { kind: string; excerpt: string; storeId: string | null; exemptionId: string | null }) => [s.kind, s.excerpt, s.storeId, s.exemptionId])).toEqual([
