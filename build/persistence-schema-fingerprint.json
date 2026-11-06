@@ -73,7 +73,7 @@
         "secret-write",
         "persistent-store-constructor"
       ],
-      "linePattern": "^(?!.*\\btitlePath\\b)",
+      "linePattern": "^(?!.*\\btitlePath\\b)(?!writeSecretFileSync\\( configPath, YAML\\.dump\\(config, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: \"\\\\\"\", \\}\\), \\)$)",
       "ownerModule": "core/migrations.ts",
       "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
       "sourceFile": "core/migrations.ts"
@@ -594,7 +594,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:9daa7791fae0d18e6ce4d0f55c350f90ce7ea94f1f315495e083a4a507099da9",
+  "payloadFingerprint": "sha256:fc8bfa94419a97ab575fb5fbf00f04ba2058b267cf2b2329fcbd8299e2cbbb39",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3362,8 +3362,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Attribute only the existing migration #53 session-titles.json atomic-write site to session-sidecars and exclude titlePath writes from the legacy migration exemption. Correct the store earliest write phase to engine_construct because existing session-manifest startup backfill can write titles in the Engine constructor; #53 itself remains an engine_init_legacy_migrations writer. This is ownership and phase metadata only: persisted formats and runtime behavior are unchanged, DATA_EPOCH stays 1, all schema source hashes and protocol dependencies remain unchanged, and the other 69 legacy migration exemption sites retain their expiry. The preceding first-run final config and avatar ownership registrations remain unchanged. No core/migrations.ts semantic fingerprint is added; path construction, envelope filtering, and migration dispatch still require targeted tests and review. Prior compatible reviews remain applicable; existing protocol hashes cover each whole file.",
-    "payloadFingerprint": "sha256:9daa7791fae0d18e6ce4d0f55c350f90ce7ea94f1f315495e083a4a507099da9"
+    "compatibilityReason": "Attribute only the two existing core/migrations.ts secret-write sites in migrations #47 and #48 to agent-profile. Both write agents/{agentId}/config.yaml and share the exact full expression. Narrow the legacy migration exemption for that expression while preserving the delivered #53 titlePath boundary, the remaining 67 legacy sites, and the 2026-11-17 expiry. This changes ownership metadata only: runtime behavior, matcher, migration dispatch, paths, store descriptors, phases, startup receipt and DATA_EPOCH 1 are unchanged. No core/migrations.ts semantic fingerprint is added; the two call paths and multiplicity remain covered by targeted scanner tests and review. Prior compatible reviews and all schema source/protocol hashes remain applicable.",
+    "payloadFingerprint": "sha256:fc8bfa94419a97ab575fb5fbf00f04ba2058b267cf2b2329fcbd8299e2cbbb39"
   },
   "schemas": [
     {
@@ -5740,12 +5740,12 @@
       "storeId": null
     },
     {
-      "exemptionId": "cross-store-legacy-migrations",
+      "exemptionId": null,
       "kind": "secret-write",
       "ordinal": 0,
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
+      "reason": "Writes the existing per-agent configuration in legacy migrations #47 and #48.",
       "sourceFile": "core/migrations.ts",
-      "storeId": null
+      "storeId": "agent-profile"
     },
     {
       "exemptionId": "cross-store-legacy-migrations",
@@ -5804,12 +5804,12 @@
       "storeId": null
     },
     {
-      "exemptionId": "cross-store-legacy-migrations",
+      "exemptionId": null,
       "kind": "secret-write",
       "ordinal": 1,
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
+      "reason": "Writes the existing per-agent configuration in legacy migrations #47 and #48.",
       "sourceFile": "core/migrations.ts",
-      "storeId": null
+      "storeId": "agent-profile"
     },
     {
       "exemptionId": "cross-store-legacy-migrations",
