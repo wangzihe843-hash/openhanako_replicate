@@ -2,8 +2,8 @@ name: CI
 
 on:
   push:
-    # Run the existing gates on this acceptance branch's exact pushed commit.
-    branches: [main, feature/xingye-mvp, review/ci22-integration-20261009, review/pi-1.2.0-prep-20261013]
+    # Run the existing gates on each pushed branch's tip commit.
+    branches: ['**']
   pull_request:
     branches: [main]
 
@@ -11,7 +11,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Concurrency groups ignore case, but branch names do not. Keep PRs grouped
+  # as before and give every push its own group to avoid cross-branch cancels.
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && format('push-{0}', github.run_id) || (github.event.pull_request.number || github.ref) }}
   cancel-in-progress: true
 
 jobs:
