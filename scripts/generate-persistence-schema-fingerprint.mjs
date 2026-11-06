@@ -10,6 +10,7 @@ import { VERSION as rollupVersion } from "rollup";
 import { parseAst } from "rollup/parseAst";
 
 import { scanPersistentStores } from "./scan-persistent-stores.mjs";
+import { assertMiniMaxEndpointReceipt } from "./persistence-minimax-endpoint.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const REPOSITORY_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -679,7 +680,10 @@ async function generatePersistenceSchemaPayload({
   currentDataEpoch,
 } = {}) {
   const dataEpoch = resolveCurrentDataEpoch(rootDir, currentDataEpoch);
-  const inventory = suppliedInventory ?? scanPersistentStores({ rootDir }).inventory;
+  const inventory = suppliedInventory ?? scanPersistentStores({ rootDir,
+    sourceOverrides: sourceOverrides instanceof Map ? sourceOverrides : new Map(Object.entries(sourceOverrides ?? {})),
+  }).inventory;
+  assertMiniMaxEndpointReceipt({ rootDir, inventory, sourceOverrides });
   const schemas = [];
   for (const store of inventory.stores) {
     schemas.push(await schemaEntry(rootDir, store, sourceOverrides));

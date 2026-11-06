@@ -133,6 +133,8 @@ export interface PersistenceExemption {
   sourceFile: string;
   kinds?: PersistenceSiteKind[];
   linePattern?: string;
+  /** Exact legacy R04 occurrence exclusion; validated by the finite #35 resolver. */
+  excludedSites?: Array<{ kind: PersistenceSiteKind; expression: string; occurrence: number }>;
 }
 
 export interface DiscoveredPersistenceSite {

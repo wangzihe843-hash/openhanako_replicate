@@ -55,7 +55,7 @@ describe("first-run preferences ownership", () => {
     expect(previous.startupReceipt).toEqual(actual.startupReceipt);
     const exemptions = actual.inventory.exemptions.filter(e => e.expiresOn === "2026-11-17");
     expect(exemptions).toHaveLength(6);
-    expect(actual.inventory.discoveredSites.filter(s => exemptions.some(e => e.id === s.exemptionId))).toHaveLength(87);
+    expect(actual.inventory.discoveredSites.filter(s => exemptions.some(e => e.id === s.exemptionId))).toHaveLength(86);
     expect(actual.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(10);
     expect(actual.inventory.exemptions.find(e => e.id === EXEMPTION)?.expiresOn).toBe("2026-11-17");
   });

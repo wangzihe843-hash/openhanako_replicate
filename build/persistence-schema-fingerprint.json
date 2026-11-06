@@ -58,6 +58,13 @@
       "sourceFile": "core/first-run.ts"
     },
     {
+      "excludedSites": [
+        {
+          "expression": "writeSecretFileSync(ymlPath, yamlStr)",
+          "kind": "secret-write",
+          "occurrence": 0
+        }
+      ],
       "expiresOn": "2026-11-17",
       "id": "cross-store-legacy-migrations",
       "kinds": [
@@ -594,7 +601,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:9daa7791fae0d18e6ce4d0f55c350f90ce7ea94f1f315495e083a4a507099da9",
+  "payloadFingerprint": "sha256:e26756f3098ab019156a5ba201516448517fbe1f80cbaf698c51a6492a0b9a85",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -2264,7 +2271,12 @@
         "provider-plugins/{storageId}/providers/{storageId}.json"
       ],
       "preCoordinatorReadProjection": null,
-      "protocolModules": [],
+      "protocolModules": [
+        "core/migrations.ts",
+        "shared/safe-fs.ts",
+        "shared/secret-fs.ts",
+        "scripts/persistence-minimax-endpoint.mjs"
+      ],
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
       "schemaContract": {
         "compatibility": "The named runtime reader is canonical; this inventory does not imply stricter validation than runtime currently performs.",
@@ -3362,8 +3374,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Attribute only the existing migration #53 session-titles.json atomic-write site to session-sidecars and exclude titlePath writes from the legacy migration exemption. Correct the store earliest write phase to engine_construct because existing session-manifest startup backfill can write titles in the Engine constructor; #53 itself remains an engine_init_legacy_migrations writer. This is ownership and phase metadata only: persisted formats and runtime behavior are unchanged, DATA_EPOCH stays 1, all schema source hashes and protocol dependencies remain unchanged, and the other 69 legacy migration exemption sites retain their expiry. The preceding first-run final config and avatar ownership registrations remain unchanged. No core/migrations.ts semantic fingerprint is added; path construction, envelope filtering, and migration dispatch still require targeted tests and review. Prior compatible reviews remain applicable; existing protocol hashes cover each whole file.",
-    "payloadFingerprint": "sha256:9daa7791fae0d18e6ce4d0f55c350f90ce7ea94f1f315495e083a4a507099da9"
+    "compatibilityReason": "Attribute only migration #35 to provider-state using the reduced legacy R04 occurrence proof and its YAML/staging source closure. Preserve the earlier review to attribute migration #53 to session-sidecars at engine_construct, first-run final config and avatar ownership. Persisted formats and runtime behavior are unchanged. Existing protocol hashes cover each whole file; executable changes to the three pinned publication modules require another scoped review. Preserve #7/#14 exemptions, all deadlines, startup phases and DATA_EPOCH 1; prior compatible reviews remain applicable.",
+    "payloadFingerprint": "sha256:e26756f3098ab019156a5ba201516448517fbe1f80cbaf698c51a6492a0b9a85"
   },
   "schemas": [
     {
@@ -3950,6 +3962,24 @@
       "contract": "ProviderCatalogStore plus provider plugin/config runtime readers",
       "kind": "directory-contract",
       "module": "core/provider-catalog.ts",
+      "protocolModules": [
+        {
+          "module": "core/migrations.ts",
+          "sourceHash": "sha256:03a2750597a63ad8ac06f8a5948654a0c3d1ffe6d5e96b82619cbdb7e68f52e3"
+        },
+        {
+          "module": "scripts/persistence-minimax-endpoint.mjs",
+          "sourceHash": "sha256:4f5e58b23cec2b88a943a0911b01c4ba5be9ccdae9c9d796e88399cee3746e1e"
+        },
+        {
+          "module": "shared/safe-fs.ts",
+          "sourceHash": "sha256:c801fa7edc43b06a08148be31745744c44e77e16003dc36ee54066aa5b6ab8b5"
+        },
+        {
+          "module": "shared/secret-fs.ts",
+          "sourceHash": "sha256:23e8eada81dc1c2db780bace27b66e827f09f5e21d5706d282b09735774abdd8"
+        }
+      ],
       "sourceHash": "sha256:843021b7c33a2f815e633455b5ae7d3e1619befa6b3c7d53af9be5ca6d257b00",
       "storeId": "provider-state"
     },
@@ -5788,12 +5818,12 @@
       "storeId": null
     },
     {
-      "exemptionId": "cross-store-legacy-migrations",
+      "exemptionId": null,
       "kind": "secret-write",
       "ordinal": 0,
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
+      "reason": "Migrates only the legacy MiniMax Token Plan endpoint in migration #35; exact caller-root YAML and secret staging publication.",
       "sourceFile": "core/migrations.ts",
-      "storeId": null
+      "storeId": "provider-state"
     },
     {
       "exemptionId": "cross-store-legacy-migrations",
