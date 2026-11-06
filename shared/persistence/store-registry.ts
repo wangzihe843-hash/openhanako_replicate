@@ -942,11 +942,17 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     ],
     format: "mixed-directory",
     schemaSource: directorySource("lib/conversations/agent-phone-projection.ts", "phone projection Markdown and session-runtime JSON readers"),
-    protocolModules: ["lib/conversations/agent-phone-runtime.ts", "hub/agent-executor.ts"],
+    protocolModules: ["lib/conversations/agent-phone-runtime.ts", "hub/agent-executor.ts", "shared/safe-fs.ts", "shared/link-aware-fs.ts"],
+    firstPossibleWritePhase: "engine_init_legacy_migrations",
     openEntry: ["Agent Phone conversation runtime"],
     migrationEntry: ["core/migrations.ts Agent Phone projection migration"],
     identityContract: "conversationId is identity within agentId; projection/runtime paths are locators.",
-    siteRules: rules(["lib/conversations/agent-phone-projection.ts", "lib/conversations/agent-phone-runtime.ts"], "Writes Agent Phone projection or runtime state."),
+    siteRules: [
+      ...rules(["lib/conversations/agent-phone-projection.ts", "lib/conversations/agent-phone-runtime.ts"], "Writes Agent Phone projection or runtime state."),
+      ...rules(["core/migrations.ts"], "Moves only migration #32 projection and runtime publications into the existing Agent Phone store.", ["atomic-write"], "^atomicWriteSync\\(projectionPath, nextProjection\\)$"),
+      ...rules(["core/migrations.ts"], "Moves only migration #32 projection and runtime publications into the existing Agent Phone store.", ["mkdir"], "^fs\\.mkdirSync\\(runtimeDir, \\{ recursive: true \\}\\)$"),
+      ...rules(["core/migrations.ts"], "Moves only migration #32 projection and runtime publications into the existing Agent Phone store.", ["atomic-write"], "^atomicWriteSync\\(runtimePath, JSON\\.stringify\\(nextRuntime, null, 2\\) \\+ \"\\\\n\"\\)$"),
+    ],
   }),
   defineStore({
     id: "workflow-state",
@@ -1703,7 +1709,7 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
     "2026-11-17",
     ALL_SITE_KINDS,
-    "^(?!.*\\btitlePath\\b)(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)",
+    "^(?!.*\\btitlePath\\b)(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)(?!(?:atomicWriteSync\\(projectionPath, nextProjection\\)|fs\\.mkdirSync\\(runtimeDir, \\{ recursive: true \\}\\)|atomicWriteSync\\(runtimePath, JSON\\.stringify\\(nextRuntime, null, 2\\) \\+ \"\\\\n\"\\))$)",
   ),
   exemption(
     "external-desk-workspace-roots",

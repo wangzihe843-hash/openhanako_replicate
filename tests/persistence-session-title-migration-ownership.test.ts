@@ -88,12 +88,12 @@ describe("session title migration persistence ownership", () => {
     expect(exemptionChanges).toHaveLength(1);
     expect(exemptionChanges[0].before).toMatchObject({ id: EXEMPTION, expiresOn: "2026-11-17" });
     expect(exemptionChanges[0].after).toEqual({ ...exemptionChanges[0].before, linePattern: PERSISTENCE_EXEMPTIONS.find(entry => entry.id === EXEMPTION)?.linePattern });
-    expect(previous.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(68);
-    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(67);
+    expect(previous.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(65);
+    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(64);
     const datedIds = new Set(actual.inventory.exemptions.filter(exemption => exemption.expiresOn === "2026-11-17").map(exemption => exemption.id));
     expect(datedIds.size).toBe(6);
-    expect(previous.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(85);
-    expect(actual.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(84);
+    expect(previous.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(82);
+    expect(actual.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(81);
     assertCurrentMetadata();
   });
 

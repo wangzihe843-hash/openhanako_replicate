@@ -77,8 +77,8 @@ describe("first-run final config write ownership", () => {
     expect(current.kinds).toEqual(["copy-file", "mkdir", "rename", "write-file"]);
     const dated = actual.inventory.exemptions.filter(e => e.expiresOn === "2026-11-17");
     expect(dated).toHaveLength(6);
-    expect(previous.inventory.discoveredSites.filter(s => dated.some(e => e.id === s.exemptionId))).toHaveLength(85);
-    expect(actual.inventory.discoveredSites.filter(s => dated.some(e => e.id === s.exemptionId))).toHaveLength(84);
+    expect(previous.inventory.discoveredSites.filter(s => dated.some(e => e.id === s.exemptionId))).toHaveLength(82);
+    expect(actual.inventory.discoveredSites.filter(s => dated.some(e => e.id === s.exemptionId))).toHaveLength(81);
     expect(previous.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(10);
     expect(actual.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(9);
     expect(actual.inventory.discoveredSites.filter(s => s.sourceFile === MODULE && s.kind === "copy-file" && s.excerpt === "fs.copyFileSync(configSrc, cfgDest)"))

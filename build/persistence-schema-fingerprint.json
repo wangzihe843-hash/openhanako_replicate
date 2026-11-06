@@ -73,7 +73,7 @@
         "secret-write",
         "persistent-store-constructor"
       ],
-      "linePattern": "^(?!.*\\btitlePath\\b)(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)",
+      "linePattern": "^(?!.*\\btitlePath\\b)(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)(?!(?:atomicWriteSync\\(projectionPath, nextProjection\\)|fs\\.mkdirSync\\(runtimeDir, \\{ recursive: true \\}\\)|atomicWriteSync\\(runtimePath, JSON\\.stringify\\(nextRuntime, null, 2\\) \\+ \"\\\\n\"\\))$)",
       "ownerModule": "core/migrations.ts",
       "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
       "sourceFile": "core/migrations.ts"
@@ -594,7 +594,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:bd6303278ce3fa2f2005122cd3d81d086ee9d0f5749c18a2e8be47174fd22c30",
+  "payloadFingerprint": "sha256:dea4dd39ec2db9bb02f17cae2888989448bb53f8ab3ef20ae9e0db6ef9c64136",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -801,7 +801,7 @@
       "epochPolicy": "epoch-managed",
       "exemption": null,
       "firstPossibleOpenPhase": "engine_construct",
-      "firstPossibleWritePhase": "runtime_ready",
+      "firstPossibleWritePhase": "engine_init_legacy_migrations",
       "format": "mixed-directory",
       "id": "agent-phone",
       "identityContract": "conversationId is identity within agentId; projection/runtime paths are locators.",
@@ -822,7 +822,9 @@
       "preCoordinatorReadProjection": null,
       "protocolModules": [
         "lib/conversations/agent-phone-runtime.ts",
-        "hub/agent-executor.ts"
+        "hub/agent-executor.ts",
+        "shared/safe-fs.ts",
+        "shared/link-aware-fs.ts"
       ],
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
       "schemaContract": {
@@ -3367,8 +3369,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Attribute exactly two existing Cron migration writes (#30/#38 helper and #39) to cron-automation on the accepted syncSkills root baseline; retain the skill-state mkdir attribution and current CI guards. Record the Cron legacy-init write phase and imported normalizer/publisher dependencies. Runtime migrations, persisted formats, DATA_EPOCH, paths and expiry are unchanged. The whole file core/migrations.ts is not fingerprinted; finite caller-path guards cover its registered slots and targets.",
-    "payloadFingerprint": "sha256:bd6303278ce3fa2f2005122cd3d81d086ee9d0f5749c18a2e8be47174fd22c30"
+    "compatibilityReason": "Attribute exactly two existing Cron migration writes (#30/#38 helper and #39) to cron-automation on the accepted syncSkills root baseline; retain the skill-state mkdir attribution and current CI guards. Record the Cron legacy-init write phase and imported normalizer/publisher dependencies. Runtime migrations, persisted formats, DATA_EPOCH, paths and expiry are unchanged. The whole file core/migrations.ts is not fingerprinted; finite caller-path guards cover its registered slots and targets. Agent Phone migration #32 now assigns only its existing three projection/runtime writes to agent-phone with bounded migration and startup protocol fingerprinting; no data format, runtime algorithm, or DATA_EPOCH change.",
+    "payloadFingerprint": "sha256:dea4dd39ec2db9bb02f17cae2888989448bb53f8ab3ef20ae9e0db6ef9c64136"
   },
   "schemas": [
     {
@@ -3529,6 +3531,43 @@
     {
       "contract": "phone projection Markdown and session-runtime JSON readers",
       "kind": "directory-contract",
+      "migrationProtocol": {
+        "boundary": "Named declarations and bindings, slot 32, and the direct Engine.init invocation only; no whole-module execution or transaction guarantee.",
+        "migrationId": 32,
+        "sources": [
+          {
+            "module": "core/migrations.ts",
+            "scopes": [
+              "migrateAgentPhoneRuntimeOutOfProjection",
+              "removeFrontmatterKeys",
+              "parseAgentPhoneProjectionFrontmatter",
+              "agentPhoneRuntimePatchFromMeta",
+              "parseEncodedFrontmatterJson",
+              "runMigrations",
+              "AGENT_PHONE_RUNTIME_KEYS",
+              "AGENT_PHONE_PROJECTION_RUNTIME_KEYS",
+              "migrationIds",
+              "migrations[32]",
+              "import fs",
+              "import path",
+              "import atomicWriteSync",
+              "import safeConversationStem",
+              "import readDirectoryLikeDirentsSync"
+            ],
+            "sourceHash": "sha256:09986bd3c42499f02848cce4b9f990b2d0efafafb4b1ecd27bca8bb8b7f65ccc"
+          },
+          {
+            "module": "core/engine.ts",
+            "scopes": [
+              "import runMigrations",
+              "runBestEffortStartupMigrationStep",
+              "Engine.init legacyPrerequisitesReady",
+              "Engine.init migration-registry invocation"
+            ],
+            "sourceHash": "sha256:5d85db690564f21587a02eddfa75a0260041219d813d3de3d1758a6557de8bc5"
+          }
+        ]
+      },
       "module": "lib/conversations/agent-phone-projection.ts",
       "protocolModules": [
         {
@@ -3538,6 +3577,14 @@
         {
           "module": "lib/conversations/agent-phone-runtime.ts",
           "sourceHash": "sha256:6694c347bb6e6e115d85b6cd147d2ff83169bb372bf510ac729721fc370c122b"
+        },
+        {
+          "module": "shared/link-aware-fs.ts",
+          "sourceHash": "sha256:bb9f8cbbf275872737a8581591d7cf250ec100f8bf09969b1567cdbb7a1525c2"
+        },
+        {
+          "module": "shared/safe-fs.ts",
+          "sourceHash": "sha256:c801fa7edc43b06a08148be31745744c44e77e16003dc36ee54066aa5b6ab8b5"
         }
       ],
       "sourceHash": "sha256:0ee5a8388e5733febda6cd469b1ab03905c40e50e3a03c52266897ba88069fc2",
@@ -5487,12 +5534,12 @@
       "storeId": "cron-automation"
     },
     {
-      "exemptionId": "cross-store-legacy-migrations",
+      "exemptionId": null,
       "kind": "atomic-write",
       "ordinal": 0,
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
+      "reason": "Moves only migration #32 projection and runtime publications into the existing Agent Phone store.",
       "sourceFile": "core/migrations.ts",
-      "storeId": null
+      "storeId": "agent-phone"
     },
     {
       "exemptionId": "cross-store-legacy-migrations",
@@ -5503,12 +5550,12 @@
       "storeId": null
     },
     {
-      "exemptionId": "cross-store-legacy-migrations",
+      "exemptionId": null,
       "kind": "atomic-write",
       "ordinal": 0,
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
+      "reason": "Moves only migration #32 projection and runtime publications into the existing Agent Phone store.",
       "sourceFile": "core/migrations.ts",
-      "storeId": null
+      "storeId": "agent-phone"
     },
     {
       "exemptionId": "cross-store-legacy-migrations",
@@ -5599,12 +5646,12 @@
       "storeId": null
     },
     {
-      "exemptionId": "cross-store-legacy-migrations",
+      "exemptionId": null,
       "kind": "mkdir",
       "ordinal": 0,
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
+      "reason": "Moves only migration #32 projection and runtime publications into the existing Agent Phone store.",
       "sourceFile": "core/migrations.ts",
-      "storeId": null
+      "storeId": "agent-phone"
     },
     {
       "exemptionId": "cross-store-legacy-migrations",

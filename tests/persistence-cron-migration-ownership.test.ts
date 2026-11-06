@@ -26,7 +26,7 @@ const priorStores = noOwner.map(store => store.id !== OWNER ? store : {
   migrationEntry: ["core/migrations.ts cron migrations"],
 });
 const priorExemptions = PERSISTENCE_EXEMPTIONS.map(entry => entry.id !== EXEMPTION ? entry : {
-  ...entry, linePattern: "^(?!.*\\btitlePath\\b)",
+  ...entry, linePattern: entry.linePattern!.replace("(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)", ""),
 });
 const review = { classification: "compatible", compatibilityReason: "Test-only Cron migration attribution mutation." };
 const overrides = (text: string) => new Map([[MODULE, text]]);
@@ -98,11 +98,11 @@ describe("Cron migration persistence ownership", () => {
       { before: previous.inventory.exemptions.find(entry => entry.id === EXEMPTION), after: actual.inventory.exemptions.find(entry => entry.id === EXEMPTION) },
     ]);
     expect(actual.inventory.exemptions.map(entry => [entry.id, entry.expiresOn])).toEqual(previous.inventory.exemptions.map(entry => [entry.id, entry.expiresOn]));
-    expect(previous.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(69);
-    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(67);
+    expect(previous.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(66);
+    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(64);
     const dated = new Set(actual.inventory.exemptions.filter(entry => entry.expiresOn === "2026-11-17").map(entry => entry.id));
-    expect(previous.inventory.discoveredSites.filter(site => dated.has(site.exemptionId))).toHaveLength(86);
-    expect(actual.inventory.discoveredSites.filter(site => dated.has(site.exemptionId))).toHaveLength(84);
+    expect(previous.inventory.discoveredSites.filter(site => dated.has(site.exemptionId))).toHaveLength(83);
+    expect(actual.inventory.discoveredSites.filter(site => dated.has(site.exemptionId))).toHaveLength(81);
     const cronModelWrites = actual.inventory.discoveredSites.filter(site => site.sourceFile === MODULE && (
       site.excerpt === 'fs.renameSync(tmp, jobsPath)' || site.excerpt === 'fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\\n", "utf-8")'
     ));
