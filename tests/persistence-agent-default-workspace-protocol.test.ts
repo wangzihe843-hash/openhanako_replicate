@@ -47,7 +47,7 @@ describe("agent profile default workspace protocol dependencies", () => {
     expect(inventory.exemptions).toHaveLength(32);
     const dated = inventory.exemptions.filter((e: { expiresOn: string }) => e.expiresOn === "2026-11-17");
     expect(dated).toHaveLength(6);
-    expect(inventory.discoveredSites.filter((s: { exemptionId: string | null }) => dated.some((e: { id: string }) => e.id === s.exemptionId))).toHaveLength(86);
+    expect(inventory.discoveredSites.filter((s: { exemptionId: string | null }) => dated.some((e: { id: string }) => e.id === s.exemptionId))).toHaveLength(84);
     expect(inventory.discoveredSites.filter((s: { sourceFile: string }) => s.sourceFile === WORKSPACE))
       .toEqual([
         expect.objectContaining({ kind: "mkdir", excerpt: "fs.mkdirSync(defaultPath, { recursive: true })", storeId: null, exemptionId: "external-default-workspace" }),
@@ -83,7 +83,7 @@ describe("agent profile default workspace protocol dependencies", () => {
     expect(rest.dataEpoch).toBe(1);
     expect(payloadFingerprint).not.toBe(previousHash);
     expect(actualReview.classification).toBe("compatible");
-    expect(actualReview.compatibilityReason).toMatch(/attribute.*migration #53.*session-sidecars/i);
+    expect(actualReview.compatibilityReason).toMatch(/attribute exactly two.*Cron migration writes.*cron-automation/i);
     expect(actualReview.compatibilityReason).toMatch(/persisted formats.*unchanged/i);
     expect(actualReview.compatibilityReason).toMatch(/whole file/i);
     expect(previousReview.classification).toBe("compatible");

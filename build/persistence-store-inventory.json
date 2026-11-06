@@ -547,11 +547,16 @@
         "StudioCronService"
       ],
       "migrationEntry": [
-        "core/migrations.ts cron migrations"
+        "core/migrations.ts #30/#38 patchCronJobsFileForAutomation",
+        "core/migrations.ts #39 repairAutomationOwnershipFile"
       ],
-      "protocolModules": [],
+      "protocolModules": [
+        "lib/desk/automation-normalizer.ts",
+        "lib/desk/agent-run-automation.ts",
+        "shared/safe-fs.ts"
+      ],
       "firstPossibleOpenPhase": "engine_construct",
-      "firstPossibleWritePhase": "runtime_ready",
+      "firstPossibleWritePhase": "engine_init_legacy_migrations",
       "epochPolicy": "epoch-managed",
       "checkpointPolicy": "Included in a future epoch checkpoint unless the coordinator explicitly classifies it otherwise.",
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
@@ -3895,18 +3900,18 @@
       "sourceFile": "core/migrations.ts",
       "kind": "atomic-write",
       "excerpt": "atomicWriteSync(jobsPath, JSON.stringify({ ...data, jobs }, null, 2) + \"\\n\")",
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
-      "storeId": null,
-      "exemptionId": "cross-store-legacy-migrations",
+      "reason": "Upgrades the registered agent/studio cron job document through #30/#38 and repairs automation ownership through #39.",
+      "storeId": "cron-automation",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
       "sourceFile": "core/migrations.ts",
       "kind": "atomic-write",
       "excerpt": "atomicWriteSync(jobsPath, JSON.stringify({ ...data, jobs }, null, 2) + \"\\n\")",
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
-      "storeId": null,
-      "exemptionId": "cross-store-legacy-migrations",
+      "reason": "Upgrades the registered agent/studio cron job document through #30/#38 and repairs automation ownership through #39.",
+      "storeId": "cron-automation",
+      "exemptionId": null,
       "ordinal": 1
     },
     {
@@ -11033,7 +11038,7 @@
         "secret-write",
         "persistent-store-constructor"
       ],
-      "linePattern": "^(?!.*\\btitlePath\\b)"
+      "linePattern": "^(?!.*\\btitlePath\\b)(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)"
     },
     {
       "id": "data-epoch-durable-json-primitive",

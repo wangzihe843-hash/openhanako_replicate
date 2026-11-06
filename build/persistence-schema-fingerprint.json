@@ -73,7 +73,7 @@
         "secret-write",
         "persistent-store-constructor"
       ],
-      "linePattern": "^(?!.*\\btitlePath\\b)",
+      "linePattern": "^(?!.*\\btitlePath\\b)(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)",
       "ownerModule": "core/migrations.ts",
       "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
       "sourceFile": "core/migrations.ts"
@@ -594,7 +594,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:89f19191d4152bb7076c3db1adaeb8771df54caa061415728d2e69fd954a5c5b",
+  "payloadFingerprint": "sha256:bd6303278ce3fa2f2005122cd3d81d086ee9d0f5749c18a2e8be47174fd22c30",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -1076,12 +1076,13 @@
       "epochPolicy": "epoch-managed",
       "exemption": null,
       "firstPossibleOpenPhase": "engine_construct",
-      "firstPossibleWritePhase": "runtime_ready",
+      "firstPossibleWritePhase": "engine_init_legacy_migrations",
       "format": "mixed-directory",
       "id": "cron-automation",
       "identityContract": "jobId and runId are scoped to their agentId or studioId owner.",
       "migrationEntry": [
-        "core/migrations.ts cron migrations"
+        "core/migrations.ts #30/#38 patchCronJobsFileForAutomation",
+        "core/migrations.ts #39 repairAutomationOwnershipFile"
       ],
       "openEntry": [
         "new CronStore",
@@ -1098,7 +1099,11 @@
         "studios/{studioId}/desk/cron-runs/{runId}.json"
       ],
       "preCoordinatorReadProjection": null,
-      "protocolModules": [],
+      "protocolModules": [
+        "lib/desk/automation-normalizer.ts",
+        "lib/desk/agent-run-automation.ts",
+        "shared/safe-fs.ts"
+      ],
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
       "schemaContract": {
         "compatibility": "The named runtime reader is canonical; this inventory does not imply stricter validation than runtime currently performs.",
@@ -3362,8 +3367,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Register only the syncSkills dstDir mkdir under existing skill-state and narrow its dated first-run exemption. Retain the baseline review to attribute migration #53 session title writes to session-sidecars and its existing engine_construct write phase. Persisted formats, runtime behavior, startup phases, checkpoint and restore policies, DATA_EPOCH and all schema entries are unchanged by this candidate. Existing protocol hashes still cover each whole file; previous compatible reviews remain applicable.",
-    "payloadFingerprint": "sha256:89f19191d4152bb7076c3db1adaeb8771df54caa061415728d2e69fd954a5c5b"
+    "compatibilityReason": "Attribute exactly two existing Cron migration writes (#30/#38 helper and #39) to cron-automation on the accepted syncSkills root baseline; retain the skill-state mkdir attribution and current CI guards. Record the Cron legacy-init write phase and imported normalizer/publisher dependencies. Runtime migrations, persisted formats, DATA_EPOCH, paths and expiry are unchanged. The whole file core/migrations.ts is not fingerprinted; finite caller-path guards cover its registered slots and targets.",
+    "payloadFingerprint": "sha256:bd6303278ce3fa2f2005122cd3d81d086ee9d0f5749c18a2e8be47174fd22c30"
   },
   "schemas": [
     {
@@ -3675,6 +3680,20 @@
       "contract": "CronStore job registry and run receipt protocol",
       "kind": "directory-contract",
       "module": "lib/desk/cron-store.ts",
+      "protocolModules": [
+        {
+          "module": "lib/desk/agent-run-automation.ts",
+          "sourceHash": "sha256:b2fad820803de465bc02dc8c693229c0780220955802ed70159e819514732401"
+        },
+        {
+          "module": "lib/desk/automation-normalizer.ts",
+          "sourceHash": "sha256:8514ec92fec638570b07e9c08588e5f0d3d87bc743601b47c881c9463558d7b1"
+        },
+        {
+          "module": "shared/safe-fs.ts",
+          "sourceHash": "sha256:c801fa7edc43b06a08148be31745744c44e77e16003dc36ee54066aa5b6ab8b5"
+        }
+      ],
       "sourceHash": "sha256:bb1664a1ce588406d4fafebd71b5726938ff4a8a619b380c0936ceadb217f37c",
       "storeId": "cron-automation"
     },
@@ -5460,12 +5479,12 @@
       "storeId": null
     },
     {
-      "exemptionId": "cross-store-legacy-migrations",
+      "exemptionId": null,
       "kind": "atomic-write",
       "ordinal": 0,
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
+      "reason": "Upgrades the registered agent/studio cron job document through #30/#38 and repairs automation ownership through #39.",
       "sourceFile": "core/migrations.ts",
-      "storeId": null
+      "storeId": "cron-automation"
     },
     {
       "exemptionId": "cross-store-legacy-migrations",
@@ -5516,12 +5535,12 @@
       "storeId": "session-sidecars"
     },
     {
-      "exemptionId": "cross-store-legacy-migrations",
+      "exemptionId": null,
       "kind": "atomic-write",
       "ordinal": 1,
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
+      "reason": "Upgrades the registered agent/studio cron job document through #30/#38 and repairs automation ownership through #39.",
       "sourceFile": "core/migrations.ts",
-      "storeId": null
+      "storeId": "cron-automation"
     },
     {
       "exemptionId": "cross-store-legacy-migrations",
