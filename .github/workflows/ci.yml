@@ -123,6 +123,10 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/verify-standalone-server-artifact.mjs x64 --smoke
 
+      - name: Report test runner resources
+        run: |
+          node -e "const os = require('node:os'); console.log(JSON.stringify({ node: process.version, platform: process.platform, availableParallelism: os.availableParallelism(), totalMemoryBytes: os.totalmem(), freeMemoryBytes: os.freemem() }))"
+
       - name: Run tests
         run: npm test
 
