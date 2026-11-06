@@ -2213,7 +2213,7 @@
       ],
       "protocolModules": [],
       "firstPossibleOpenPhase": "engine_construct",
-      "firstPossibleWritePhase": "runtime_ready",
+      "firstPossibleWritePhase": "engine_construct",
       "epochPolicy": "epoch-managed",
       "checkpointPolicy": "Included in a future epoch checkpoint unless the coordinator explicitly classifies it otherwise.",
       "restorePolicy": "Restore only through the owning module after reader compatibility is established.",
@@ -3958,9 +3958,9 @@
       "sourceFile": "core/migrations.ts",
       "kind": "atomic-write",
       "excerpt": "atomicWriteSync(titlePath, JSON.stringify(titles, null, 2))",
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
-      "storeId": null,
-      "exemptionId": "cross-store-legacy-migrations",
+      "reason": "Removes injected-envelope titles from the registered per-agent session title sidecar in migration #53.",
+      "storeId": "session-sidecars",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
@@ -11032,7 +11032,8 @@
         "atomic-write",
         "secret-write",
         "persistent-store-constructor"
-      ]
+      ],
+      "linePattern": "^(?!.*\\btitlePath\\b)"
     },
     {
       "id": "data-epoch-durable-json-primitive",

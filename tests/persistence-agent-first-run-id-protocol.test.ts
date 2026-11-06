@@ -92,7 +92,7 @@ describe("first-run agent ID classification protocol dependencies", () => {
     expect(inventory.exemptions).toHaveLength(32);
     const dated = inventory.exemptions.filter((entry: { expiresOn: string }) => entry.expiresOn === "2026-11-17");
     expect(dated).toHaveLength(6);
-    expect(inventory.discoveredSites.filter((site: { exemptionId: string | null }) => dated.some((entry: { id: string }) => entry.id === site.exemptionId))).toHaveLength(88);
+    expect(inventory.discoveredSites.filter((site: { exemptionId: string | null }) => dated.some((entry: { id: string }) => entry.id === site.exemptionId))).toHaveLength(87);
     expect(inventory.discoveredSites.filter((site: { exemptionId: string | null }) => site.exemptionId === "cross-store-first-run-bootstrap")).toHaveLength(10);
   });
 
@@ -114,7 +114,7 @@ describe("first-run agent ID classification protocol dependencies", () => {
     expect(payloadFingerprint).not.toBe(previousHash);
     expect(previousReview.classification).toBe("compatible");
     expect(actualReview.classification).toBe("compatible");
-    expect(actualReview.compatibilityReason).toMatch(/classifies.*avatar.*agent-profile/i);
+    expect(actualReview.compatibilityReason).toMatch(/attribute.*migration #53.*session-sidecars/i);
     expect(actualReview.compatibilityReason).toMatch(/whole file/i);
     expect(registry.filter((store: { id: string }) => store.id !== OWNER)).toEqual(previousRegistry.filter((store: { id: string }) => store.id !== OWNER));
     expect(schemas.filter((schema: { storeId: string }) => schema.storeId !== OWNER)).toEqual(previousSchemas.filter((schema: { storeId: string }) => schema.storeId !== OWNER));

@@ -572,7 +572,7 @@
     {
       "id": "session-sidecars",
       "firstPossibleOpenPhase": "engine_construct",
-      "firstPossibleWritePhase": "runtime_ready",
+      "firstPossibleWritePhase": "engine_construct",
       "opensBeforeFutureCoordinator": false,
       "writesBeforeFutureCoordinator": false,
       "bootstrapSafety": null,

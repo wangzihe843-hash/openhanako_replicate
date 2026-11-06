@@ -73,6 +73,7 @@
         "secret-write",
         "persistent-store-constructor"
       ],
+      "linePattern": "^(?!.*\\btitlePath\\b)",
       "ownerModule": "core/migrations.ts",
       "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
       "sourceFile": "core/migrations.ts"
@@ -593,7 +594,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:7a309324fd7e8b6483665e3baec03523cea5e289b82e945d1a0183ced09f550a",
+  "payloadFingerprint": "sha256:9daa7791fae0d18e6ce4d0f55c350f90ce7ea94f1f315495e083a4a507099da9",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -2734,7 +2735,7 @@
       "epochPolicy": "epoch-managed",
       "exemption": null,
       "firstPossibleOpenPhase": "engine_construct",
-      "firstPossibleWritePhase": "runtime_ready",
+      "firstPossibleWritePhase": "engine_construct",
       "format": "json",
       "id": "session-sidecars",
       "identityContract": "Entries are keyed by sessionId where available; any sessionPath field is only a locator compatibility field.",
@@ -3361,8 +3362,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "This review classifies only the final first-run config secret-write under agent-profile and preserves the previously reviewed avatar directory ownership under agent-profile. Persisted formats, runtime behavior, DATA_EPOCH, store paths, startup phases, checkpoint and restore policies remain unchanged. Protocol hashes still cover each whole file; prior compatible reviews remain applicable.",
-    "payloadFingerprint": "sha256:7a309324fd7e8b6483665e3baec03523cea5e289b82e945d1a0183ced09f550a"
+    "compatibilityReason": "Attribute only the existing migration #53 session-titles.json atomic-write site to session-sidecars and exclude titlePath writes from the legacy migration exemption. Correct the store earliest write phase to engine_construct because existing session-manifest startup backfill can write titles in the Engine constructor; #53 itself remains an engine_init_legacy_migrations writer. This is ownership and phase metadata only: persisted formats and runtime behavior are unchanged, DATA_EPOCH stays 1, all schema source hashes and protocol dependencies remain unchanged, and the other 69 legacy migration exemption sites retain their expiry. The preceding first-run final config and avatar ownership registrations remain unchanged. No core/migrations.ts semantic fingerprint is added; path construction, envelope filtering, and migration dispatch still require targeted tests and review. Prior compatible reviews remain applicable; existing protocol hashes cover each whole file.",
+    "payloadFingerprint": "sha256:9daa7791fae0d18e6ce4d0f55c350f90ce7ea94f1f315495e083a4a507099da9"
   },
   "schemas": [
     {
@@ -5507,12 +5508,12 @@
       "storeId": null
     },
     {
-      "exemptionId": "cross-store-legacy-migrations",
+      "exemptionId": null,
       "kind": "atomic-write",
       "ordinal": 0,
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
+      "reason": "Removes injected-envelope titles from the registered per-agent session title sidecar in migration #53.",
       "sourceFile": "core/migrations.ts",
-      "storeId": null
+      "storeId": "session-sidecars"
     },
     {
       "exemptionId": "cross-store-legacy-migrations",

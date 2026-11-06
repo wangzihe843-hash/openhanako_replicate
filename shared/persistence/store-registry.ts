@@ -725,8 +725,17 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     schemaSource: runtimeSource("core/bridge-session-manager.ts", "bridge index, legacy session metadata, title, and vision sidecar readers"),
     openEntry: ["SessionCoordinator", "BridgeSessionManager", "VisionBridge"],
     migrationEntry: ["core/session-manifest/legacy-migration.ts", "core/migrations.ts"],
+    firstPossibleWritePhase: "engine_construct",
     identityContract: "Entries are keyed by sessionId where available; any sessionPath field is only a locator compatibility field.",
-    siteRules: rules(["core/bridge-session-manager.ts", "core/vision-bridge.ts"], "Writes a session-owned sidecar or bridge index."),
+    siteRules: [
+      ...rules(["core/bridge-session-manager.ts", "core/vision-bridge.ts"], "Writes a session-owned sidecar or bridge index."),
+      ...rules(
+        ["core/migrations.ts"],
+        "Removes injected-envelope titles from the registered per-agent session title sidecar in migration #53.",
+        ["atomic-write"],
+        "^atomicWriteSync\\(titlePath, JSON\\.stringify\\(titles, null, 2\\)\\)$",
+      ),
+    ],
   }),
   defineStore({
     id: "session-files",
@@ -1689,6 +1698,8 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "core/migrations.ts",
     "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
     "2026-11-17",
+    ALL_SITE_KINDS,
+    "^(?!.*\\btitlePath\\b)",
   ),
   exemption(
     "external-desk-workspace-roots",
