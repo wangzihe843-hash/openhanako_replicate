@@ -28,6 +28,8 @@ function mutate(before: string, after: string, module = MODULE) {
 }
 
 describe("MiniMax #35 exact persistence ownership", () => {
+  const commentSourceOverrides = new Map([[MODULE, `// Ordinary source comment.\n\n${text}`]]);
+
   it("moves one occurrence, preserves both peer exemptions and all remaining sites", () => {
     const actual = scanPersistentStores({ rootDir: ROOT });
     const previous = scanPersistentStores({ rootDir: ROOT, exemptions: priorExemptions, stores: priorStores });
@@ -49,11 +51,16 @@ describe("MiniMax #35 exact persistence ownership", () => {
     expect(actual.inventory.stores.map(s => [s.id, s.pathPatterns])).toEqual(previous.inventory.stores.map(s => [s.id, s.pathPatterns]));
   });
 
-  it("accepts the committed receipt and ordinary comment/line movement", async () => {
+  it("accepts the committed receipt", async () => {
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT })).resolves.toEqual(committed);
-    const sourceOverrides = new Map([[MODULE, `// Ordinary source comment.\n\n${text}`]]);
-    expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides }).inventory).toEqual(inventory);
-    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, sourceOverrides })).resolves.toEqual(committed);
+  });
+
+  it("accepts ordinary comment/line movement in the inventory", () => {
+    expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides: commentSourceOverrides }).inventory).toEqual(inventory);
+  });
+
+  it("accepts ordinary comment/line movement in the committed fingerprint", async () => {
+    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, sourceOverrides: commentSourceOverrides })).resolves.toEqual(committed);
   });
 
   it.each([
