@@ -114,11 +114,11 @@ describe("Cron migration persistence ownership", () => {
       { before: previous.inventory.exemptions.find(entry => entry.id === EXEMPTION), after: actual.inventory.exemptions.find(entry => entry.id === EXEMPTION) },
     ]);
     expect(actual.inventory.exemptions.map(entry => [entry.id, entry.expiresOn])).toEqual(previous.inventory.exemptions.map(entry => [entry.id, entry.expiresOn]));
-    expect(previous.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(65);
-    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(63);
+    expect(previous.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(63);
+    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(61);
     const dated = new Set(actual.inventory.exemptions.filter(entry => entry.expiresOn === "2026-11-17").map(entry => entry.id));
-    expect(previous.inventory.discoveredSites.filter(site => dated.has(site.exemptionId))).toHaveLength(82);
-    expect(actual.inventory.discoveredSites.filter(site => dated.has(site.exemptionId))).toHaveLength(80);
+    expect(previous.inventory.discoveredSites.filter(site => dated.has(site.exemptionId))).toHaveLength(80);
+    expect(actual.inventory.discoveredSites.filter(site => dated.has(site.exemptionId))).toHaveLength(78);
     const cronModelWrites = actual.inventory.discoveredSites.filter(site => site.sourceFile === MODULE && (
       site.excerpt === 'fs.renameSync(tmp, jobsPath)' || site.excerpt === 'fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\\n", "utf-8")'
     ));

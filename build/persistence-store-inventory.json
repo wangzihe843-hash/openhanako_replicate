@@ -4240,18 +4240,18 @@
       "sourceFile": "core/migrations.ts",
       "kind": "secret-write",
       "excerpt": "writeSecretFileSync( configPath, YAML.dump(config, { indent: 2, lineWidth: -1, sortKeys: false, quotingType: \"\\\"\", }), )",
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
-      "storeId": null,
-      "exemptionId": "cross-store-legacy-migrations",
+      "reason": "Writes the existing per-agent configuration in legacy migrations #47 and #48.",
+      "storeId": "agent-profile",
+      "exemptionId": null,
       "ordinal": 0
     },
     {
       "sourceFile": "core/migrations.ts",
       "kind": "secret-write",
       "excerpt": "writeSecretFileSync( configPath, YAML.dump(config, { indent: 2, lineWidth: -1, sortKeys: false, quotingType: \"\\\"\", }), )",
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
-      "storeId": null,
-      "exemptionId": "cross-store-legacy-migrations",
+      "reason": "Writes the existing per-agent configuration in legacy migrations #47 and #48.",
+      "storeId": "agent-profile",
+      "exemptionId": null,
       "ordinal": 1
     },
     {
@@ -11053,7 +11053,7 @@
         "secret-write",
         "persistent-store-constructor"
       ],
-      "linePattern": "^(?!.*\\btitlePath\\b)(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)(?!(?:atomicWriteSync\\(projectionPath, nextProjection\\)|fs\\.mkdirSync\\(runtimeDir, \\{ recursive: true \\}\\)|atomicWriteSync\\(runtimePath, JSON\\.stringify\\(nextRuntime, null, 2\\) \\+ \"\\\\n\"\\))$)",
+      "linePattern": "^(?!.*\\btitlePath\\b)(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)(?!(?:atomicWriteSync\\(projectionPath, nextProjection\\)|fs\\.mkdirSync\\(runtimeDir, \\{ recursive: true \\}\\)|atomicWriteSync\\(runtimePath, JSON\\.stringify\\(nextRuntime, null, 2\\) \\+ \"\\\\n\"\\))$)(?!writeSecretFileSync\\( configPath, YAML\\.dump\\(config, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: \"\\\\\"\", \\}\\), \\)$)",
       "excludedSites": [
         {
           "kind": "secret-write",

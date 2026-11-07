@@ -533,6 +533,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
       ...rules(["lib/agent-appearance-summary.ts", "lib/compat/checks/config-yaml.ts", "server/routes/agents.ts", "server/routes/avatar.ts"], "Reads, repairs, removes, or edits agent/user profile material.", ["write-file", "copy-file", "rename", "mkdir", "remove-path", "atomic-write"]),
       ...rules(["lib/compat/checks/config-yaml.ts"], "Publishes a recovered profile configuration through the credential file writer after preserving the original.", ["secret-write"]),
       ...rules(["shared/migrate-config-scope.ts"], "Writes the cleaned agent config after preserving its scope-migration backup.", ["secret-write"], "writeSecretFileSync\\(ac[.]path, YAML[.]dump\\(ac[.]config"),
+      ...rules(["core/migrations.ts"], "Writes the existing per-agent configuration in legacy migrations #47 and #48.", ["secret-write"], "^writeSecretFileSync\\( configPath, YAML\\.dump\\(config, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: \"\\\\\"\", \\}\\), \\)$"),
       ...rules(["server/utils/avatar-files.ts"], "Atomically replaces or removes agent/user avatars, including temporary files in the same profile directory.", ["write-file", "rename", "mkdir", "remove-path"]),
     ],
   }),
@@ -1710,7 +1711,7 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
     "2026-11-17",
     ALL_SITE_KINDS,
-    "^(?!.*\\btitlePath\\b)(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)(?!(?:atomicWriteSync\\(projectionPath, nextProjection\\)|fs\\.mkdirSync\\(runtimeDir, \\{ recursive: true \\}\\)|atomicWriteSync\\(runtimePath, JSON\\.stringify\\(nextRuntime, null, 2\\) \\+ \"\\\\n\"\\))$)",
+    "^(?!.*\\btitlePath\\b)(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)(?!(?:atomicWriteSync\\(projectionPath, nextProjection\\)|fs\\.mkdirSync\\(runtimeDir, \\{ recursive: true \\}\\)|atomicWriteSync\\(runtimePath, JSON\\.stringify\\(nextRuntime, null, 2\\) \\+ \"\\\\n\"\\))$)(?!writeSecretFileSync\\( configPath, YAML\\.dump\\(config, \\{ indent: 2, lineWidth: -1, sortKeys: false, quotingType: \"\\\\\"\", \\}\\), \\)$)",
   ), excludedSites: [{ kind: "secret-write", expression: "writeSecretFileSync(ymlPath, yamlStr)", occurrence: 0 }] },
   exemption(
     "external-desk-workspace-roots",

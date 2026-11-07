@@ -124,11 +124,11 @@ describe("Agent Phone migration persistence ownership", () => {
     expect(phases).toHaveLength(1);
     expect(phases[0].after).toEqual({ ...phases[0].before, firstPossibleWritePhase: "engine_init_legacy_migrations" });
     expect(actual.inventory.exemptions.map(entry => [entry.id, entry.expiresOn])).toEqual(previous.inventory.exemptions.map(entry => [entry.id, entry.expiresOn]));
-    expect(previous.inventory.discoveredSites.filter(row => row.exemptionId === EXEMPTION)).toHaveLength(66);
-    expect(actual.inventory.discoveredSites.filter(row => row.exemptionId === EXEMPTION)).toHaveLength(63);
+    expect(previous.inventory.discoveredSites.filter(row => row.exemptionId === EXEMPTION)).toHaveLength(64);
+    expect(actual.inventory.discoveredSites.filter(row => row.exemptionId === EXEMPTION)).toHaveLength(61);
     const dated = new Set(actual.inventory.exemptions.filter(entry => entry.expiresOn === "2026-11-17").map(entry => entry.id));
-    expect(previous.inventory.discoveredSites.filter(row => dated.has(row.exemptionId))).toHaveLength(83);
-    expect(actual.inventory.discoveredSites.filter(row => dated.has(row.exemptionId))).toHaveLength(80);
+    expect(previous.inventory.discoveredSites.filter(row => dated.has(row.exemptionId))).toHaveLength(81);
+    expect(actual.inventory.discoveredSites.filter(row => dated.has(row.exemptionId))).toHaveLength(78);
   });
 
   it("recomputes the committed fingerprint including both bounded source fragments", async () => {

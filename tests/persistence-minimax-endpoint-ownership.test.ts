@@ -44,8 +44,8 @@ describe("MiniMax #35 exact persistence ownership", () => {
     } });
     const peers = actual.inventory.discoveredSites.filter(s => s.sourceFile === MODULE && s.excerpt === EXPRESSION);
     expect(peers.map(s => [s.ordinal, s.storeId, s.exemptionId])).toEqual([[0, "provider-state", null], [1, null, EXEMPTION], [2, null, EXEMPTION]]);
-    expect(previous.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(64);
-    expect(actual.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(63);
+    expect(previous.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(62);
+    expect(actual.inventory.discoveredSites.filter(s => s.exemptionId === EXEMPTION)).toHaveLength(61);
     expect(actual.startupReceipt).toEqual(previous.startupReceipt);
     expect(actual.inventory.exemptions.map(e => [e.id, e.expiresOn])).toEqual(previous.inventory.exemptions.map(e => [e.id, e.expiresOn]));
     expect(actual.inventory.stores.map(s => [s.id, s.pathPatterns])).toEqual(previous.inventory.stores.map(s => [s.id, s.pathPatterns]));
