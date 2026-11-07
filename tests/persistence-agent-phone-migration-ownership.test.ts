@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { assertCommittedPersistenceSchemaFingerprint, generatePersistenceSchemaFingerprint, writePersistenceSchemaFingerprint } from "../scripts/generate-persistence-schema-fingerprint.mjs";
+import { assertCommittedPersistenceSchemaFingerprint, executableSourceHash, generatePersistenceSchemaFingerprint, writePersistenceSchemaFingerprint } from "../scripts/generate-persistence-schema-fingerprint.mjs";
+import { agentPhoneMigrationProtocol } from "../scripts/persistence-agent-phone-migration.mjs";
 import { scanPersistentStores } from "../scripts/scan-persistent-stores.mjs";
 import { PERSISTENCE_EXEMPTIONS, PERSISTENT_STORES } from "../shared/persistence/store-registry.ts";
 
@@ -30,6 +31,52 @@ const priorExemptions = PERSISTENCE_EXEMPTIONS.map(entry => entry.id !== EXEMPTI
 const review = { classification: "compatible", compatibilityReason: "Test-only Agent Phone attribution mutation." };
 vi.setConfig({ testTimeout: 30_000 });
 
+// The independent #35 proof pins this complete module and the shared writer.
+// Keep its formal rejection, then exercise the original Phone-only oracle
+// separately. No production proof is mocked, disabled or made less strict.
+const fixtureExemptions = PERSISTENCE_EXEMPTIONS.map(entry => {
+  const copy = { ...entry };
+  if (entry.id === EXEMPTION) delete copy.excludedSites;
+  return copy;
+});
+const fixtureInventory = { ...inventory, exemptions: inventory.exemptions.map(entry => {
+  const copy = { ...entry };
+  if (entry.id === EXEMPTION) delete copy.excludedSites;
+  return copy;
+}), discoveredSites: inventory.discoveredSites.map(site => {
+  if (site.sourceFile !== MODULE || site.kind !== "secret-write"
+    || site.excerpt !== "writeSecretFileSync(ymlPath, yamlStr)" || site.ordinal !== 0) return site;
+  const copy = { ...site, storeId: null, exemptionId: EXEMPTION,
+    reason: PERSISTENCE_EXEMPTIONS.find(entry => entry.id === EXEMPTION)!.reason };
+  delete copy.minimaxEndpointBinding;
+  return copy;
+}) };
+const committedPhone = committed.schemas.find(entry => entry.storeId === OWNER);
+function phoneOracle(sourceOverrides) {
+  return {
+    migrationProtocol: agentPhoneMigrationProtocol({
+      readSource: module => sourceOverrides.get(module) ?? fs.readFileSync(path.join(ROOT, module), "utf8"),
+      hashSource: (module, text) => executableSourceHash(ROOT, module, new Map([[module, text]])),
+    }),
+    protocolModules: committedPhone.protocolModules.map(entry => ({ ...entry,
+      sourceHash: executableSourceHash(ROOT, entry.module, sourceOverrides),
+    })),
+  };
+}
+const committedPhoneOracle = { migrationProtocol: committedPhone.migrationProtocol,
+  protocolModules: committedPhone.protocolModules };
+function rejectPhoneOracle(sourceOverrides, pattern) {
+  let actual;
+  try { actual = phoneOracle(sourceOverrides); }
+  catch (error) { expect(() => { throw error; }).toThrow(pattern); return; }
+  expect(pattern.source).toContain("persistence schema fingerprint mismatch");
+  expect(actual).not.toEqual(committedPhoneOracle);
+}
+function scanPhoneMutation(sourceOverrides) {
+  expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides })).toThrow(/MiniMax #35 ownership/);
+  return scanPersistentStores({ rootDir: ROOT, sourceOverrides, exemptions: fixtureExemptions });
+}
+
 function replaceOnce(text: string, from: string, to: string) {
   expect(text.split(from)).toHaveLength(2);
   return text.replace(from, to);
@@ -47,6 +94,12 @@ function metadata() {
 }
 async function reject(sourceOverrides, pattern = /agent phone migration protocol|persistence schema fingerprint mismatch/) {
   // A stale supplied inventory must not hide changes to the bounded source.
+  if ([MODULE, "shared/safe-fs.ts"].some(module => sourceOverrides.has(module))) {
+    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, sourceOverrides, committedFingerprint: committed }))
+      .rejects.toThrow(/MiniMax #35 ownership/);
+    rejectPhoneOracle(sourceOverrides, pattern);
+    return;
+  }
   await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, sourceOverrides, committedFingerprint: committed })).rejects.toThrow(pattern);
 }
 
@@ -71,11 +124,11 @@ describe("Agent Phone migration persistence ownership", () => {
     expect(phases).toHaveLength(1);
     expect(phases[0].after).toEqual({ ...phases[0].before, firstPossibleWritePhase: "engine_init_legacy_migrations" });
     expect(actual.inventory.exemptions.map(entry => [entry.id, entry.expiresOn])).toEqual(previous.inventory.exemptions.map(entry => [entry.id, entry.expiresOn]));
-    expect(previous.inventory.discoveredSites.filter(row => row.exemptionId === EXEMPTION)).toHaveLength(67);
-    expect(actual.inventory.discoveredSites.filter(row => row.exemptionId === EXEMPTION)).toHaveLength(64);
+    expect(previous.inventory.discoveredSites.filter(row => row.exemptionId === EXEMPTION)).toHaveLength(66);
+    expect(actual.inventory.discoveredSites.filter(row => row.exemptionId === EXEMPTION)).toHaveLength(63);
     const dated = new Set(actual.inventory.exemptions.filter(entry => entry.expiresOn === "2026-11-17").map(entry => entry.id));
-    expect(previous.inventory.discoveredSites.filter(row => dated.has(row.exemptionId))).toHaveLength(84);
-    expect(actual.inventory.discoveredSites.filter(row => dated.has(row.exemptionId))).toHaveLength(81);
+    expect(previous.inventory.discoveredSites.filter(row => dated.has(row.exemptionId))).toHaveLength(83);
+    expect(actual.inventory.discoveredSites.filter(row => dated.has(row.exemptionId))).toHaveLength(80);
   });
 
   it("recomputes the committed fingerprint including both bounded source fragments", async () => {
@@ -90,6 +143,20 @@ describe("Agent Phone migration persistence ownership", () => {
       "hub/agent-executor.ts", "lib/conversations/agent-phone-runtime.ts", "shared/link-aware-fs.ts", "shared/safe-fs.ts",
     ]);
     expect(committed.dataEpoch).toBe(1);
+  });
+
+  it("rejects the isolated Phone fixture through the formal fingerprint boundary", async () => {
+    await expect(generatePersistenceSchemaFingerprint({ rootDir: ROOT, inventory: fixtureInventory, review }))
+      .rejects.toThrow(/MiniMax #35 ownership/);
+    const output = path.join(ROOT, ".cache", "phone-fixture-receipt-preservation.json");
+    fs.mkdirSync(path.dirname(output), { recursive: true });
+    const bytes = Buffer.from(JSON.stringify(committed));
+    fs.writeFileSync(output, bytes);
+    try {
+      await expect(writePersistenceSchemaFingerprint({ rootDir: ROOT, outputPath: output, inventory: fixtureInventory, review }))
+        .rejects.toThrow(/MiniMax #35 ownership/);
+      expect(fs.readFileSync(output)).toEqual(bytes);
+    } finally { fs.rmSync(output, { force: true }); }
   });
 
   it("rejects removed and duplicate ownership and the old overlapping exemption", async () => {
@@ -107,14 +174,14 @@ describe("Agent Phone migration persistence ownership", () => {
   it.each(CALLS)("rejects deletion or replacement of %s even with a stale inventory", async call => {
     for (const replacement of ["void 0", call.replace(/projectionPath|runtimeDir|runtimePath/, "otherTarget")]) {
       const sourceOverrides = overrides(replaceOnce(source, call, replacement));
-      expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides })).toThrow(/dangling persistence rule/);
+      expect(() => scanPhoneMutation(sourceOverrides)).toThrow(/dangling persistence rule/);
       await reject(sourceOverrides, /agent phone migration protocol: missing, duplicate or moved call/);
     }
   });
 
   it.each(CALLS)("rejects a fourth identical call to %s in the formal fingerprint path", async call => {
     const sourceOverrides = overrides(`${source}\nfunction fourth(projectionPath, nextProjection, runtimePath, nextRuntime, runtimeDir) { ${call}; }\n`);
-    const extra = scanPersistentStores({ rootDir: ROOT, sourceOverrides });
+    const extra = scanPhoneMutation(sourceOverrides);
     expect(extra.inventory.discoveredSites).toHaveLength(906);
     expect(extra.inventory.discoveredSites.filter(row => row.sourceFile === MODULE && row.excerpt === call)).toHaveLength(2);
     await reject(sourceOverrides, /agent phone migration protocol: missing, duplicate or moved call/);
@@ -122,7 +189,7 @@ describe("Agent Phone migration persistence ownership", () => {
 
   it("rejects a call moved into another function and an extra effect inside #32", async () => {
     const moved = replaceOnce(source, CALLS[0], "void 0") + `\nfunction other(projectionPath, nextProjection) { ${CALLS[0]}; }\n`;
-    expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides: overrides(moved) }).inventory).toEqual(inventory);
+    expect(scanPhoneMutation(overrides(moved)).inventory).toEqual(fixtureInventory);
     await reject(overrides(moved), /agent phone migration protocol: missing, duplicate or moved call/);
     await reject(overrides(replaceOnce(source, CALLS[2], `${CALLS[2]}; fs.writeFileSync(runtimePath, "extra")`)), /persistence schema fingerprint mismatch/);
   });
@@ -137,7 +204,7 @@ describe("Agent Phone migration persistence ownership", () => {
     ['migrations[v](ctx);', 'migrations[v]({ ...ctx, agentsDir: ctx.hanakoHome });'],
   ])("fingerprints bounded semantic drift: %s", async (from, to) => {
     const sourceOverrides = overrides(replaceOnce(source, from, to));
-    expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides }).inventory).toEqual(inventory);
+    expect(scanPhoneMutation(sourceOverrides).inventory).toEqual(fixtureInventory);
     await reject(sourceOverrides, /persistence schema fingerprint mismatch/);
   });
 
@@ -165,17 +232,17 @@ describe("Agent Phone migration persistence ownership", () => {
     const marker = "  53: migrateCleanEnvelopeSessionTitles,\n};";
     const text = replaceOnce(source, marker, `  53: migrateCleanEnvelopeSessionTitles,\n  ${property}\n};`);
     const sourceOverrides = overrides(text);
-    expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides }).inventory).toEqual(inventory);
+    expect(scanPhoneMutation(sourceOverrides).inventory).toEqual(fixtureInventory);
     const pattern = /agent phone migration protocol: (unknown registry property shape|duplicate registry id)/;
     await reject(sourceOverrides, pattern);
-    await expect(generatePersistenceSchemaFingerprint({ rootDir: ROOT, inventory, sourceOverrides, review })).rejects.toThrow(pattern);
+    await expect(generatePersistenceSchemaFingerprint({ rootDir: ROOT, inventory, sourceOverrides, review })).rejects.toThrow(/MiniMax #35 ownership/);
     const output = path.join(ROOT, ".cache", "phone-registry-preservation.json");
     fs.mkdirSync(path.dirname(output), { recursive: true });
     const bytes = Buffer.from(JSON.stringify(committed));
     fs.writeFileSync(output, bytes);
     try {
       // No new review: r1 incorrectly accepted the unchanged payload here.
-      await expect(writePersistenceSchemaFingerprint({ rootDir: ROOT, outputPath: output, inventory, sourceOverrides })).rejects.toThrow(pattern);
+      await expect(writePersistenceSchemaFingerprint({ rootDir: ROOT, outputPath: output, inventory, sourceOverrides })).rejects.toThrow(/MiniMax #35 ownership/);
       expect(fs.readFileSync(output)).toEqual(bytes);
     } finally { fs.rmSync(output, { force: true }); }
   });
@@ -202,10 +269,14 @@ describe("Agent Phone migration persistence ownership", () => {
     await reject(new Map([[module, replaceOnce(text, call, deferred)]]), /agent phone migration protocol: startup wrapper drift/);
   });
 
-  it("accepts line/comment drift and unselected migration code without hashing the whole module", async () => {
-    const sourceOverrides = overrides(`// ordinary comment\n\n${source}\nfunction unrelatedToPhone() { return 123; }\n`);
-    expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides }).inventory).toEqual(inventory);
-    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, sourceOverrides, committedFingerprint: committed })).resolves.toEqual(committed);
+  it("preserves Phone's bounded oracle while the independent whole-module proof rejects added code", async () => {
+    const comments = overrides(`// ordinary comment\n\n${source}`);
+    expect(scanPersistentStores({ rootDir: ROOT, sourceOverrides: comments }).inventory).toEqual(inventory);
+    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, sourceOverrides: comments, committedFingerprint: committed })).resolves.toEqual(committed);
+    const sourceOverrides = overrides(`${comments.get(MODULE)}\nfunction unrelatedToPhone() { return 123; }\n`);
+    expect(scanPhoneMutation(sourceOverrides).inventory).toEqual(fixtureInventory);
+    expect(phoneOracle(sourceOverrides)).toEqual(committedPhoneOracle);
+    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, sourceOverrides, committedFingerprint: committed })).rejects.toThrow(/MiniMax #35 ownership/);
   });
 
   it("rejects absent source before writing an existing fingerprint file", async () => {
@@ -214,7 +285,8 @@ describe("Agent Phone migration persistence ownership", () => {
     const bytes = Buffer.from(JSON.stringify(committed));
     fs.writeFileSync(output, bytes);
     try {
-      await expect(writePersistenceSchemaFingerprint({ rootDir: ROOT, outputPath: output, inventory, sourceOverrides: overrides(""), review })).rejects.toThrow(/agent phone migration protocol/);
+      expect(() => phoneOracle(overrides(""))).toThrow(/agent phone migration protocol/);
+      await expect(writePersistenceSchemaFingerprint({ rootDir: ROOT, outputPath: output, inventory, sourceOverrides: overrides(""), review })).rejects.toThrow(/MiniMax #35 ownership/);
       expect(fs.readFileSync(output)).toEqual(bytes);
     } finally { fs.rmSync(output, { force: true }); }
   });

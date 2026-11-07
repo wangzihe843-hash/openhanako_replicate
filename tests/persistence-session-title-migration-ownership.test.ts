@@ -30,6 +30,15 @@ const priorExemptions = PERSISTENCE_EXEMPTIONS.map(exemption => {
 const overrides = (text: string) => new Map([[MODULE, text]]);
 const review = { classification: "compatible", compatibilityReason: "Test-only reconstruction of session title migration ownership before attribution." };
 
+// #35 conservatively pins this whole module. Retain the original #53 matcher
+// oracle in a fixture without the #35 exclusion, and also assert that the full
+// production proof rejects each executable mutation before using that fixture.
+const titleMutationExemptions = PERSISTENCE_EXEMPTIONS.map(e => { const copy = { ...e }; delete copy.excludedSites; return copy; });
+function scanTitleMutation(sourceOverrides) {
+  expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides })).toThrow(/MiniMax #35 ownership/);
+  return scanPersistentStores({ rootDir: ROOT, sourceOverrides, exemptions: titleMutationExemptions });
+}
+
 vi.setConfig({ testTimeout: 30_000 });
 
 function assertCurrentMetadata() {
@@ -88,12 +97,12 @@ describe("session title migration persistence ownership", () => {
     expect(exemptionChanges).toHaveLength(1);
     expect(exemptionChanges[0].before).toMatchObject({ id: EXEMPTION, expiresOn: "2026-11-17" });
     expect(exemptionChanges[0].after).toEqual({ ...exemptionChanges[0].before, linePattern: PERSISTENCE_EXEMPTIONS.find(entry => entry.id === EXEMPTION)?.linePattern });
-    expect(previous.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(65);
-    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(64);
+    expect(previous.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(64);
+    expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(63);
     const datedIds = new Set(actual.inventory.exemptions.filter(exemption => exemption.expiresOn === "2026-11-17").map(exemption => exemption.id));
     expect(datedIds.size).toBe(6);
-    expect(previous.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(82);
-    expect(actual.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(81);
+    expect(previous.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(81);
+    expect(actual.inventory.discoveredSites.filter(site => datedIds.has(site.exemptionId))).toHaveLength(80);
     assertCurrentMetadata();
   });
 
@@ -144,7 +153,7 @@ describe("session title migration persistence ownership", () => {
   ])("detects the formal atomic call being %s through the dangling exact rule", (_label, replacement) => {
     assertCurrentMetadata();
     const sourceOverrides = changedSource(replacement);
-    expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides }))
+    expect(() => scanTitleMutation(sourceOverrides))
       .toThrow(/dangling persistence rule for store session-sidecars: core\/migrations\.ts/);
     assertCurrentMetadata();
   });
@@ -158,7 +167,7 @@ describe("session title migration persistence ownership", () => {
     assertCurrentMetadata();
     const sourceOverrides = changedSource(`${call};\n    ${added}`);
     expect(sourceOverrides.get(MODULE)?.split(call)).toHaveLength(2);
-    expect(() => scanPersistentStores({ rootDir: ROOT, sourceOverrides }))
+    expect(() => scanTitleMutation(sourceOverrides))
       .toThrow(new RegExp(`unregistered persistence site: core/migrations[.]ts:\\d+ ${kind} `));
     assertCurrentMetadata();
   });
@@ -167,15 +176,14 @@ describe("session title migration persistence ownership", () => {
     assertCurrentMetadata();
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, committedFingerprint: committed })).resolves.toEqual(committed);
     const sourceOverrides = changedSource(`${call};\n    ${call}`);
-    const duplicate = scanPersistentStores({ rootDir: ROOT, sourceOverrides }).inventory;
+    const duplicate = scanTitleMutation(sourceOverrides).inventory;
     expect(duplicate.discoveredSites).toHaveLength(906);
     expect(duplicate.discoveredSites.filter(site => site.sourceFile === MODULE && site.excerpt === call))
       .toEqual([0, 1].map(ordinal => ({ ...inventory.discoveredSites.find(site => site.sourceFile === MODULE && site.excerpt === call), ordinal })));
-    const mutation = await generatePersistenceSchemaFingerprint({ rootDir: ROOT, inventory: duplicate, sourceOverrides, review });
-    expect(mutation.schemas).toEqual(committed.schemas);
-    expect(mutation.siteMappings).toHaveLength(committed.siteMappings.length + 1);
-    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory: duplicate, committedFingerprint: committed, sourceOverrides }))
-      .rejects.toThrow(`persistence schema fingerprint mismatch: committed ${committed.payloadFingerprint}, generated ${mutation.payloadFingerprint}`);
+    // The full module is now a finite #35 proof: even an explicit compatible
+    // review cannot reseal a changed module through this synthetic inventory.
+    await expect(generatePersistenceSchemaFingerprint({ rootDir: ROOT, inventory: duplicate, sourceOverrides, review })).rejects.toThrow(/MiniMax #35 ownership/);
+    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, committedFingerprint: committed, sourceOverrides })).rejects.toThrow(/MiniMax #35 ownership/);
     assertCurrentMetadata();
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, committedFingerprint: committed })).resolves.toEqual(committed);
   });

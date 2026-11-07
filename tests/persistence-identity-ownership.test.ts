@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { scanPersistentStores } from "../scripts/scan-persistent-stores.mjs";
-import { assertCommittedPersistenceSchemaFingerprint, generatePersistenceSchemaFingerprint } from "../scripts/generate-persistence-schema-fingerprint.mjs";
+import { assertCommittedPersistenceSchemaFingerprint, executableSourceHash, generatePersistenceSchemaFingerprint } from "../scripts/generate-persistence-schema-fingerprint.mjs";
 import { PERSISTENCE_EXEMPTIONS } from "../shared/persistence/store-registry.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -76,12 +76,14 @@ describe("identity persistence ownership", () => {
     const safe = fs.readFileSync(path.join(ROOT, module), "utf8");
     expect(safe).toContain('filePath + ".tmp"');
     const sourceOverrides = new Map([[module, safe.replace('filePath + ".tmp"', 'filePath + ".other"')]]);
-    const changed = await generatePersistenceSchemaFingerprint({ rootDir: ROOT, inventory, sourceOverrides, review: { classification: "compatible", compatibilityReason: "Test-only atomic protocol mutation." } });
-    expect(changed.payloadFingerprint).not.toBe(committed.payloadFingerprint);
-    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, committedFingerprint: committed, sourceOverrides })).rejects.toThrow(/fingerprint mismatch/);
+    expect(executableSourceHash(ROOT, module, sourceOverrides)).not.toBe(executableSourceHash(ROOT, module));
+    // #35 now pins this shared source as a finite publication dependency, so
+    // even an explicit compatible review must fail before resealing it.
+    await expect(generatePersistenceSchemaFingerprint({ rootDir: ROOT, inventory, sourceOverrides, review: { classification: "compatible", compatibilityReason: "Test-only atomic protocol mutation." } })).rejects.toThrow(/MiniMax #35 ownership/);
+    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, committedFingerprint: committed, sourceOverrides })).rejects.toThrow(/MiniMax #35 ownership/);
     expect(safe).toContain("fs.renameSync(tmp, filePath)");
     const changedRename = new Map([[module, safe.replace("fs.renameSync(tmp, filePath)", "fs.copyFileSync(tmp, filePath)")]]);
-    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, committedFingerprint: committed, sourceOverrides: changedRename })).rejects.toThrow(/fingerprint mismatch/);
+    await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, committedFingerprint: committed, sourceOverrides: changedRename })).rejects.toThrow(/MiniMax #35 ownership/);
     await expect(assertCommittedPersistenceSchemaFingerprint({ rootDir: ROOT, inventory, committedFingerprint: committed, sourceOverrides: overrides(`// comment\n${source}`) })).resolves.toEqual(committed);
   });
 

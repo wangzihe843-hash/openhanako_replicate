@@ -478,6 +478,7 @@ export const PERSISTENT_STORES: readonly StoreDescriptor[] = Object.freeze([
     schemaSource: directorySource("core/provider-catalog.ts", "ProviderCatalogStore plus provider plugin/config runtime readers"),
     openEntry: ["new ProviderRegistry", "new ProviderCatalogStore"],
     migrationEntry: ["core/migrate-providers.ts", "core/provider-auth-migration.ts", "core/provider-media-config.ts"],
+    protocolModules: ["core/migrations.ts", "shared/safe-fs.ts", "shared/secret-fs.ts", "scripts/persistence-minimax-endpoint.mjs"],
     firstPossibleOpenPhase: "engine_construct",
     firstPossibleWritePhase: "engine_construct",
     identityContract: "providerId is the durable key; YAML/JSON paths are storage locators. Locally defined provider plugins live under a filesystem-safe storage identifier derived from that key, which is why their patterns say storageId rather than providerId.",
@@ -1702,7 +1703,7 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     ["copy-file", "mkdir", "rename", "write-file"],
     "^(?:fs\\.mkdirSync\\(agentDir, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"desk\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"memory\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(agentDir, \"sessions\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(path\\.join\\(hanakoHome, \"agents\"\\), \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(skillsDst, \\{ recursive: true \\}\\)|fs\\.mkdirSync\\(userDir, \\{ recursive: true \\}\\)|fs\\.renameSync\\(cfgPath, backupPath\\)|fs\\.writeFileSync\\(p, '', 'utf-8'\\))$",
   ),
-  exemption(
+  { ...exemption(
     "cross-store-legacy-migrations",
     "core/migrations.ts",
     "core/migrations.ts",
@@ -1710,7 +1711,7 @@ export const PERSISTENCE_EXEMPTIONS: readonly PersistenceExemption[] = Object.fr
     "2026-11-17",
     ALL_SITE_KINDS,
     "^(?!.*\\btitlePath\\b)(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)(?!(?:atomicWriteSync\\(projectionPath, nextProjection\\)|fs\\.mkdirSync\\(runtimeDir, \\{ recursive: true \\}\\)|atomicWriteSync\\(runtimePath, JSON\\.stringify\\(nextRuntime, null, 2\\) \\+ \"\\\\n\"\\))$)",
-  ),
+  ), excludedSites: [{ kind: "secret-write", expression: "writeSecretFileSync(ymlPath, yamlStr)", occurrence: 0 }] },
   exemption(
     "external-desk-workspace-roots",
     "server/routes/desk.ts",

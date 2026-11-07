@@ -69,8 +69,8 @@ describe("first-run syncSkills root ownership", () => {
       expect(actual.inventory.stores).toHaveLength(65);
       expect(actual.inventory.discoveredSites).toHaveLength(905);
       expect(actual.inventory.exemptions).toHaveLength(32);
-      expect(actual.inventory.discoveredSites.filter(site => site.storeId)).toHaveLength(721);
-      expect(actual.inventory.discoveredSites.filter(site => site.exemptionId)).toHaveLength(184);
+      expect(actual.inventory.discoveredSites.filter(site => site.storeId)).toHaveLength(722);
+      expect(actual.inventory.discoveredSites.filter(site => site.exemptionId)).toHaveLength(183);
       const changed = previous.inventory.discoveredSites.map((before, index) => ({ before, after: actual.inventory.discoveredSites[index] }))
         .filter(({ before, after }) => JSON.stringify(before) !== JSON.stringify(after));
       expect(changed).toHaveLength(1);
@@ -89,7 +89,7 @@ describe("first-run syncSkills root ownership", () => {
       }));
       const dated = actual.inventory.exemptions.filter(e => e.expiresOn === "2026-11-17");
       expect(dated).toHaveLength(6);
-      expect(actual.inventory.discoveredSites.filter(site => dated.some(e => e.id === site.exemptionId))).toHaveLength(81);
+      expect(actual.inventory.discoveredSites.filter(site => dated.some(e => e.id === site.exemptionId))).toHaveLength(80);
       expect(actual.inventory.discoveredSites.filter(site => site.exemptionId === EXEMPTION)).toHaveLength(9);
     });
 

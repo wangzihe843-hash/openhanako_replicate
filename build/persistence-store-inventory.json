@@ -1722,7 +1722,12 @@
         "core/provider-auth-migration.ts",
         "core/provider-media-config.ts"
       ],
-      "protocolModules": [],
+      "protocolModules": [
+        "core/migrations.ts",
+        "shared/safe-fs.ts",
+        "shared/secret-fs.ts",
+        "scripts/persistence-minimax-endpoint.mjs"
+      ],
       "firstPossibleOpenPhase": "engine_construct",
       "firstPossibleWritePhase": "engine_construct",
       "epochPolicy": "epoch-managed",
@@ -4361,10 +4366,18 @@
       "sourceFile": "core/migrations.ts",
       "kind": "secret-write",
       "excerpt": "writeSecretFileSync(ymlPath, yamlStr)",
-      "reason": "The legacy migration orchestrator mutates many registered targets. Each target is inventoried, while exact-site flow attribution remains prerequisite work for the coordinator.",
-      "storeId": null,
-      "exemptionId": "cross-store-legacy-migrations",
-      "ordinal": 0
+      "reason": "Migrates only the legacy MiniMax Token Plan endpoint in migration #35; exact caller-root YAML and secret staging publication.",
+      "storeId": "provider-state",
+      "exemptionId": null,
+      "ordinal": 0,
+      "minimaxEndpointBinding": {
+        "scope": "migrateMiniMaxTokenPlanAnthropicEndpoint",
+        "root": "ctx.hanakoHome",
+        "targets": [
+          "added-models.yaml.tmp",
+          "added-models.yaml"
+        ]
+      }
     },
     {
       "sourceFile": "core/migrations.ts",
@@ -11040,7 +11053,14 @@
         "secret-write",
         "persistent-store-constructor"
       ],
-      "linePattern": "^(?!.*\\btitlePath\\b)(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)(?!(?:atomicWriteSync\\(projectionPath, nextProjection\\)|fs\\.mkdirSync\\(runtimeDir, \\{ recursive: true \\}\\)|atomicWriteSync\\(runtimePath, JSON\\.stringify\\(nextRuntime, null, 2\\) \\+ \"\\\\n\"\\))$)"
+      "linePattern": "^(?!.*\\btitlePath\\b)(?!atomicWriteSync\\(jobsPath, JSON\\.stringify\\(\\{ \\.\\.\\.data, jobs \\}, null, 2\\) \\+ \"\\\\n\"\\)$)(?!(?:atomicWriteSync\\(projectionPath, nextProjection\\)|fs\\.mkdirSync\\(runtimeDir, \\{ recursive: true \\}\\)|atomicWriteSync\\(runtimePath, JSON\\.stringify\\(nextRuntime, null, 2\\) \\+ \"\\\\n\"\\))$)",
+      "excludedSites": [
+        {
+          "kind": "secret-write",
+          "expression": "writeSecretFileSync(ymlPath, yamlStr)",
+          "occurrence": 0
+        }
+      ]
     },
     {
       "id": "data-epoch-durable-json-primitive",
