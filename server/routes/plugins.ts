@@ -391,8 +391,21 @@ function getInstallTargetDir(pm: any, desc: any, stagedDir: string, userPluginsD
 }
 
 function cleanupPluginInstallDirs(installStagingDir: string, extractDir: string | null) {
-  fs.rmSync(installStagingDir, { recursive: true, force: true });
-  if (extractDir) fs.rmSync(extractDir, { recursive: true, force: true });
+  let firstError: unknown;
+  let failed = false;
+  try {
+    fs.rmSync(installStagingDir, { recursive: true, force: true });
+  } catch (err) {
+    firstError = err;
+    failed = true;
+  }
+  try {
+    if (extractDir) fs.rmSync(extractDir, { recursive: true, force: true });
+  } catch (err) {
+    if (!failed) firstError = err;
+    failed = true;
+  }
+  if (failed) throw firstError;
 }
 
 async function stagePluginSource({ pm, sourcePath, userPluginsDir }: { pm: any; sourcePath: string; userPluginsDir: string }) {

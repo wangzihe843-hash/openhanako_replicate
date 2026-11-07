@@ -601,7 +601,7 @@
     ],
     "version": 3
   },
-  "payloadFingerprint": "sha256:7f2d95b7a67ed1e2e2e836ba9db118f6cae6ea6eee01d5df492c18c537a7d27b",
+  "payloadFingerprint": "sha256:332816831420d5ab20179e284a5961d76e1e95d7ab126e1f54b0c2e7e2792a3d",
   "registry": [
     {
       "affectedByEpochMigration": true,
@@ -3381,8 +3381,8 @@
   ],
   "review": {
     "classification": "compatible",
-    "compatibilityReason": "Prior compatible review: Attribute exactly two existing Cron migration writes (#30/#38 helper and #39) to cron-automation on the accepted syncSkills root baseline; retain the skill-state mkdir attribution and current CI guards. Record the Cron legacy-init write phase and imported normalizer/publisher dependencies. Runtime migrations, persisted formats, DATA_EPOCH, paths and expiry are unchanged. The whole file core/migrations.ts is not fingerprinted; finite caller-path guards cover its registered slots and targets. Agent Phone migration #32 now assigns only its existing three projection/runtime writes to agent-phone with bounded migration and startup protocol fingerprinting; no data format, runtime algorithm, or DATA_EPOCH change. Additionally attribute only MiniMax migration #35 added-models publication to provider-state, with exact ctx.hanakoHome and both added-models.yaml.tmp/added-models.yaml targets. Its conservative proof pins the whole file core/migrations.ts and the shared publication helpers, superseding earlier whole-module noncoverage statements while retaining the Agent Phone bounded protocol and all existing ownership, startup, paths and expiry gates. No runtime or DATA_EPOCH change. The prior review also attributes the existing migration #53 session-titles.json atomic-write site to session-sidecars and excludes titlePath writes from the legacy exemption. That existing JSON sidecar is rewritten as a whole when migration #53 removes titles. Its earliest write phase remains engine_construct because session-manifest startup backfill may write titles in the Engine constructor; #53 itself remains an engine_init_legacy_migrations writer. This change additionally attributes only the two existing core/migrations.ts secret-write sites in migrations #47 and #48 to agent-profile. Both write agents/{agentId}/config.yaml as YAML and share the exact full expression; narrowing that legacy exemption leaves 61 legacy sites with expiry 2026-11-17. Persisted formats, runtime behavior, paths, descriptors, startup receipt and DATA_EPOCH are unchanged by this attribution. MiniMax #35 retains its conservative whole-executable-file core/migrations.ts proof and shared publication helper coverage; Agent Phone #32 retains its bounded migration and startup protocol hashes. The whole executable source of registered protocol modules is hashed, with ordinary comments excluded. Targeted tests and review cover the #47/#48 call paths and multiplicity.",
-    "payloadFingerprint": "sha256:7f2d95b7a67ed1e2e2e836ba9db118f6cae6ea6eee01d5df492c18c537a7d27b"
+    "compatibilityReason": "Prior compatible review: Attribute exactly two existing Cron migration writes (#30/#38 helper and #39) to cron-automation on the accepted syncSkills root baseline; retain the skill-state mkdir attribution and current CI guards. Record the Cron legacy-init write phase and imported normalizer/publisher dependencies. Runtime migrations, persisted formats, DATA_EPOCH, paths and expiry are unchanged. The whole file core/migrations.ts is not fingerprinted; finite caller-path guards cover its registered slots and targets. Agent Phone migration #32 now assigns only its existing three projection/runtime writes to agent-phone with bounded migration and startup protocol fingerprinting; no data format, runtime algorithm, or DATA_EPOCH change. Additionally attribute only MiniMax migration #35 added-models publication to provider-state, with exact ctx.hanakoHome and both added-models.yaml.tmp/added-models.yaml targets. Its conservative proof pins the whole file core/migrations.ts and the shared publication helpers, superseding earlier whole-module noncoverage statements while retaining the Agent Phone bounded protocol and all existing ownership, startup, paths and expiry gates. No runtime or DATA_EPOCH change. The prior review also attributes the existing migration #53 session-titles.json atomic-write site to session-sidecars and excludes titlePath writes from the legacy exemption. That existing JSON sidecar is rewritten as a whole when migration #53 removes titles. Its earliest write phase remains engine_construct because session-manifest startup backfill may write titles in the Engine constructor; #53 itself remains an engine_init_legacy_migrations writer. This change additionally attributes only the two existing core/migrations.ts secret-write sites in migrations #47 and #48 to agent-profile. Both write agents/{agentId}/config.yaml as YAML and share the exact full expression; narrowing that legacy exemption leaves 61 legacy sites with expiry 2026-11-17. Persisted formats, runtime behavior, paths, descriptors, startup receipt and DATA_EPOCH are unchanged by this attribution. MiniMax #35 retains its conservative whole-executable-file core/migrations.ts proof and shared publication helper coverage; Agent Phone #32 retains its bounded migration and startup protocol hashes. The whole executable source of registered protocol modules is hashed, with ordinary comments excluded. Targeted tests and review cover the #47/#48 call paths and multiplicity. Plugin install cleanup now attempts both request-scoped staging and OS extraction removals even if the staging removal fails; it throws the first cleanup error after both attempts, preserving cleanup order and prior error precedence. No stored paths, format, ownership assignment, expiry, checkpoint policy, or DATA_EPOCH change. Extraction cleanup is now attempted on staging cleanup failure; incomplete cleanup remains possible and reported. Rollback restores the former stop-on-first-error behavior and cannot recreate removed temporary files.",
+    "payloadFingerprint": "sha256:332816831420d5ab20179e284a5961d76e1e95d7ab126e1f54b0c2e7e2792a3d"
   },
   "schemas": [
     {
@@ -3923,7 +3923,7 @@
       "protocolModules": [
         {
           "module": "server/routes/plugins.ts",
-          "sourceHash": "sha256:3081074eefda41e6089fc7380d7c8da979fe4127d923db6c9051f1c70a6be093"
+          "sourceHash": "sha256:f5a2b324fd817dec26210a2e468bf14a6c507d44a14153e8ff4d6d987ad978fa"
         }
       ],
       "sourceHash": "sha256:9fd5aa86de24d42745cfffa6db2ccf3acfbd1f8be10a09527e3edf6f7c69b12d",
@@ -4008,7 +4008,7 @@
       "contract": "verified plugin release ZIP naming by pluginId/version and expected sha256",
       "kind": "directory-contract",
       "module": "server/routes/plugins.ts",
-      "sourceHash": "sha256:3081074eefda41e6089fc7380d7c8da979fe4127d923db6c9051f1c70a6be093",
+      "sourceHash": "sha256:f5a2b324fd817dec26210a2e468bf14a6c507d44a14153e8ff4d6d987ad978fa",
       "storeId": "plugin-download-cache"
     },
     {

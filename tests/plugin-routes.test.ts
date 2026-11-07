@@ -2578,7 +2578,7 @@ describe("plugin route request-level principal and capability context", () => {
 });
 
 describe("plugin install temporary directory ownership", () => {
-  it.each(["success", "extract", "validate", "load", "sync", "staging cleanup", "extract cleanup", "staging cleanup on validation", "extract cleanup on validation"])(
+  it.each(["success", "extract", "validate", "load", "sync", "staging cleanup", "extract cleanup", "staging cleanup on validation", "extract cleanup on validation", "both cleanups fail"])(
     "cleans only this request's directories on %s", async (scenario) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-owner-test-"));
       const plugins = path.join(root, "plugins");
@@ -2609,7 +2609,8 @@ describe("plugin install temporary directory ownership", () => {
         const p = String(target);
         if (created.includes(p)) {
           removed.push(p);
-          if ((scenario.startsWith("staging cleanup") && p === created[0]) || (scenario.startsWith("extract cleanup") && p === created[1])) throw new Error("cleanup failed");
+          if ((scenario.startsWith("staging cleanup") || scenario === "both cleanups fail") && p === created[0]) throw new Error("staging cleanup failed");
+          if ((scenario.startsWith("extract cleanup") || scenario === "both cleanups fail") && p === created[1]) throw new Error("extract cleanup failed");
         }
         return originalRm(target, options);
       }) as typeof fs.rmSync);
@@ -2632,9 +2633,9 @@ describe("plugin install temporary directory ownership", () => {
         });
         expect(res.status).toBe(scenario === "success" ? 200 : scenario === "validate" ? 400 : 500);
         expect(created).toHaveLength(2);
-        expect(removed).toEqual(scenario.startsWith("staging cleanup") ? [created[0]] : created);
+        expect(removed).toEqual(created);
         expect(fs.existsSync(created[0])).toBe(scenario === "staging cleanup on validation");
-        expect(fs.existsSync(created[1])).toBe(scenario.includes("cleanup"));
+        expect(fs.existsSync(created[1])).toBe(scenario.startsWith("extract cleanup") || scenario === "both cleanups fail");
         expect(fs.readFileSync(path.join(sibling, "keep"), "utf8")).toBe("keep");
         expect(fs.readFileSync(path.join(adjacentExtract, "keep"), "utf8")).toBe("keep");
         if (["extract", "validate", "load", "sync"].includes(scenario) || scenario.endsWith("on validation")) {
@@ -2643,7 +2644,7 @@ describe("plugin install temporary directory ownership", () => {
         } else {
           expect(fs.readFileSync(path.join(formal, "new.txt"), "utf8")).toBe("new");
         }
-        if (scenario.includes("cleanup")) expect((await res.json()).error).toBe("cleanup failed");
+        if (scenario.includes("cleanup")) expect((await res.json()).error).toBe(scenario.startsWith("extract cleanup") ? "extract cleanup failed" : "staging cleanup failed");
       } finally {
         mkdirSpy.mockRestore();
         rmSpy.mockRestore();
@@ -2653,4 +2654,109 @@ describe("plugin install temporary directory ownership", () => {
       }
     },
   );
+});
+
+describe("concurrent plugin extraction ownership probe", () => {
+  it.each(["success", "load failure", "staging cleanup failure"])("cleans only the finished request after %s while a second extraction stays live", async (scenario) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-concurrent-probe-"));
+    const plugins = path.join(root, "plugins");
+    const request = (id: string) => {
+      const zip = path.join(root, `${id}.zip`);
+      fs.writeFileSync(zip, makeStoredZip({ [`${id}/manifest.json`]: JSON.stringify({ id, name: id, version: "1.0.0" }), [`${id}/marker.txt`]: id }));
+      return zip;
+    };
+    const zipA = request("demo-a");
+    const zipB = request("demo-b");
+    const originalTmpdir = os.tmpdir;
+    const tmpdirSpy = vi.spyOn(os, "tmpdir").mockReturnValue(root);
+    const stageById = new Map<string, string>();
+    const originalRename = fs.renameSync; const originalRm = fs.rmSync;
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation(((from, to) => {
+      if (String(from).includes(".installing-") && ["demo-a", "demo-b"].includes(path.basename(String(to)))) stageById.set(path.basename(String(to)), String(from));
+      return originalRename(from, to);
+    }) as typeof fs.renameSync);
+    const rmSpy = vi.spyOn(fs, "rmSync").mockImplementation(((target, options) => {
+      if (scenario === "staging cleanup failure" && String(target) === stageById.get("demo-a")) throw new Error("staging cleanup failed");
+      return originalRm(target, options);
+    }) as typeof fs.rmSync);
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+    const gateA = new Promise<void>((resolve) => { releaseA = resolve; });
+    const gateB = new Promise<void>((resolve) => { releaseB = resolve; });
+    let readyA!: () => void;
+    let readyB!: () => void;
+    const aReady = new Promise<void>((resolve) => { readyA = resolve; });
+    const bReady = new Promise<void>((resolve) => { readyB = resolve; });
+    try {
+      const engine = mockEngine({ hanakoHome: root, pm: {
+        getUserPluginsDir: () => plugins,
+        listPlugins: () => [],
+        isValidPluginDir: () => true,
+        installPlugin: async (target: string) => {
+          const id = path.basename(target);
+          if (id === "demo-a") { readyA(); await gateA; if (scenario === "load failure") throw new Error("injected load failure"); }
+          else if (id === "demo-b") { readyB(); await gateB; }
+          else throw new Error(`unexpected target ${target}`);
+          return { id, version: "1.0.0", status: "loaded" };
+        },
+      } });
+      const app = createApp(engine);
+      const send = (zip: string) => app.request("/api/plugins/install", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: zip }),
+      });
+      const a = send(zipA); const b = send(zipB);
+      await Promise.all([aReady, bReady]);
+      const extracts = fs.readdirSync(root).filter((x) => x.startsWith("plugin-install-")).map((x) => path.join(root, x));
+      expect(extracts).toHaveLength(2);
+      const byId = new Map(extracts.map((d) => [fs.readdirSync(d)[0], d]));
+      expect([...byId.keys()].sort()).toEqual(["demo-a", "demo-b"]);
+      releaseA();
+      expect((await a).status).toBe(scenario === "success" ? 200 : 500);
+      expect(fs.existsSync(byId.get("demo-a")!)).toBe(false);
+      expect(fs.readFileSync(path.join(byId.get("demo-b")!, "demo-b", "marker.txt"), "utf8")).toBe("demo-b");
+      releaseB();
+      expect((await b).status).toBe(200);
+      expect(fs.existsSync(byId.get("demo-b")!)).toBe(false);
+      if (scenario !== "load failure") expect(fs.readFileSync(path.join(plugins, "demo-a", "marker.txt"), "utf8")).toBe("demo-a");
+      else expect(fs.existsSync(path.join(plugins, "demo-a"))).toBe(false);
+      expect(fs.readFileSync(path.join(plugins, "demo-b", "marker.txt"), "utf8")).toBe("demo-b");
+    } finally {
+      releaseA?.(); releaseB?.(); tmpdirSpy.mockRestore(); renameSpy.mockRestore(); rmSpy.mockRestore();
+      originalRm(root, { recursive: true, force: true });
+      expect(os.tmpdir).toBe(originalTmpdir);
+    }
+  });
+});
+
+describe("plugin install cleanup without extraction", () => {
+  it.each([false, true])("handles directory input when staging cleanup fails: %s", async (failCleanup) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-directory-cleanup-"));
+    const source = path.join(root, "source"); const plugins = path.join(root, "plugins");
+    fs.mkdirSync(source);
+    fs.writeFileSync(path.join(source, "manifest.json"), JSON.stringify({ id: "demo", name: "demo", version: "1.0.0" }));
+    const created: string[] = []; const originalMkdtemp = fs.mkdtempSync; const originalRm = fs.rmSync;
+    const mk = vi.spyOn(fs, "mkdtempSync").mockImplementation(((prefix, options) => {
+      const result = originalMkdtemp(prefix, options) as string;
+      if (String(prefix).includes(".installing-") || String(prefix).includes("plugin-install-")) created.push(result);
+      return result;
+    }) as typeof fs.mkdtempSync);
+    const rm = vi.spyOn(fs, "rmSync").mockImplementation(((target, options) => {
+      if (failCleanup && created.includes(String(target))) throw new Error("staging cleanup failed");
+      return originalRm(target, options);
+    }) as typeof fs.rmSync);
+    try {
+      const engine = mockEngine({ hanakoHome: root, pm: {
+        getUserPluginsDir: () => plugins, listPlugins: () => [], isValidPluginDir: () => true,
+        installPlugin: async () => ({ id: "demo", version: "1.0.0", status: "loaded" }),
+      } });
+      const response = await createApp(engine).request("/api/plugins/install", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path: source }),
+      });
+      expect(response.status).toBe(failCleanup ? 500 : 200);
+      if (failCleanup) expect((await response.json()).error).toBe("staging cleanup failed");
+      expect(created).toHaveLength(1);
+      expect(path.basename(created[0])).toMatch(/^\.installing-/);
+      expect(fs.existsSync(path.join(plugins, "demo", "manifest.json"))).toBe(true);
+    } finally { mk.mockRestore(); rm.mockRestore(); originalRm(root, { recursive: true, force: true }); }
+  });
 });
